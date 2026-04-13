@@ -1,0 +1,19 @@
+machine_motion MachineMotion {
+    phase_sl PhaseSL {
+        step_rule_lat_decider StepRuleLatDecider
+        step_sl_data_dp       StepSLData
+        step_sl_dp            StepSLDP
+        step_lat_decider      StepLatDecider
+        step_sl_data_qp       StepSLData
+        step_sl_qp            StepSLQP
+    }
+    phase_ts PhaseTS {
+        step_rule_lon_decider StepRuleLonDecider
+        step_ts_data_dp       StepTSData
+        step_ts_dp            StepTSDP
+        step_lon_decider      StepLonDecider
+        step_ts_data_qp       StepTSData
+        step_ts_qp            StepTSQP
+        step_tsl_combinor     StepTSLCombinor
+    }
+}

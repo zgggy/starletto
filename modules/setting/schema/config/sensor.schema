@@ -1,0 +1,13 @@
+schema sensor.sensor
+root SensorConfig
+namespace star.setting.config.sensor
+version 1
+
+def SensorConfig {
+    1 sensor : Sensor
+}
+
+def Sensor {
+    1 primary_lidar : string
+    2 enable_camera_fusion : bool
+}

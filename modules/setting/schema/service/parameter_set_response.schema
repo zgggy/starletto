@@ -1,0 +1,8 @@
+schema setting.parameter.service.set_response
+root ParameterSetResponse
+namespace star.setting.service.parameter.set_response
+version 1
+
+def ParameterSetResponse {
+    1 updated : bool
+}

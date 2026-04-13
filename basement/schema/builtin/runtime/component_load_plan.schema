@@ -1,0 +1,48 @@
+schema runtime.component_load_plan
+
+root ComponentLoadPlan {
+    1 module_name : string
+    2 component_name : string
+    3 component_group : string ?
+    4 component_class : string
+    5 component_library : string ?
+    6 static_link : bool ?
+    7 priority : int ?
+    8 component_conf_path : string ?
+    9 module_conf_path : string ?
+    10 module_dir : string ?
+    11 module_config_dir : string ?
+    12 config_file_path : string ?
+    13 process_group : string ?
+    14 scheduler_type : string ?
+    15 executor_threads : int ?
+    16 trigger : TriggerPlan ?
+    17 inputs : PortPlan[] ?
+    18 outputs : PortPlan[] ?
+    19 services : ServicePortPlan[] ?
+}
+
+def TriggerPlan {
+    1 type : string ?
+    2 task_name : string ?
+    3 cycle_ms : int ?
+    4 readers : string[] ?
+}
+
+def PortPlan {
+    1 name : string
+    2 channel : string ?
+    3 type_name : string ?
+    4 record : bool ?
+    5 direction : string ?
+    6 qos_depth : int ?
+    7 qos_drop_policy : string ?
+}
+
+def ServicePortPlan {
+    1 name : string
+    2 channel : string ?
+    3 request_type_name : string ?
+    4 response_type_name : string ?
+    5 role : string ?
+}

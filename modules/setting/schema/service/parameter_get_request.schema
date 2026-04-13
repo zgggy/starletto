@@ -1,0 +1,8 @@
+schema setting.parameter.service.get_request
+root ParameterGetRequest
+namespace star.setting.service.parameter.get_request
+version 1
+
+def ParameterGetRequest {
+    1 key : string
+}

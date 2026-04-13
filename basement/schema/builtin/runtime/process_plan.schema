@@ -1,0 +1,26 @@
+schema runtime.process_plan
+
+root ProcessPlan {
+    1 groups : ProcessGroupPlan[] ?
+}
+
+def ProcessGroupPlan {
+    1 name : string
+    2 component_names : string[] ?
+    3 component_conf_paths : string[] ?
+    4 produced_channels : string[] ?
+    5 consumed_channels : string[] ?
+    6 scheduler_type : string ?
+    7 choreography : ChoreographyPlan ?
+}
+
+def ChoreographyPlan {
+    1 pool_threads : int ?
+    2 tasks : TaskSchedulePlan[] ?
+    3 cpu_affinity : string ?
+}
+
+def TaskSchedulePlan {
+    1 name : string
+    2 priority : int ?
+}

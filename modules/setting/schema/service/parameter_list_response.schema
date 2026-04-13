@@ -1,0 +1,8 @@
+schema setting.parameter.service.list_response
+root ParameterListResponse
+namespace star.setting.service.parameter.list_response
+version 1
+
+def ParameterListResponse {
+    1 keys : string[] ?
+}

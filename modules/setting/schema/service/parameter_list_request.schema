@@ -1,0 +1,8 @@
+schema setting.parameter.service.list_request
+root ParameterListRequest
+namespace star.setting.service.parameter.list_request
+version 1
+
+def ParameterListRequest {
+    1 prefix : string ?
+}

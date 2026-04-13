@@ -1,0 +1,13 @@
+schema control.command
+root ControlCommand
+namespace star.setting.control
+version 1
+
+def ControlCommand {
+    1 throttle : double
+    2 brake : double
+    3 steering : double
+    4 gear : int
+    5 frame_id : int64
+    6 timestamp_ns : int64
+}

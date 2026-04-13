@@ -1,0 +1,11 @@
+schema setting.parameter.service.set_request
+root ParameterSetRequest
+namespace star.setting.service.parameter.set_request
+version 1
+
+def ParameterSetRequest {
+    1 key : string
+    2 schema_name : string ?
+    3 payload_binary : string ?
+    4 debug_text : string ?
+}

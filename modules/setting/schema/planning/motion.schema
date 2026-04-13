@@ -1,0 +1,19 @@
+schema planning.motion
+root MotionParameter
+namespace star.setting.parameter.planning
+version 1
+
+def MotionParameter {
+    1 processor : Processor
+    2 methods : Methods ?
+}
+
+def Processor {
+    1 expected_cycle_time : int
+    2 log_level : string
+}
+
+def Methods {
+    1 trajectory_method : string
+    2 enable_fallback : bool
+}

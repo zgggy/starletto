@@ -1,0 +1,14 @@
+schema star.setting.config.snapshot
+
+namespace star.generated.setting.config.snapshot
+version 1
+
+def SnapshotEntry {
+    1 schema_name : string
+    2 payload_binary : string ?
+    3 debug_text : string ?
+}
+
+root ConfigSnapshot {
+    1 entries : {string : SnapshotEntry}
+}

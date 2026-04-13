@@ -1,0 +1,13 @@
+schema system.system
+root SystemConfig
+namespace star.setting.config.system
+version 1
+
+def SystemConfig {
+    1 system : System
+}
+
+def System {
+    1 clock_mode : string
+    2 enable_monitor : bool
+}

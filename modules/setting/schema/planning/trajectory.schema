@@ -1,0 +1,19 @@
+schema planning.trajectory
+root TrajectoryOutput
+namespace star.setting.planning
+version 1
+
+def TrajectoryPoint {
+    1 x : double
+    2 y : double
+    3 heading : double
+    4 velocity : double
+    5 curvature : double
+    6 relative_time_s : double
+}
+
+def TrajectoryOutput {
+    1 points : TrajectoryPoint[]
+    2 frame_id : int64
+    3 timestamp_ns : int64
+}

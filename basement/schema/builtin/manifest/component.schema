@@ -1,0 +1,55 @@
+schema manifest.component
+
+root ComponentConf {
+    1 global : GlobalInfo ?
+    2 component : ComponentInfo
+    3 parameters : object ?
+    4 trigger : TriggerInfo ?
+    5 readers : {string : Port} ?
+    6 writers : {string : Port} ?
+    7 commands : {string : Port} ?
+}
+
+def GlobalInfo {
+    1 process_group : string ?
+    2 scheduler_policy : string ?
+    3 executor_threads : int ?
+}
+
+def ComponentInfo {
+    1 name : string
+    2 type : string
+    3 component_library : string ?
+    4 component_class : string
+    5 config_file_path : string ?
+    6 static_link : bool ? = false
+    7 component_group : string ?
+    8 priority : int ?
+}
+
+def TriggerInfo {
+    1 type : string ?
+    2 cycle_ms : int ?
+    3 task_name : string ?
+    4 readers : string[] ?
+}
+
+def QosProfile {
+    1 depth : int ?
+    2 history : string ?
+    3 reliability : string ?
+    4 durability : string ?
+}
+
+def Port {
+    1 channel : string
+    2 type : string ?
+    3 msg_type : string ?
+    4 ack : string ?
+    5 ack_type : string ?
+    6 status : string ?
+    7 status_type : string ?
+    8 pending_queue_size : int ?
+    9 qos_profile : QosProfile ?
+    10 record : bool ?
+}

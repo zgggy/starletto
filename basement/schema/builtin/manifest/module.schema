@@ -1,0 +1,25 @@
+schema manifest.module
+
+def ModuleInfo {
+    1 name : string
+    2 version : string ?
+    3 default_backend : string ?
+    4 install_group : string ?
+}
+
+def LayoutInfo {
+    1 config_dir : string ?
+    2 component_dir : string ?
+}
+
+def DependencyInfo {
+    1 modules : string[] ?
+    2 libraries : string[] ?
+}
+
+root ModuleConf {
+    1 module : ModuleInfo
+    2 layout : LayoutInfo ?
+    3 components : string[] ?
+    4 dependency : DependencyInfo ?
+}

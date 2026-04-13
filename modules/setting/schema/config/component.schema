@@ -1,0 +1,13 @@
+schema component.component
+root ComponentConfig
+namespace star.setting.config.component
+version 1
+
+def ComponentConfig {
+    1 component : Component
+}
+
+def Component {
+    1 default_executor_threads : int
+    2 enable_runtime_stats : bool
+}

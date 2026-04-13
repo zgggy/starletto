@@ -1,0 +1,13 @@
+schema logger.logger
+root LoggerConfig
+namespace star.setting.config.logger
+version 1
+
+def LoggerConfig {
+    1 logger : Logger
+}
+
+def Logger {
+    1 level : string
+    2 flush_interval_ms : int
+}
