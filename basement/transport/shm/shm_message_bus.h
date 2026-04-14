@@ -5,7 +5,6 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -22,6 +21,7 @@
 #include "basement/core/exception.h"
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/api/message_bus.h"
+#include "basement/transport/common/channel_stats.h"
 #include "basement/transport/shm/shm_channel.h"
 #include "basement/transport/shm/shm_views.h"
 #include "libraries/common/schema/schema_value.h"
@@ -176,14 +176,31 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
                 continue;
             }
-            const auto hz = compute_hz(channel.stats);
-            const auto p99 = compute_percentile(channel.stats.latency_samples, 0.99);
-            const auto p999 = compute_percentile(channel.stats.latency_samples, 0.999);
-            out.emplace_back("transport.shm channel=" + channel_name + " publish=" + std::to_string(channel.stats.publish_count) + " deliver=" + std::to_string(channel.stats.deliver_count) +
-                             " dropped=" + std::to_string(channel.stats.dropped_count) + " payload_bytes_total=" + std::to_string(channel.stats.payload_bytes_total) +
-                             " payload_bytes_last=" + std::to_string(channel.stats.payload_bytes_last) + " latency_avg_us=" + std::to_string(compute_avg_latency_us(channel.stats)) +
-                             " latency_max_us=" + std::to_string(channel.stats.latency_max_us) + " latency_p99_us=" + std::to_string(p99) + " latency_p999_us=" + std::to_string(p999) +
-                             " max_queue_depth=" + std::to_string(channel.stats.max_queue_depth) + " avg_hz=" + format_rate(hz));
+            out.emplace_back(format_stats_line("shm", channel_name, channel.stats));
+        }
+        return out;
+    }
+
+    auto channel_stats(const std::string& channel_name) const -> std::optional<ChannelStatsSnapshot> override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = channels_.find(channel_name);
+        if (it == channels_.end()) {
+            return std::nullopt;
+        }
+        if (it->second.stats.publish_count == 0 && it->second.stats.deliver_count == 0) {
+            return std::nullopt;
+        }
+        return make_stats_snapshot(channel_name, it->second.stats);
+    }
+
+    auto all_channel_stats() const -> std::vector<ChannelStatsSnapshot> override {
+        auto out = std::vector<ChannelStatsSnapshot>{};
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [channel_name, channel] : channels_) {
+            if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
+                continue;
+            }
+            out.push_back(make_stats_snapshot(channel_name, channel.stats));
         }
         return out;
     }
@@ -211,35 +228,13 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         return total;
     }
 
-    static auto compute_percentile(const std::vector<uint64_t>& samples, double p) -> uint64_t {
-        if (samples.empty()) {
-            return 0;
-        }
-        auto sorted = samples;
-        std::sort(sorted.begin(), sorted.end());
-        const auto idx = static_cast<size_t>(std::ceil(p * sorted.size())) - 1;
-        return sorted[std::min(idx, sorted.size() - 1)];
-    }
-
   private:
     struct ChannelState {
         ChannelDescriptor descriptor;
         std::shared_ptr<ShmChannel> channel;
         std::unordered_map<uint64_t, Reader::Callback> readers;
         std::unordered_map<uint64_t, std::deque<MessageView>> reader_history;
-        struct ChannelStats {
-            uint64_t publish_count{0};
-            uint64_t deliver_count{0};
-            uint64_t dropped_count{0};
-            uint64_t payload_bytes_total{0};
-            uint64_t payload_bytes_last{0};
-            uint64_t latency_total_us{0};
-            uint64_t latency_max_us{0};
-            uint64_t max_queue_depth{0};
-            std::vector<uint64_t> latency_samples;
-            std::chrono::steady_clock::time_point first_publish_tp{};
-            std::chrono::steady_clock::time_point last_publish_tp{};
-        } stats;
+        ChannelStats stats;
     };
 
     void publish_internal(const std::string& channel_name, const MessageView& message) {
@@ -253,15 +248,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             }
             channel = it->second.channel;
             payload_size = estimate_payload_size(message);
-            auto& stats = it->second.stats;
-            const auto now = std::chrono::steady_clock::now();
-            if (stats.publish_count == 0) {
-                stats.first_publish_tp = now;
-            }
-            stats.last_publish_tp = now;
-            stats.publish_count += 1;
-            stats.payload_bytes_total += payload_size;
-            stats.payload_bytes_last = payload_size;
+            it->second.stats.record_publish(payload_size);
         }
         if (not channel) {
             return;
@@ -300,21 +287,21 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                         history.push_back(msg_snapshot);
                         while (history.size() > options.depth) {
                             history.pop_front();
-                            it->second.stats.dropped_count += 1;
+                            it->second.stats.record_drop(1);
                         }
                     } else {
                         if (history.size() >= options.depth) {
-                            it->second.stats.dropped_count += 1;
+                            it->second.stats.record_drop(1);
                             continue;
                         }
                         build_shm_message_view(channel_name, slot, size, it, msg_snapshot);
                         history.push_back(msg_snapshot);
                     }
-                    it->second.stats.max_queue_depth = std::max(it->second.stats.max_queue_depth, history.size());
+                    it->second.stats.update_queue_depth(history.size());
                 }
                 callbacks.emplace_back(reader_id, cb);
             }
-            it->second.stats.deliver_count += callbacks.size();
+            it->second.stats.record_deliver(callbacks.size());
         }
         for (const auto& [reader_id, cb] : callbacks) {
             MessageView msg;
@@ -383,7 +370,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         if (it == channels_.end()) {
             return;
         }
-        it->second.stats.dropped_count += dropped;
+        it->second.stats.record_drop(dropped);
     }
 
     void record_latency(const std::string& channel_name, uint64_t publish_ns) {
@@ -400,11 +387,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         if (it == channels_.end()) {
             return;
         }
-        it->second.stats.latency_total_us += latency_us;
-        it->second.stats.latency_max_us = std::max(it->second.stats.latency_max_us, latency_us);
-        if (it->second.stats.latency_samples.size() < 1000) {
-            it->second.stats.latency_samples.push_back(latency_us);
-        }
+        it->second.stats.record_latency(latency_us);
     }
 
     static auto resolve_capacity() -> uint32_t { return kShmCapacity; }
@@ -430,30 +413,6 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             return view->size;
         }
         return 0;
-    }
-
-    static auto compute_hz(const ChannelState::ChannelStats& stats) -> double {
-        if (stats.publish_count <= 1) {
-            return static_cast<double>(stats.publish_count);
-        }
-        const auto seconds = std::chrono::duration<double>(stats.last_publish_tp - stats.first_publish_tp).count();
-        if (seconds <= 0.0) {
-            return static_cast<double>(stats.publish_count);
-        }
-        return static_cast<double>(stats.publish_count - 1) / seconds;
-    }
-
-    static auto compute_avg_latency_us(const ChannelState::ChannelStats& stats) -> uint64_t {
-        if (stats.deliver_count == 0) {
-            return 0;
-        }
-        return stats.latency_total_us / stats.deliver_count;
-    }
-
-    static auto format_rate(double hz) -> std::string {
-        char buf[32]{};
-        std::snprintf(buf, sizeof(buf), "%.2f", hz);
-        return std::string(buf);
     }
 
     void maybe_register_writer(const std::string& channel) {

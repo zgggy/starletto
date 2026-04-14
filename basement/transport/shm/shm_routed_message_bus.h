@@ -84,6 +84,27 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
         return out;
     }
 
+    auto channel_stats(const std::string& channel_name) const -> std::optional<ChannelStatsSnapshot> override {
+        auto inproc_stats = inproc_->channel_stats(channel_name);
+        auto shm_stats = shm_->channel_stats(channel_name);
+        if (inproc_stats && shm_stats) {
+            auto merged = *inproc_stats;
+            merged.publish_count += shm_stats->publish_count;
+            merged.deliver_count += shm_stats->deliver_count;
+            merged.dropped_count += shm_stats->dropped_count;
+            merged.payload_bytes_total += shm_stats->payload_bytes_total;
+            return merged;
+        }
+        return inproc_stats ? inproc_stats : shm_stats;
+    }
+
+    auto all_channel_stats() const -> std::vector<ChannelStatsSnapshot> override {
+        auto out = inproc_->all_channel_stats();
+        auto shm_stats = shm_->all_channel_stats();
+        out.insert(out.end(), shm_stats.begin(), shm_stats.end());
+        return out;
+    }
+
     auto declared_channels() const -> std::vector<std::string> override { return inproc_->declared_channels(); }
 
   private:

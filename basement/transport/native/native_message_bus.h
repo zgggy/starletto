@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -12,12 +11,14 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "basement/core/exception.h"
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/api/message_bus.h"
+#include "basement/transport/common/channel_stats.h"
 #include "basement/transport/record/message_recorder.h"
 #include "libraries/common/schema/schema_value.h"
 
@@ -70,14 +71,31 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
             if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
                 continue;
             }
-            const auto hz = compute_hz(channel.stats);
-            const auto p99 = compute_percentile(channel.stats.latency_samples, 0.99);
-            const auto p999 = compute_percentile(channel.stats.latency_samples, 0.999);
-            out.emplace_back("transport.native channel=" + channel_name + " publish=" + std::to_string(channel.stats.publish_count) + " deliver=" + std::to_string(channel.stats.deliver_count) +
-                             " dropped=" + std::to_string(channel.stats.dropped_count) + " payload_bytes_total=" + std::to_string(channel.stats.payload_bytes_total) +
-                             " payload_bytes_last=" + std::to_string(channel.stats.payload_bytes_last) + " latency_avg_us=" + std::to_string(compute_avg_latency_us(channel.stats)) +
-                             " latency_p99_us=" + std::to_string(p99) + " latency_p999_us=" + std::to_string(p999) + " latency_max_us=" + std::to_string(channel.stats.latency_max_us) +
-                             " max_queue_depth=" + std::to_string(channel.stats.max_queue_depth) + " avg_hz=" + format_rate(hz));
+            out.emplace_back(format_stats_line("native", channel_name, channel.stats));
+        }
+        return out;
+    }
+
+    auto channel_stats(const std::string& channel_name) const -> std::optional<ChannelStatsSnapshot> override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = channels_.find(channel_name);
+        if (it == channels_.end()) {
+            return std::nullopt;
+        }
+        if (it->second.stats.publish_count == 0 && it->second.stats.deliver_count == 0) {
+            return std::nullopt;
+        }
+        return make_stats_snapshot(channel_name, it->second.stats);
+    }
+
+    auto all_channel_stats() const -> std::vector<ChannelStatsSnapshot> override {
+        auto out = std::vector<ChannelStatsSnapshot>{};
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& [channel_name, channel] : channels_) {
+            if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
+                continue;
+            }
+            out.push_back(make_stats_snapshot(channel_name, channel.stats));
         }
         return out;
     }
@@ -148,38 +166,12 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
     }
 
   private:
-    static constexpr size_t kMaxLatencySamples = 1000;
-
-    struct ChannelStats {
-        uint64_t publish_count{0};
-        uint64_t deliver_count{0};
-        uint64_t dropped_count{0};
-        uint64_t payload_bytes_total{0};
-        uint64_t payload_bytes_last{0};
-        uint64_t latency_total_us{0};
-        uint64_t latency_max_us{0};
-        uint64_t max_queue_depth{0};
-        std::vector<uint64_t> latency_samples;
-        std::chrono::steady_clock::time_point first_publish_tp{};
-        std::chrono::steady_clock::time_point last_publish_tp{};
-    };
-
     struct ChannelState {
         ChannelDescriptor descriptor;
         std::unordered_map<uint64_t, Reader::Callback> readers;
         std::unordered_map<uint64_t, std::deque<MessageView>> reader_history;
         ChannelStats stats;
     };
-
-    static auto compute_percentile(const std::vector<uint64_t>& samples, double p) -> uint64_t {
-        if (samples.empty()) {
-            return 0;
-        }
-        auto sorted = samples;
-        std::sort(sorted.begin(), sorted.end());
-        const auto idx = static_cast<size_t>(std::ceil(p * sorted.size())) - 1;
-        return sorted[std::min(idx, sorted.size() - 1)];
-    }
 
     void publish_internal(const std::string& channel_name, const MessageView& message) {
         std::vector<std::pair<uint64_t, Reader::Callback>> reader_callbacks;
@@ -203,30 +195,22 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
                         history.push_back(message);
                         while (history.size() > options.depth) {
                             history.pop_front();
-                            it->second.stats.dropped_count += 1;
+                            it->second.stats.record_drop(1);
                         }
                     } else {
                         if (history.size() >= options.depth) {
-                            it->second.stats.dropped_count += 1;
+                            it->second.stats.record_drop(1);
                         } else {
                             history.push_back(message);
                         }
                     }
-                    it->second.stats.max_queue_depth = std::max(it->second.stats.max_queue_depth, history.size());
+                    it->second.stats.update_queue_depth(history.size());
                 }
                 reader_callbacks.emplace_back(reader_id, cb);
             }
             auto payload_size = estimate_payload_size(message);
-            auto& stats = it->second.stats;
-            const auto now = std::chrono::steady_clock::now();
-            if (stats.publish_count == 0) {
-                stats.first_publish_tp = now;
-            }
-            stats.last_publish_tp = now;
-            stats.publish_count += 1;
-            stats.deliver_count += reader_callbacks.size();
-            stats.payload_bytes_total += payload_size;
-            stats.payload_bytes_last = payload_size;
+            it->second.stats.record_publish(payload_size);
+            it->second.stats.record_deliver(reader_callbacks.size());
         }
 
         for (const auto& [_, cb] : reader_callbacks) {
@@ -249,14 +233,7 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = channels_.find(channel_name);
             if (it != channels_.end()) {
-                auto& stats = it->second.stats;
-                stats.latency_total_us += latency_us;
-                stats.latency_max_us = std::max(stats.latency_max_us, latency_us);
-                if (stats.latency_samples.size() < kMaxLatencySamples) {
-                    stats.latency_samples.push_back(latency_us);
-                } else {
-                    stats.latency_samples[stats.publish_count % kMaxLatencySamples] = latency_us;
-                }
+                it->second.stats.record_latency(latency_us);
             }
         }
     }
@@ -279,30 +256,6 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
             return star::schema::dump_schema_text(*conf).size();
         }
         return 0;
-    }
-
-    static auto compute_hz(const ChannelStats& stats) -> double {
-        if (stats.publish_count <= 1) {
-            return static_cast<double>(stats.publish_count);
-        }
-        const auto seconds = std::chrono::duration<double>(stats.last_publish_tp - stats.first_publish_tp).count();
-        if (seconds <= 0.0) {
-            return static_cast<double>(stats.publish_count);
-        }
-        return static_cast<double>(stats.publish_count - 1) / seconds;
-    }
-
-    static auto compute_avg_latency_us(const ChannelStats& stats) -> uint64_t {
-        if (stats.publish_count == 0) {
-            return 0;
-        }
-        return stats.latency_total_us / stats.publish_count;
-    }
-
-    static auto format_rate(double hz) -> std::string {
-        char buf[32]{};
-        std::snprintf(buf, sizeof(buf), "%.2f", hz);
-        return std::string(buf);
     }
 
     void maybe_register_writer(const std::string& channel) {

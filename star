@@ -31,6 +31,7 @@ show_help() {
     echo "  star replay <文件> [speed]          回放录制文件（支持速率控制）"
     echo "  star monitor [目标...]              实时查看 transport topic 统计（频率/延迟/丢帧/QoS）"
     echo "  star check [参数...] [目标...]      CI Guard: 构建后自动化验证（build + doctor + smoke）"
+    echo "  star test [参数...]                 运行单元测试（Meson test）"
     echo "  star help                           显示帮助信息"
     echo ""
     echo "目标可以是：module 名称 / module.conf / component.conf / 目录"
@@ -533,6 +534,45 @@ run_record_replay_tool() {
     exec "$tool" "$@"
 }
 
+run_unit_tests() {
+    local build_dir="${PROJECT_ROOT}/build"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --build-dir=*)
+                build_dir="${1#--build-dir=}"
+                shift
+                ;;
+            -h|--help)
+                echo "star test - 运行单元测试（Meson test）"
+                echo "用法:"
+                echo "  star test [--build-dir=<dir>]"
+                echo ""
+                echo "示例:"
+                echo "  star test"
+                echo "  star test --build-dir=build"
+                return 0
+                ;;
+            *)
+                log_error "test 不支持参数: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    if ! command -v meson >/dev/null 2>&1; then
+        log_error "未找到 meson，请先安装: sudo apt-get install -y meson ninja-build"
+        return 1
+    fi
+
+    if [ ! -d "$build_dir" ]; then
+        log_error "build 目录不存在: $build_dir，请先执行: star build"
+        return 1
+    fi
+
+    meson test -C "$build_dir"
+}
+
 run_ci_guard() {
     local build_dir="${PROJECT_ROOT}/build"
     local install_dir=""
@@ -722,6 +762,10 @@ case "${1:-}" in
     check)
         shift
         run_ci_guard "$@"
+        ;;
+    test)
+        shift
+        run_unit_tests "$@"
         ;;
     native-build)
         shift

@@ -4,12 +4,14 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "basement/core/common_types.h"
 #include "basement/schema/type_id.h"
+#include "basement/transport/common/channel_stats.h"
 
 namespace star::transport {
 
@@ -78,6 +80,8 @@ class Reader {
   public:
     using Callback = std::function<void(const MessageView&)>;
     virtual ~Reader() = default;
+    virtual auto peek_latest() const -> std::optional<MessageView> { return std::nullopt; }
+    virtual auto has_data() const -> bool { return false; }
 };
 
 class MessageBus {
@@ -90,6 +94,8 @@ class MessageBus {
     virtual auto create_ack_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<AckWriter> = 0;
     virtual auto dump_stats_lines() const -> std::vector<std::string> = 0;
     virtual auto declared_channels() const -> std::vector<std::string> = 0;
+    virtual auto channel_stats(const std::string& channel_name) const -> std::optional<ChannelStatsSnapshot> { (void)channel_name; return std::nullopt; }
+    virtual auto all_channel_stats() const -> std::vector<ChannelStatsSnapshot> { return {}; }
 
     virtual void enable_recorder(const std::string& file_path) { (void)file_path; }
     virtual void enable_record_channel(const std::string& channel) { (void)channel; }
