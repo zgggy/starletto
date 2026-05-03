@@ -1,114 +1,19 @@
-#ifndef ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_PLANNING_TRAJECTORY_S_H__
-#define ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_PLANNING_TRAJECTORY_S_H__
+#ifndef __PLANNING_TRAJECTORY__
+#define __PLANNING_TRAJECTORY__
 
-#include "basement/schema/binary_codec.h"
-#include "basement/schema/schema_ast.h"
+#include "basement/schema/schema_codec_helpers.h"
 #include "basement/schema/schema_registry.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/common/fixed_layout_codec.h"
 
-#include <concepts>
 #include <cstring>
-#include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
-#include <string>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace star::setting::planning {
 
-template <typename _ValueType>
-concept SchemaStructType = requires(const star::schema::SchemaValue& value, const _ValueType& item) {
-    { _ValueType::from_value(value) } -> std::same_as<_ValueType>;
-    { item.to_value() } -> std::same_as<star::schema::SchemaValue>;
-};
-
-template <typename _ValueType>
-struct IsStdVector : std::false_type {
-};
-
-template <typename _ItemType, typename _Allocator>
-struct IsStdVector<std::vector<_ItemType, _Allocator>> : std::true_type {
-    using Item = _ItemType;
-};
-
-template <typename _ValueType>
-struct IsStdMap : std::false_type {
-};
-
-template <typename _MappedType, typename _Compare, typename _Allocator>
-struct IsStdMap<std::map<std::string, _MappedType, _Compare, _Allocator>> : std::true_type {
-    using Item = _MappedType;
-};
-
-template <typename _ValueType>
-auto schema_read(const star::schema::SchemaValue& value) -> _ValueType {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        using _Item = typename IsStdVector<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& arr = value.as_array();
-        out.reserve(arr.size());
-        for (const auto& item : arr) {
-            out.emplace_back(schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        using _Item = typename IsStdMap<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& obj = value.as_object();
-        for (const auto& [key, item] : obj) {
-            out.emplace(key, schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (std::is_same_v<_ValueType, std::string>) {
-        return value.as<std::string>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, bool>) {
-        return value.as<bool>();
-    } else if constexpr (std::is_same_v<_ValueType, int64_t>) {
-        return value.as<int64_t>();
-    } else if constexpr (std::is_same_v<_ValueType, double>) {
-        return value.as<double>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return value.as_object();
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return _ValueType::from_value(value);
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_read type");
-    }
-}
-
-template <typename _ValueType>
-auto schema_write(const _ValueType& value) -> star::schema::SchemaValue {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        auto out = star::schema::SchemaArray{};
-        out.reserve(value.size());
-        for (const auto& item : value) {
-            out.emplace_back(schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        auto out = star::schema::SchemaObject{};
-        for (const auto& [key, item] : value) {
-            out.emplace(key, schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, std::string> || std::is_same_v<_ValueType, bool> ||
-                  std::is_same_v<_ValueType, int64_t> || std::is_same_v<_ValueType, double>) {
-        return star::schema::schema_value_from(value);
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return star::schema::SchemaValue(value);
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return value.to_value();
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_write type");
-    }
-}
+using star::schema::schema_read;
+using star::schema::schema_write;
 
 inline auto _schema_type_id() -> star::schema::SchemaTypeId {
     auto out = star::schema::SchemaTypeId{};
@@ -127,6 +32,7 @@ inline auto _build_fields_TrajectoryPoint() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::FLOAT64;
         field.type_name = "double";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -137,6 +43,7 @@ inline auto _build_fields_TrajectoryPoint() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::FLOAT64;
         field.type_name = "double";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -147,6 +54,7 @@ inline auto _build_fields_TrajectoryPoint() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::FLOAT64;
         field.type_name = "double";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -157,6 +65,7 @@ inline auto _build_fields_TrajectoryPoint() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::FLOAT64;
         field.type_name = "double";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -167,6 +76,7 @@ inline auto _build_fields_TrajectoryPoint() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::FLOAT64;
         field.type_name = "double";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -177,6 +87,7 @@ inline auto _build_fields_TrajectoryPoint() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::FLOAT64;
         field.type_name = "double";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -192,6 +103,7 @@ inline auto _build_fields_TrajectoryOutput() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "TrajectoryPoint";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = true;
         field.children = _build_fields_TrajectoryPoint();
         out.emplace_back(std::move(field));
@@ -203,6 +115,7 @@ inline auto _build_fields_TrajectoryOutput() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int64";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -213,6 +126,7 @@ inline auto _build_fields_TrajectoryOutput() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int64";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -228,6 +142,8 @@ inline auto _schema_descriptor() -> star::schema::SchemaDescriptor {
     out.fields = _build_fields_TrajectoryOutput();
     return out;
 }
+
+struct TrajectoryPointBuilder;
 
 struct TrajectoryPoint {
     static constexpr uint32_t kFieldId_x = 1;
@@ -293,64 +209,153 @@ struct TrajectoryPoint {
         obj.emplace("relative_time_s", schema_write(relative_time_s));
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> TrajectoryPoint;
 };
 
 struct TrajectoryPointView {
-    TrajectoryPoint value{};
+    static constexpr size_t kFieldCount = 6;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> TrajectoryPointView {
-        return TrajectoryPointView{TrajectoryPoint::from_value(value)};
-    }
+    TrajectoryPointView() = default;
+    explicit TrajectoryPointView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit TrajectoryPointView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_x = 0;
+    static constexpr size_t kSlotIndex_y = 1;
+    static constexpr size_t kSlotIndex_heading = 2;
+    static constexpr size_t kSlotIndex_velocity = 3;
+    static constexpr size_t kSlotIndex_curvature = 4;
+    static constexpr size_t kSlotIndex_relative_time_s = 5;
 
     auto Has_x() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto x() const -> const double& {
-        return value.x;
+    auto x() const -> double {
+        auto v = view_.get_float64(0);
+        return v.has_value() ? *v : 0.0;
     }
 
     auto Has_y() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto y() const -> const double& {
-        return value.y;
+    auto y() const -> double {
+        auto v = view_.get_float64(1);
+        return v.has_value() ? *v : 0.0;
     }
 
     auto Has_heading() const -> bool {
-        return true;
+        return not view_.is_null(2);
     }
 
-    auto heading() const -> const double& {
-        return value.heading;
+    auto heading() const -> double {
+        auto v = view_.get_float64(2);
+        return v.has_value() ? *v : 0.0;
     }
 
     auto Has_velocity() const -> bool {
-        return true;
+        return not view_.is_null(3);
     }
 
-    auto velocity() const -> const double& {
-        return value.velocity;
+    auto velocity() const -> double {
+        auto v = view_.get_float64(3);
+        return v.has_value() ? *v : 0.0;
     }
 
     auto Has_curvature() const -> bool {
-        return true;
+        return not view_.is_null(4);
     }
 
-    auto curvature() const -> const double& {
-        return value.curvature;
+    auto curvature() const -> double {
+        auto v = view_.get_float64(4);
+        return v.has_value() ? *v : 0.0;
     }
 
     auto Has_relative_time_s() const -> bool {
-        return true;
+        return not view_.is_null(5);
     }
 
-    auto relative_time_s() const -> const double& {
-        return value.relative_time_s;
+    auto relative_time_s() const -> double {
+        auto v = view_.get_float64(5);
+        return v.has_value() ? *v : 0.0;
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct TrajectoryPointBuilder {
+    static constexpr size_t kFieldCount = 6;
+
+    TrajectoryPointBuilder() : writer_(6) {}
+
+    void set_x(double value) { writer_.set_float64(0, value); }
+    void set_y(double value) { writer_.set_float64(1, value); }
+    void set_heading(double value) { writer_.set_float64(2, value); }
+    void set_velocity(double value) { writer_.set_float64(3, value); }
+    void set_curvature(double value) { writer_.set_float64(4, value); }
+    void set_relative_time_s(double value) { writer_.set_float64(5, value); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto TrajectoryPoint::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = TrajectoryPointBuilder();
+    builder.set_x(x);
+    builder.set_y(y);
+    builder.set_heading(heading);
+    builder.set_velocity(velocity);
+    builder.set_curvature(curvature);
+    builder.set_relative_time_s(relative_time_s);
+    return builder.Serialize();
+}
+
+inline auto TrajectoryPoint::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = TrajectoryPointBuilder();
+    builder.set_x(x);
+    builder.set_y(y);
+    builder.set_heading(heading);
+    builder.set_velocity(velocity);
+    builder.set_curvature(curvature);
+    builder.set_relative_time_s(relative_time_s);
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto TrajectoryPoint::from_fixed_layout(std::span<const uint8_t> data) -> TrajectoryPoint {
+    auto view = TrajectoryPointView(data.data(), data.size());
+    auto out = TrajectoryPoint();
+    out.x = view.x();
+    out.y = view.y();
+    out.heading = view.heading();
+    out.velocity = view.velocity();
+    out.curvature = view.curvature();
+    out.relative_time_s = view.relative_time_s();
+    return out;
+}
+
+struct TrajectoryOutputBuilder;
 
 struct TrajectoryOutput {
     static constexpr uint32_t kFieldId_points = 1;
@@ -424,84 +429,116 @@ struct TrajectoryOutput {
     void set_unknown_fields(star::schema::UnknownFieldSet unknown_fields) {
         unknown_fields_ = std::move(unknown_fields);
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> TrajectoryOutput;
 };
 
 struct TrajectoryOutputView {
-    TrajectoryOutput value{};
+    static constexpr size_t kFieldCount = 3;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> TrajectoryOutputView {
-        return TrajectoryOutputView{TrajectoryOutput::from_value(value)};
-    }
+    TrajectoryOutputView() = default;
+    explicit TrajectoryOutputView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit TrajectoryOutputView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
 
     static auto FromBinary(std::span<const uint8_t> bytes) -> TrajectoryOutputView {
-        return TrajectoryOutputView{TrajectoryOutput::from_binary(bytes)};
+        return TrajectoryOutputView(bytes);
     }
 
-    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {
-        return value.unknown_fields();
-    }
+    static constexpr size_t kSlotIndex_points = 0;
+    static constexpr size_t kSlotIndex_frame_id = 1;
+    static constexpr size_t kSlotIndex_timestamp_ns = 2;
 
     auto Has_points() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto points() const -> const std::vector<TrajectoryPoint>& {
-        return value.points;
+    auto points_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_array_bytes(0);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_frame_id() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto frame_id() const -> const int64_t& {
-        return value.frame_id;
+    auto frame_id() const -> int64_t {
+        auto v = view_.get_int64(1);
+        return v.has_value() ? *v : int64_t{0};
     }
 
     auto Has_timestamp_ns() const -> bool {
-        return true;
+        return not view_.is_null(2);
     }
 
-    auto timestamp_ns() const -> const int64_t& {
-        return value.timestamp_ns;
+    auto timestamp_ns() const -> int64_t {
+        auto v = view_.get_int64(2);
+        return v.has_value() ? *v : int64_t{0};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
 
 struct TrajectoryOutputBuilder {
-    TrajectoryOutput value{};
-    star::schema::UnknownFieldSet unknown_fields{};
+    static constexpr size_t kFieldCount = 3;
 
-    static auto FromValue(const TrajectoryOutput& value) -> TrajectoryOutputBuilder {
-        return TrajectoryOutputBuilder{value, value.unknown_fields()};
-    }
+    TrajectoryOutputBuilder() : writer_(3) {}
 
-    void set_unknown_fields(star::schema::UnknownFieldSet value_in) {
-        unknown_fields = std::move(value_in);
-    }
+    void set_points_bytes(std::span<const uint8_t> value) { writer_.set_array(0, value); }
+    void set_frame_id(int64_t value) { writer_.set_int64(1, value); }
+    void set_timestamp_ns(int64_t value) { writer_.set_int64(2, value); }
 
     auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
-        if (buf == nullptr) {
-            return 0;
-        }
-        auto tmp = value;
-        tmp.set_unknown_fields(unknown_fields);
-        const auto bytes = tmp.encode_binary();
-        if (bytes.size() > cap) {
-            return 0;
-        }
-        if (not bytes.empty()) {
-            std::memcpy(buf, bytes.data(), bytes.size());
-        }
-        return bytes.size();
+        return writer_.serialize_into(buf, cap);
     }
 
     auto EncodeTo(std::span<uint8_t> out) const -> size_t {
         return EncodeTo(out.data(), out.size());
     }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
 };
+
+inline auto TrajectoryOutput::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = TrajectoryOutputBuilder();
+    { auto bytes = star::transport::encode_object_array(points); builder.set_points_bytes(bytes); }
+    builder.set_frame_id(frame_id);
+    builder.set_timestamp_ns(timestamp_ns);
+    return builder.Serialize();
+}
+
+inline auto TrajectoryOutput::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = TrajectoryOutputBuilder();
+    { auto bytes = star::transport::encode_object_array(points); builder.set_points_bytes(bytes); }
+    builder.set_frame_id(frame_id);
+    builder.set_timestamp_ns(timestamp_ns);
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto TrajectoryOutput::from_fixed_layout(std::span<const uint8_t> data) -> TrajectoryOutput {
+    auto view = TrajectoryOutputView(data.data(), data.size());
+    auto out = TrajectoryOutput();
+    { auto bytes = view.points_bytes(); out.points = star::transport::decode_object_array<TrajectoryPoint>(bytes); }
+    out.frame_id = view.frame_id();
+    out.timestamp_ns = view.timestamp_ns();
+    return out;
+}
 
 using TrajectoryOutputSchema = TrajectoryOutput;
 
 }  // namespace star::setting::planning
 
-#endif // ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_PLANNING_TRAJECTORY_S_H__
+#endif // __PLANNING_TRAJECTORY__

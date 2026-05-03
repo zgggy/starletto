@@ -8,7 +8,7 @@
 >
 > **当前聚焦**：basement。libraries 和 modules 的改动仅用于配合 basement 开发与测试。
 >
-> **Basement 进度总览**：详见 [basement_progress.md](file:///home/zgy/projects/starletto/document/spec/basement_progress.md)
+> **Basement 进度总览**：详见 [basement_progress.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_progress.md)
 
 ## 0. Basement 当前状态（2026-04-07）
 
@@ -35,7 +35,7 @@
 
 ## 2. M1：Schema v1（第一优先级）
 
-Spec： [basement_schema.md](file:///home/zgy/projects/starletto/document/spec/basement_schema.md)
+Spec： [basement_schema.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_schema.md)
 
 交付项：
 
@@ -54,7 +54,7 @@ Spec： [basement_schema.md](file:///home/zgy/projects/starletto/document/spec/b
 
 ## 3. M2：Transport v1（第二优先级）
 
-Spec： [basement_transport.md](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+Spec： [basement_transport.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 
 交付项：
 
@@ -70,7 +70,7 @@ Spec： [basement_transport.md](file:///home/zgy/projects/starletto/document/spe
 
 ## 4. M3：Runtime v1（第三优先级，拆分推进）
 
-Spec 索引： [basement_runtime_index.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_index.md)
+Spec 索引： [basement_runtime_index.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_index.md)
 
 交付项（按拆分子模块推进）：
 
@@ -149,10 +149,10 @@ Spec 索引： [basement_runtime_index.md](file:///home/zgy/projects/starletto/d
 
 ### 7.1 P7 auto_configure 零样板模式（2026-04-06）
 
-Spec: [basement_runtime_host.md §7](file:///home/zgy/projects/starletto/document/spec/basement_runtime_host.md)
+Spec: [basement_runtime_host.md §7](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_host.md)
 
 交付项：
-- ✅ `Component::auto_configure()` — 从 `component.conf` 的 `load_plan` 自动创建所有 reader/writer/ack_writer/bidirectional_channel/service
+- ✅ `Component::auto_configure()` — 从 `component.conf` 的 `load_plan` 自动创建所有 reader/writer/delivery_writer/bidirectional_channel/service
 - ✅ `read_latest<T>(name)` — 类型安全轮询 API，inproc 指针路径优先 + SHM from_binary 回退
 - ✅ `publish(name, msg)` / `write(name, msg)` — writer 别名
 - ✅ motion_component.h 重写为 Mode A（零样板，~103 行）
@@ -161,22 +161,22 @@ Spec: [basement_runtime_host.md §7](file:///home/zgy/projects/starletto/documen
 验收：
 - ✅ `./star run --frames=3 modules/setting/config/component.conf` 正常运行
 
-### 7.2 P1 AckWriter（2026-04-06）
+### 7.2 P1 DeliveryWriter（2026-04-06）
 
-Spec: [basement_transport.md §10](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+Spec: [basement_transport.md §10](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 
 交付项：
-- ✅ `AckResult { accepted, message, latency_us }`
-- ✅ `AckWriter : Writer` 抽象接口 + `publish_with_ack(msg, timeout) → future<AckResult>`
-- ✅ `InprocAckWriter` 同步 dispatch-all-readers 实现
-- ✅ Component 层 `declare_ack_writer<T>()` / `publish_with_ack<T>()`
+- ✅ `DeliveryResult { accepted, message, latency_us }`
+- ✅ `DeliveryWriter : Writer` 抽象接口 + `write_with_delivery(msg, timeout) → future<DeliveryResult>`
+- ✅ `InprocSyncWriter` 同步 dispatch-all-readers 实现
+- ✅ Component 层 `declare_delivery_writer<T>()` / `write_with_delivery<T>()`
 
 验收：
 - ✅ 编译通过 + 单进程/多进程测试正常
 
 ### 7.3 P2 Bidirectional Channel（2026-04-06）
 
-Spec: [basement_transport.md §11](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+Spec: [basement_transport.md §11](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 
 交付项：
 - ✅ `EndpointPlan.direction = bidirectional` schema 字段
@@ -188,7 +188,7 @@ Spec: [basement_transport.md §11](file:///home/zgy/projects/starletto/document/
 
 ### 7.4 P3 Service conf 集成（2026-04-06）
 
-Spec: [basement_transport.md §13](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+Spec: [basement_transport.md §13](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 
 交付项：
 - ✅ `ServiceEndpointPlan` schema 定义（name/topic/request_type_name/response_type_name/role）
@@ -216,7 +216,7 @@ Spec: [basement_transport.md §13](file:///home/zgy/projects/starletto/document/
 
 ## 8. Codegen 构建集成（✅ 完成）
 
-Spec: [basement_schema.md §12](file:///home/zgy/projects/starletto/document/spec/basement_schema.md)
+Spec: [basement_schema.md §12](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_schema.md)
 
 交付项：
 - ✅ Meson `run_command()` 在 configure 时自动执行 codegen（20 对 .schema → .s.h）
@@ -233,7 +233,7 @@ Spec: [basement_schema.md §12](file:///home/zgy/projects/starletto/document/spe
 
 ### 9.1 P4 Correlation ID / 异步调用（2026-04-07）
 
-Spec: [basement_transport.md §14](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+Spec: [basement_transport.md §14](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 
 交付项：
 - ✅ `CorrelationId` 结构体 + `operator==` + `std::hash` 特化 + `generate()` 原子生成器
@@ -248,7 +248,7 @@ Spec: [basement_transport.md §14](file:///home/zgy/projects/starletto/document/
 
 ### 9.2 P5 QoS / 流控（2026-04-07）
 
-Spec: [basement_transport.md §15](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+Spec: [basement_transport.md §15](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 
 交付项：
 - ✅ `DropPolicy` 枚举（KEEP_LAST / DROP_NEWEST）+ `QoSPolicy` 结构体
@@ -274,7 +274,7 @@ Spec: [basement_transport.md §15](file:///home/zgy/projects/starletto/document/
 | Tools (record/replay/monitor) | ✅ | STARREC 格式, stats dump |
 | 代码卫生 | ✅ | old/ 删, deprecated 标记, CMake legacy |
 
-**Basement 下一阶段（详见 [basement_progress.md §5](file:///home/zgy/projects/starletto/document/spec/basement_progress.md)）：**
+**Basement 下一阶段（详见 [basement_progress.md §5](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_progress.md)）：**
 
 | 优先级 | 阶段 | 目标 | 投入产出比 |
 |--------|------|------|-----------|

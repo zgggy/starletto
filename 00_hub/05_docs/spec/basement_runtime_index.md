@@ -11,7 +11,7 @@ Runtime 必须拆分为多个子模块，避免形成一个不可维护的巨型
   - ✅ 已实现：`FrameContext` 集成（`current_frame()` / `set_current_frame()`），Scheduler 通过 `set_context()` 注入帧信息
 - **component**
   - 目标：组件生命周期接口与注册机制、便捷数据访问 API
-  - 约束：组件是普通 C++ 对象，不继承任何中间件对象
+  - 约束：组件是普通 C++ 对象，不继承任何中间件对象；**不得直接 include 具体传输实现**
   - ✅ 已实现：
     - `Component` 基类：`declare_reader<T>(name, cb)` / `declare_writer<T>(name)` / `write(name, msg)`
     - **`auto_configure()`** — 从 conf 自动创建所有 reader/writer（零样板模式）
@@ -21,6 +21,12 @@ Runtime 必须拆分为多个子模块，避免形成一个不可维护的巨型
     - 自动 inproc/SHM 双路径解码（SFINAE 检测 from_binary）
     - `ComponentRegistry` + `schema_registry()` — 插件注册 + schema 自注册
     - `NativeComponentHost` — 装配器（manifest 解析 / trigger 绑定 / recorder 设置 / auto_configure 调用）
+  - ✅ v0.4.0 重整：移除 NativeMessageBus/ShmMessageBus 直接依赖，`read_history()` 改用 `MessageBus::peek_latest()` 接口
+- **parameter**
+  - 目标：进程内 key-value 参数管理
+  - 约束：参数是运行时概念，不属于 Transport 层
+  - ✅ 已实现：`ParameterStore`（`star::runtime` 命名空间）+ `NativeParameterStore`
+  - ✅ v0.4.0 重整：从 `transport/` 移至 `runtime/parameter/`，命名空间从 `star::transport` 改为 `star::runtime`
 - **trigger**
   - 目标：消息同步触发 + 定时驱动；帧语义入口
   - ✅ 已实现：
@@ -56,15 +62,19 @@ Runtime 必须拆分为多个子模块，避免形成一个不可维护的巨型
 |------------|---------|------|
 | context | `basement/runtime/context/runtime_context.h` | ✅ |
 | | `basement/runtime/context/frame_context.h` | ✅ |
-| component | `basement/runtime/component/component.h` | ✅ (已增强) |
+| component | `basement/runtime/component/component.h` | ✅ (v0.4.0: 无具体传输依赖) |
 | | `basement/runtime/component/component_registry.h` | ✅ (+schema_registry) |
 | | `basement/runtime/component/native_component_host.h` | ✅ (不再继承 ComponentHost) |
+| parameter | `basement/runtime/parameter/parameter_store.h` | ✅ (v0.4.0: 从 transport 移入) |
+| | `basement/runtime/parameter/native_parameter_store.h` | ✅ (v0.4.0: star::runtime) |
 | trigger | `basement/runtime/trigger/trigger.h` | ✅ (+TimerTrigger) |
 | scheduler | `basement/runtime/scheduler/scheduler.h` | ✅ |
 | | `basement/runtime/scheduler/native_scheduler.h` | ✅ |
 | process | `basement/runtime/process/process_orchestrator.h` | ✅ 新增 |
 | observability | `basement/runtime/observability/channel_stats.h` | ✅ 新增 |
-| factory | `basement/runtime/factory/runtime_factory.h` | ✅ |
+| | `basement/runtime/observability/health_checker.h` | ✅ (v0.4.0: 结构化数据) |
+| | `basement/runtime/observability/resource_monitor.h` | ✅ (v0.4.0: 无静态全局) |
+| factory | `basement/runtime/factory/runtime_factory.h` | ✅ (v0.4.0: 只做组装) |
 
 ### 已清理的过时代码
 

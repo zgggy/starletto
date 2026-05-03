@@ -52,20 +52,9 @@ def defs_by_name(doc: schema_codegen.SchemaDoc) -> dict[str, schema_codegen.DefB
 
 
 def compare_type_ref(path: str, old: schema_codegen.TypeRef, new: schema_codegen.TypeRef, issues: list[CompatIssue]) -> None:
-    if old.category != new.category:
-        issues.append(CompatIssue("breaking", path, f"type category changed: {old.category} -> {new.category}"))
+    if schema_codegen.compat_type_allowed(old, new):
         return
-    if old.optional != new.optional or old.explicit_required != new.explicit_required:
-        issues.append(CompatIssue("breaking", path, f"optional/required changed: {type_repr(old)} -> {type_repr(new)}"))
-        return
-    if type_repr(old) == type_repr(new):
-        return
-    if old.category == "simple":
-        if old.name in {"uint32", "uint64"} and new.name in {"uint32", "uint64"}:
-            return
-        if old.name in {"int", "int32", "int64"} and new.name in {"int", "int32", "int64"}:
-            return
-    issues.append(CompatIssue("breaking", path, f"type changed: {type_repr(old)} -> {type_repr(new)}"))
+    issues.append(CompatIssue("breaking", path, f"type incompatible: {type_repr(old)} -> {type_repr(new)}"))
 
 
 def compare_block(

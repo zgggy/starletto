@@ -18,7 +18,7 @@ class ControlComponent : public star::runtime::Component {
   public:
     void init() override {
         declare_reader<star::setting::planning::TrajectoryOutput>("planning_trajectory", [this](auto traj) { on_trajectory(traj); });
-        logI << "ControlComponent initialized, subscribed to planning.trajectory, publishing control.command";
+        logI << "ControlComponent initialized, reading from planning.trajectory, writing control.command";
     }
 
     auto process_once() -> bool override {

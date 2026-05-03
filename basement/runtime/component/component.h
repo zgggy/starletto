@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "basement/core/common_types.h"
 #include "basement/core/logger/logger.h"
@@ -21,8 +22,7 @@
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/api/service_bus.h"
-#include "basement/transport/native/native_message_bus.h"
-#include "basement/transport/shm/shm_message_bus.h"
+#include "basement/transport/shm/shm_views.h"
 
 namespace star::runtime {
 
@@ -84,7 +84,9 @@ class Component {
                 d.type_name = e.type_name.value_or("");
                 writers_[e.name] = bus.create_writer(d);
                 if (e.record.value_or(false)) {
-                    bus.enable_record_channel(d.name);
+                    if (auto* recordable = context_->recordable_bus()) {
+                        recordable->enable_record_channel(d.name);
+                    }
                 }
                 if (e.has_direction() && e.direction.value_or("") == "bidirectional") {
                     auto port_name = e.name;
@@ -103,7 +105,9 @@ class Component {
                 desc.name = s.channel.value_or(s.name);
                 if (s.has_role() && s.role.value_or("") == "server") {
                     auto server = context_->service_bus().create_server(
-                        desc, [this, svc_name = s.name](const star::transport::ServiceRequest& req) -> star::transport::ServiceResponse { return handle_service_request(svc_name, req); });
+                        desc, [this, svc_name = s.name](const star::transport::ServiceRequest& req) -> star::transport::SerializedServiceResponse {
+                            return handle_service_request(svc_name, req);
+                        });
                     service_servers_[s.name] = std::move(server);
                 } else {
                     auto client = context_->service_bus().create_client(desc);
@@ -127,35 +131,44 @@ class Component {
             }
             view = it->second;
         }
-        if (auto typed = view.data.as<_Msg>()) {
-            return typed;
+        return decode_message_shared<_Msg>(view);
+    }
+
+    template <typename _MsgView>
+    auto peek_view(const std::string& port_name) -> std::optional<_MsgView> {
+        if (not latest_mutex_) {
+            return std::nullopt;
         }
-        if constexpr (has_from_binary<_Msg>::value) {
-            if (const auto shm = view.data.as<star::transport::ShmBinaryView>()) {
-                if (shm->size > 0) {
-                    try {
-                        return std::make_shared<_Msg>(_Msg::from_binary(shm->bytes()));
-                    } catch (...) {
-                        return nullptr;
-                    }
+        star::transport::MessageView view;
+        {
+            std::lock_guard<std::mutex> lock(*latest_mutex_);
+            const auto it = latest_messages_.find(port_name);
+            if (it == latest_messages_.end()) {
+                return std::nullopt;
+            }
+            view = it->second;
+        }
+        if (const auto slot = view.payload.as<star::transport::ShmSlotView>()) {
+            if (slot->size > 0) {
+                auto v = _MsgView(slot->data, slot->size);
+                if (v.valid()) {
+                    return v;
                 }
             }
         }
-        return nullptr;
+        return std::nullopt;
     }
 
     template <typename _Msg>
     auto read_history(const std::string& port_name, size_t max_count = 1) -> std::vector<std::shared_ptr<const _Msg>> {
         auto channel = resolve_channel(port_name, true);
-        auto* native_bus = dynamic_cast<star::transport::NativeMessageBus*>(&context_->message_bus());
-        if (not native_bus) {
-            return {};
-        }
         auto out = std::vector<std::shared_ptr<const _Msg>>{};
-        if (auto latest = native_bus->peek_latest(channel)) {
-            if (auto typed = latest->data.as<_Msg>()) {
-                out.push_back(typed);
-            }
+        auto latest = context_->message_bus().peek_latest(channel);
+        if (not latest.has_value()) {
+            return out;
+        }
+        if (auto typed = decode_message_shared<_Msg>(*latest)) {
+            out.push_back(typed);
         }
         return out;
     }
@@ -178,41 +191,38 @@ class Component {
     }
 
     template <typename _Msg>
-    void declare_ack_writer(const std::string& name, int64_t timeout_ms = 10) {
+    void declare_delivery_writer(const std::string& name) {
         auto d = star::transport::ChannelDescriptor{};
         d.name = resolve_channel(name, false);
         d.type_name = resolve_type_name<_Msg>(name, false);
-        d.options.ack_timeout_ms = timeout_ms;
-        ack_writers_[name] = context()->message_bus().create_ack_writer(d);
+        delivery_writers_[name] = context()->message_bus().create_delivery_writer(d);
     }
 
     template <typename _Msg>
-    auto publish_with_ack(const std::string& name, const _Msg& msg, int64_t timeout_ms = 10) -> star::transport::AckResult {
-        auto it = ack_writers_.find(name);
-        if (it != ack_writers_.end() && it->second) {
-            auto msg_ptr = std::make_shared<_Msg>(msg);
-            auto view = star::transport::MessageView{};
-            view.data = star::base::TypedConstPtr::from(msg_ptr);
-            view.encode_binary = [msg_ptr]() -> std::vector<uint8_t> { return msg_ptr->encode_binary(); };
-            auto future = it->second->write_with_ack(view, timeout_ms);
+    auto write_with_delivery(const std::string& name, const _Msg& msg, int64_t timeout_ms = 10) -> star::transport::DeliveryResult {
+        auto it = delivery_writers_.find(name);
+        if (it != delivery_writers_.end() && it->second) {
+            auto msg_ptr = std::make_shared<const _Msg>(msg);
+            auto serialized = make_serialized_message(msg_ptr);
+            auto future = it->second->write_serialized_with_delivery(serialized, timeout_ms);
             return future.get();
         }
         write(name, msg);
-        return {true, "fallback (no ack writer)", 0};
+        return {true, "fallback (no delivery writer)", 0};
     }
 
     template <typename _Msg>
     void write(const std::string& name, const _Msg& msg) {
         auto it = writers_.find(name);
         if (it == writers_.end() || not it->second) {
-            logW << "Component write failed, writer not declared: " << name;
-            return;
+            throw star::excep::RuntimeError("Component write failed, writer not declared: ", name);
         }
-        auto msg_ptr = std::make_shared<_Msg>(msg);
-        auto view = star::transport::MessageView{};
-        view.data = star::base::TypedConstPtr::from(msg_ptr);
-        view.encode_binary = [msg_ptr]() -> std::vector<uint8_t> { return msg_ptr->encode_binary(); };
-        it->second->write(view);
+        auto msg_ptr = std::make_shared<const _Msg>(msg);
+        const auto result = it->second->write_serialized(make_serialized_message(msg_ptr));
+        if (!result.ok()) {
+            throw star::excep::RuntimeError("Component write failed: name=", name, ", status=", star::transport::write_status_string(result.status),
+                                            ", err=", result.error_message);
+        }
     }
 
     template <typename _Msg>
@@ -235,23 +245,12 @@ class Component {
             auto desc = star::transport::ServiceDescriptor{name};
             client = context_->service_bus().create_client(desc);
         }
-        auto req = star::transport::ServiceRequest{};
         auto req_ptr = std::make_shared<const _Req>(request);
-        req.data_typed = star::base::TypedConstPtr::from(req_ptr);
-        req.encode_binary = [req_ptr]() -> std::vector<uint8_t> { return req_ptr->encode_binary(); };
-        req.data = req_ptr->to_value();
-        auto response = client->call(req);
+        auto response = client->call_serialized(make_serialized_service_request(req_ptr));
         if (not response.ok) {
             throw star::excep::RuntimeError("service call failed: ", response.message);
         }
-        if (const auto typed = response.data_typed.as<_Res>()) {
-            return *typed;
-        }
-        if (response.encode_binary) {
-            const auto bytes = response.encode_binary();
-            return _Res::from_binary(std::span<const uint8_t>(bytes.data(), bytes.size()));
-        }
-        throw star::excep::RuntimeError("service response decode failed");
+        return decode_message_value<_Res>(response.body, "service response decode failed");
     }
 
     auto call_service_raw(const std::string& name, const star::transport::ServiceRequest& request) -> star::transport::ServiceResponse {
@@ -276,45 +275,38 @@ class Component {
             auto desc = star::transport::ServiceDescriptor{name};
             client = context_->service_bus().create_client(desc);
         }
-        auto req = star::transport::ServiceRequest{};
         auto req_ptr = std::make_shared<const _Req>(request);
-        req.data_typed = star::base::TypedConstPtr::from(req_ptr);
-        req.encode_binary = [req_ptr]() -> std::vector<uint8_t> { return req_ptr->encode_binary(); };
-        req.data = req_ptr->to_value();
-        auto future_response = client->async_call(req);
-        auto shared_future = std::make_shared<std::future<star::transport::ServiceResponse>>(std::move(future_response));
-        auto promise = std::make_shared<std::promise<_Res>>();
-        auto future_res = promise->get_future();
-        std::thread([shared_future, promise]() {
-            try {
-                auto response = shared_future->get();
-                if (not response.ok) {
-                    promise->set_exception(std::make_exception_ptr(star::excep::RuntimeError("async service call failed: ", response.message)));
-                    return;
-                }
-                if (const auto typed = response.data_typed.as<_Res>()) {
-                    promise->set_value(*typed);
-                    return;
-                }
-                if (response.encode_binary) {
-                    const auto bytes = response.encode_binary();
-                    promise->set_value(_Res::from_binary(std::span<const uint8_t>(bytes.data(), bytes.size())));
-                    return;
-                }
-                promise->set_exception(std::make_exception_ptr(star::excep::RuntimeError("async service response decode failed")));
-            } catch (...) {
-                promise->set_exception(std::current_exception());
+        return std::async(std::launch::async, [client, request = make_serialized_service_request(req_ptr)]() mutable -> _Res {
+            auto response = client->call_serialized(request);
+            if (not response.ok) {
+                throw star::excep::RuntimeError("async service call failed: ", response.message);
             }
-        }).detach();
-        return future_res;
+            if (auto typed = response.body.payload.template as<_Res>()) {
+                return *typed;
+            }
+            if constexpr (has_from_binary<_Res>::value) {
+                if (const auto slot = response.body.payload.template as<star::transport::ShmSlotView>()) {
+                    if (slot->size > 0) {
+                        return _Res::from_binary(slot->bytes());
+                    }
+                }
+                if (const auto binary = response.body.payload.template as<star::transport::BinaryPayloadView>()) {
+                    if (binary->size > 0) {
+                        return _Res::from_binary(binary->bytes());
+                    }
+                }
+            }
+            throw star::excep::RuntimeError("async service response decode failed");
+        });
     }
 
   protected:
-    virtual auto handle_service_request(const std::string&, const star::transport::ServiceRequest&) -> star::transport::ServiceResponse {
-        auto resp = star::transport::ServiceResponse{};
-        resp.ok = false;
-        resp.message = "not implemented";
-        return resp;
+    virtual auto handle_service_request(const std::string&, const star::transport::ServiceRequest&) -> star::transport::SerializedServiceResponse {
+        auto response = star::transport::ServiceResponse{};
+        response.ok = false;
+        response.message = "not implemented";
+        response.body.correlation_id = star::transport::CorrelationId{};
+        return star::transport::SerializedServiceResponse{response, {}};
     }
 
     auto resolve_channel(const std::string& port_name, bool is_reader) const -> std::string {
@@ -372,21 +364,70 @@ class Component {
   private:
     template <typename _Msg, typename _Cb>
     void decode_and_dispatch(const star::transport::MessageView& msg, _Cb& cb) {
-        if (auto typed = msg.data.as<_Msg>()) {
+        if (auto typed = decode_message_shared<_Msg>(msg)) {
             cb(typed);
-            return;
+        }
+    }
+
+    template <typename _Msg>
+    static auto decode_message_shared(const star::transport::MessageView& msg) -> std::shared_ptr<const _Msg> {
+        if (auto typed = msg.payload.as<_Msg>()) {
+            return typed;
         }
         if constexpr (has_from_binary<_Msg>::value) {
-            if (const auto shm = msg.data.as<star::transport::ShmBinaryView>()) {
-                if (shm->size > 0) {
+            if (const auto slot = msg.payload.as<star::transport::ShmSlotView>()) {
+                if (slot->size > 0) {
                     try {
-                        auto decoded = std::make_shared<_Msg>(_Msg::from_binary(shm->bytes()));
-                        cb(decoded);
+                        return std::make_shared<_Msg>(_Msg::from_binary(slot->bytes()));
                     } catch (...) {
+                        return nullptr;
+                    }
+                }
+            }
+            if (const auto binary = msg.payload.as<star::transport::BinaryPayloadView>()) {
+                if (binary->size > 0) {
+                    try {
+                        return std::make_shared<_Msg>(_Msg::from_binary(binary->bytes()));
+                    } catch (...) {
+                        return nullptr;
                     }
                 }
             }
         }
+        return nullptr;
+    }
+
+    template <typename _Msg>
+    static auto decode_message_value(const star::transport::MessageView& msg, const char* error_message) -> _Msg {
+        if (auto typed = decode_message_shared<_Msg>(msg)) {
+            return *typed;
+        }
+        throw star::excep::RuntimeError(error_message);
+    }
+
+    template <typename _Msg>
+    static auto make_serialized_message(const std::shared_ptr<const _Msg>& msg_ptr) -> star::transport::SerializedMessage {
+        auto view = star::transport::MessageView{};
+        view.payload = star::base::TypedConstPtr::from(msg_ptr);
+        return star::transport::SerializedMessage{view, make_message_serializer(msg_ptr)};
+    }
+
+    template <typename _Req>
+    static auto make_serialized_service_request(const std::shared_ptr<const _Req>& req_ptr) -> star::transport::SerializedServiceRequest {
+        auto request = star::transport::ServiceRequest{};
+        request.body.payload = star::base::TypedConstPtr::from(req_ptr);
+        request.body.correlation_id = star::transport::CorrelationId::generate();
+        return star::transport::SerializedServiceRequest{request, make_message_serializer(req_ptr)};
+    }
+
+    template <typename _Msg>
+    static auto make_message_serializer(const std::shared_ptr<const _Msg>& msg_ptr) -> star::transport::MessageSerializer {
+        auto serializer = star::transport::MessageSerializer{};
+        serializer.encode_binary = [msg_ptr]() -> std::vector<uint8_t> { return msg_ptr->encode_binary(); };
+        if constexpr (has_encode_fixed_layout_into<_Msg>::value) {
+            serializer.encode_into = [msg_ptr](uint8_t* buf, size_t cap) -> size_t { return msg_ptr->encode_fixed_layout_into(buf, cap); };
+        }
+        return serializer;
     }
 
     template <typename _T, typename = void>
@@ -395,11 +436,17 @@ class Component {
     template <typename _T>
     struct has_from_binary<_T, std::void_t<decltype(_T::from_binary(std::span<const uint8_t>{}))>> : std::true_type {};
 
+    template <typename _T, typename = void>
+    struct has_encode_fixed_layout_into : std::false_type {};
+
+    template <typename _T>
+    struct has_encode_fixed_layout_into<_T, std::void_t<decltype(std::declval<const _T&>().encode_fixed_layout_into(std::declval<uint8_t*>(), std::declval<size_t>()))>> : std::true_type {};
+
     std::shared_ptr<RuntimeContext> context_;
     std::optional<star::generated::runtime::component_load_plan::ComponentLoadPlan> plan_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::Reader>> readers_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::Writer>> writers_;
-    std::unordered_map<std::string, std::shared_ptr<star::transport::AckWriter>> ack_writers_;
+    std::unordered_map<std::string, std::shared_ptr<star::transport::DeliveryWriter>> delivery_writers_;
     std::unordered_set<std::string> bidirectional_channels_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::ServiceClient>> service_clients_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::ServiceServer>> service_servers_;

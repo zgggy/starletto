@@ -6,15 +6,21 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "basement/transport/common/route_parser.h"
+
 namespace star::transport {
 
 struct ChannelDescriptor;
 
 class ChannelRegistry {
 public:
-    struct RouteEntry {
-        std::string producer_group;
-        std::unordered_set<std::string> consumer_groups;
+    using RouteEntry = star::transport::RouteEntry;
+
+    enum class ShmRouteMode {
+        INPROC_ONLY,
+        SHM_WRITE,
+        SHM_READ,
+        SHM_READ_WRITE,
     };
 
     void configure_local_group(std::string local_group) {
@@ -25,6 +31,12 @@ public:
     void configure_route_plan(const std::string& route_plan) {
         std::lock_guard<std::mutex> lock(mutex_);
         route_registry_ = parse_route_plan(route_plan);
+    }
+
+    void configure_channel_sets(const std::string& shm_pub_channels_csv, const std::string& shm_sub_channels_csv) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        shm_pub_channels_ = parse_channel_set(shm_pub_channels_csv);
+        shm_sub_channels_ = parse_channel_set(shm_sub_channels_csv);
     }
 
     void register_writer(const std::string& channel, const std::string& process_group) {
@@ -51,89 +63,63 @@ public:
         return local_group_;
     }
 
-    auto should_publish_shm(const std::string& channel) const -> bool {
+    auto shm_route_mode(const std::string& channel) const -> ShmRouteMode {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (local_group_.empty()) {
-            return false;
-        }
-        const auto it = route_registry_.find(channel);
-        if (it == route_registry_.end() || it->second.producer_group != local_group_) {
-            return false;
-        }
-        for (const auto& consumer_group : it->second.consumer_groups) {
-            if (consumer_group != local_group_) {
-                return true;
-            }
-        }
-        return false;
+        return shm_route_mode_locked(channel);
     }
 
-    auto should_subscribe_shm(const std::string& channel) const -> bool {
+    auto should_write_shm(const std::string& channel) const -> bool {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (local_group_.empty()) {
-            return false;
-        }
-        const auto it = route_registry_.find(channel);
-        if (it == route_registry_.end()) {
-            return false;
-        }
-        return it->second.producer_group != local_group_
-            && it->second.consumer_groups.find(local_group_) != it->second.consumer_groups.end();
+        const auto mode = shm_route_mode_locked(channel);
+        return mode == ShmRouteMode::SHM_WRITE || mode == ShmRouteMode::SHM_READ_WRITE;
+    }
+
+    auto should_read_shm(const std::string& channel) const -> bool {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto mode = shm_route_mode_locked(channel);
+        return mode == ShmRouteMode::SHM_READ || mode == ShmRouteMode::SHM_READ_WRITE;
     }
 
 private:
-    static auto parse_channel_set(const std::string& s) -> std::unordered_set<std::string> {
-        std::unordered_set<std::string> out;
-        if (s.empty()) {
-            return out;
-        }
-        std::string cur;
-        for (const auto ch : s) {
-            if (ch == ',' || ch == ';') {
-                if (not cur.empty()) {
-                    out.emplace(std::move(cur));
-                    cur = {};
-                }
-                continue;
+    auto shm_route_mode_locked(const std::string& channel) const -> ShmRouteMode {
+        if (not local_group_.empty()) {
+            const auto it = route_registry_.find(channel);
+            if (it == route_registry_.end()) {
+                return ShmRouteMode::INPROC_ONLY;
             }
-            cur.push_back(ch);
+            if (it->second.producer_group != local_group_) {
+                if (it->second.consumer_groups.find(local_group_) != it->second.consumer_groups.end()) {
+                    return ShmRouteMode::SHM_READ;
+                }
+                return ShmRouteMode::INPROC_ONLY;
+            }
+            for (const auto& consumer_group : it->second.consumer_groups) {
+                if (consumer_group != local_group_) {
+                    return ShmRouteMode::SHM_WRITE;
+                }
+            }
+            return ShmRouteMode::INPROC_ONLY;
         }
-        if (not cur.empty()) {
-            out.emplace(std::move(cur));
-        }
-        return out;
-    }
 
-    static auto parse_route_plan(const std::string& s) -> std::unordered_map<std::string, RouteEntry> {
-        auto out = std::unordered_map<std::string, RouteEntry>{};
-        if (s.empty()) {
-            return out;
+        const bool can_write = shm_pub_channels_.find(channel) != shm_pub_channels_.end();
+        const bool can_read = shm_sub_channels_.find(channel) != shm_sub_channels_.end();
+        if (can_write && can_read) {
+            return ShmRouteMode::SHM_READ_WRITE;
         }
-        size_t start = 0;
-        while (start < s.size()) {
-            const auto end = s.find(';', start);
-            const auto item = s.substr(start, end == std::string::npos ? std::string::npos : end - start);
-            if (not item.empty()) {
-                const auto p1 = item.find('|');
-                const auto p2 = p1 == std::string::npos ? std::string::npos : item.find('|', p1 + 1);
-                if (p1 != std::string::npos && p2 != std::string::npos) {
-                    RouteEntry entry;
-                    entry.producer_group = item.substr(p1 + 1, p2 - p1 - 1);
-                    entry.consumer_groups = parse_channel_set(item.substr(p2 + 1));
-                    out.emplace(item.substr(0, p1), std::move(entry));
-                }
-            }
-            if (end == std::string::npos) {
-                break;
-            }
-            start = end + 1;
+        if (can_write) {
+            return ShmRouteMode::SHM_WRITE;
         }
-        return out;
+        if (can_read) {
+            return ShmRouteMode::SHM_READ;
+        }
+        return ShmRouteMode::INPROC_ONLY;
     }
 
     mutable std::mutex mutex_;
     std::string local_group_;
     std::unordered_map<std::string, RouteEntry> route_registry_;
+    std::unordered_set<std::string> shm_pub_channels_;
+    std::unordered_set<std::string> shm_sub_channels_;
 };
 
 }  // namespace star::transport

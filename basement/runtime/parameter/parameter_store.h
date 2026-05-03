@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace star::transport {
+namespace star::runtime {
 
 class ParameterStore {
 public:
@@ -18,6 +18,6 @@ public:
     virtual void flush() = 0;
 };
 
-}  // namespace star::transport
+}  // namespace star::runtime
 
 #endif // __PARAMETER_STORE_H__

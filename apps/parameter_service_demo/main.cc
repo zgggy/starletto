@@ -1,24 +1,13 @@
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/schema/binary_codec.h"
+#include "basement/schema/native/schema_bootstrap.h"
 #include "basement/schema/schema_validator.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/transport/api/service_bus.h"
+#include "basement/transport/shm/shm_views.h"
 #include "libraries/common/schema/schema_value.h"
 #include "modules/setting/parameter/parameter_component.h"
-#include "modules/setting/schema/config/component.s.h"
-#include "modules/setting/schema/config/logger.s.h"
-#include "modules/setting/schema/config/sensor.s.h"
-#include "modules/setting/schema/config/system.s.h"
-#include "modules/setting/schema/config/vehicle.s.h"
-#include "modules/setting/schema/config_snapshot.s.h"
-#include "modules/setting/schema/parameter_snapshot.s.h"
-#include "modules/setting/schema/planning/motion.s.h"
-#include "modules/setting/schema/service/parameter_get_request.s.h"
-#include "modules/setting/schema/service/parameter_get_response.s.h"
-#include "modules/setting/schema/service/parameter_list_request.s.h"
-#include "modules/setting/schema/service/parameter_list_response.s.h"
-#include "modules/setting/schema/service/parameter_set_request.s.h"
-#include "modules/setting/schema/service/parameter_set_response.s.h"
+#include "modules/setting/schema/schema_bootstrap.h"
 
 #include <filesystem>
 #include <fstream>
@@ -32,31 +21,20 @@
 namespace {
 
 void register_generated_schemas(star::schema::SchemaRegistry& registry) {
-    star::generated::setting::parameter::snapshot::ParameterSnapshot::register_schema(registry);
-    star::generated::setting::config::snapshot::ConfigSnapshot::register_schema(registry);
-    star::setting::parameter::planning::MotionParameter::register_schema(registry);
-    star::setting::service::parameter::get_request::ParameterGetRequest::register_schema(registry);
-    star::setting::service::parameter::get_response::ParameterGetResponse::register_schema(registry);
-    star::setting::service::parameter::list_request::ParameterListRequest::register_schema(registry);
-    star::setting::service::parameter::list_response::ParameterListResponse::register_schema(registry);
-    star::setting::service::parameter::set_request::ParameterSetRequest::register_schema(registry);
-    star::setting::service::parameter::set_response::ParameterSetResponse::register_schema(registry);
-    star::setting::config::component::ComponentConfig::register_schema(registry);
-    star::setting::config::logger::LoggerConfig::register_schema(registry);
-    star::setting::config::sensor::SensorConfig::register_schema(registry);
-    star::setting::config::system::SystemConfig::register_schema(registry);
-    star::setting::config::vehicle::VehicleConfig::register_schema(registry);
+    star::schema::native::register_builtin_schemas(registry);
+    star::setting::schema::register_setting_schemas(registry);
 }
 
 template <typename _RequestT>
-auto make_typed_request(_RequestT request_value) -> star::transport::ServiceRequest {
+auto make_typed_request(_RequestT request_value) -> star::transport::SerializedServiceRequest {
     auto request = star::transport::ServiceRequest{};
     auto msg = std::make_shared<const _RequestT>(std::move(request_value));
-    request.data_typed = star::base::TypedConstPtr::from(msg);
-    request.schema_type_id = _RequestT::schema_type_id();
-    request.encode_binary = [msg]() { return msg->encode_binary(); };
-    request.data = msg->to_value();
-    return request;
+    request.body.payload = star::base::TypedConstPtr::from(msg);
+    request.body.schema_type_id = _RequestT::schema_type_id();
+    request.body.correlation_id = star::transport::CorrelationId::generate();
+    auto serializer = star::transport::MessageSerializer{};
+    serializer.encode_binary = [msg]() { return msg->encode_binary(); };
+    return star::transport::SerializedServiceRequest{request, serializer};
 }
 
 template <typename _ResponseT>
@@ -64,17 +42,18 @@ auto decode_typed_response(const star::transport::ServiceResponse& response) -> 
     if (not response.ok) {
         throw star::excep::RuntimeError("service call failed: ", response.message);
     }
-    if (const auto typed = response.data_typed.as<_ResponseT>()) {
+    if (const auto typed = response.body.payload.as<_ResponseT>()) {
         return *typed;
     }
-    if (response.encode_binary) {
-        const auto bytes = response.encode_binary();
-        if (not bytes.empty()) {
-            return _ResponseT::from_binary(std::span<const uint8_t>(bytes.data(), bytes.size()));
+    if (const auto slot = response.body.payload.as<star::transport::ShmSlotView>()) {
+        if (slot->size > 0) {
+            return _ResponseT::from_binary(slot->bytes());
         }
     }
-    if (response.data.is_object()) {
-        return _ResponseT::from_value(response.data);
+    if (const auto binary = response.body.payload.as<star::transport::BinaryPayloadView>()) {
+        if (binary->size > 0) {
+            return _ResponseT::from_binary(binary->bytes());
+        }
     }
     throw star::excep::RuntimeError("typed response decode failed");
 }
@@ -221,7 +200,8 @@ auto encode_parameter_value(
         return std::nullopt;
     }
     auto normalized = value;
-    star::schema::SchemaValidator::validate(*schema, &normalized);
+    star::schema::SchemaValidator::apply_defaults(*schema, &normalized);
+    star::schema::SchemaValidator::validate(*schema, normalized);
     const auto bytes = star::schema::BinaryCodec::encode(*schema, normalized);
     return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
@@ -277,7 +257,7 @@ void run_list(ServiceHarness& harness, const CliOptions& options) {
     }
     const auto response =
         decode_typed_response<star::setting::service::parameter::list_response::ParameterListResponse>(
-            harness.list_client->call(make_typed_request(std::move(request))));
+            harness.list_client->call_serialized(make_typed_request(std::move(request))));
     const auto& keys = response.keys.value_or(std::vector<std::string>{});
     if (options.format == "json") {
         std::cout << "{\"keys\":[";
@@ -305,7 +285,7 @@ auto run_get(ServiceHarness& harness, const std::string& key)
     request.key = key;
     const auto response =
         decode_typed_response<star::setting::service::parameter::get_response::ParameterGetResponse>(
-            harness.get_client->call(make_typed_request(std::move(request))));
+            harness.get_client->call_serialized(make_typed_request(std::move(request))));
     return response;
 }
 
@@ -356,7 +336,7 @@ void run_set(ServiceHarness& harness, const CliOptions& options) {
 
     const auto response =
         decode_typed_response<star::setting::service::parameter::set_response::ParameterSetResponse>(
-            harness.set_client->call(make_typed_request(std::move(request))));
+            harness.set_client->call_serialized(make_typed_request(std::move(request))));
     if (not response.updated) {
         throw star::excep::RuntimeError("set response updated=false");
     }
@@ -373,7 +353,7 @@ void run_demo(ServiceHarness& harness, const std::string& format) {
     auto list_request = star::setting::service::parameter::list_request::ParameterListRequest{};
     list_request.prefix = std::string("planning");
     const auto list_response = decode_typed_response<star::setting::service::parameter::list_response::ParameterListResponse>(
-        harness.list_client->call(make_typed_request(std::move(list_request))));
+        harness.list_client->call_serialized(make_typed_request(std::move(list_request))));
     if (not list_response.keys.has_value() || list_response.keys->empty()) {
         throw star::excep::RuntimeError("typed list response is empty");
     }
@@ -382,7 +362,7 @@ void run_demo(ServiceHarness& harness, const std::string& format) {
     get_request.key = "planning.motion";
     const auto get_before =
         decode_typed_response<star::setting::service::parameter::get_response::ParameterGetResponse>(
-            harness.get_client->call(make_typed_request(get_request)));
+            harness.get_client->call_serialized(make_typed_request(get_request)));
     if (not get_before.payload_binary.has_value()) {
         throw star::excep::RuntimeError("typed get response missing payload_binary");
     }
@@ -408,14 +388,14 @@ void run_demo(ServiceHarness& harness, const std::string& format) {
     }
     const auto set_response =
         decode_typed_response<star::setting::service::parameter::set_response::ParameterSetResponse>(
-            harness.set_client->call(make_typed_request(std::move(set_request))));
+            harness.set_client->call_serialized(make_typed_request(std::move(set_request))));
     if (not set_response.updated) {
         throw star::excep::RuntimeError("typed set response updated=false");
     }
 
     const auto get_after =
         decode_typed_response<star::setting::service::parameter::get_response::ParameterGetResponse>(
-            harness.get_client->call(make_typed_request(get_request)));
+            harness.get_client->call_serialized(make_typed_request(get_request)));
     if (not get_after.payload_binary.has_value()) {
         throw star::excep::RuntimeError("typed get-after response missing payload_binary");
     }

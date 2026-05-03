@@ -25,6 +25,7 @@ show_help() {
     echo "  star graph --components [目标...]  输出组件/Topic 拓扑图（dot）"
     echo "  star doctor [参数...] [目标...]    诊断 module/component 清单"
     echo "    - 追加 --deep 可检查插件库是否可 dlopen/dlsym"
+    echo "  star selftest [参数...]            运行 transport 自检（例如 routed 不重复投递）"
     echo "  star param [参数...] <命令>         typed parameter service 工具（list/get/set, 支持 --format=json）"
     echo "  star schema <命令>                  schema 工具（fmt/gen/compat/lint）"
     echo "  star record info <文件>             查看录制文件信息（消息数/topics/时间范围）"
@@ -573,6 +574,62 @@ run_unit_tests() {
     meson test -C "$build_dir"
 }
 
+run_transport_selftest() {
+    local build_dir="${PROJECT_ROOT}/build"
+    local install_dir=""
+    local runner=""
+    local args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --build-dir=*)
+                build_dir="${1#--build-dir=}"
+                shift
+                ;;
+            --install-dir=*)
+                install_dir="${1#--install-dir=}"
+                shift
+                ;;
+            -h|--help)
+                echo "star selftest - transport 自检"
+                echo "用法:"
+                echo "  star selftest [--build-dir=<dir>] [--install-dir=<dir>] [--transport=shm_routed]"
+                echo ""
+                echo "示例:"
+                echo "  star selftest"
+                echo "  star selftest --transport=shm_routed"
+                return 0
+                ;;
+            *)
+                args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [ -n "$install_dir" ] && [[ "$install_dir" != /* ]]; then
+        install_dir="${PROJECT_ROOT}/${install_dir}"
+    fi
+
+    if [ -n "$install_dir" ]; then
+        runner="${install_dir}/bin/native_runner"
+    else
+        runner="${build_dir}/apps/native_runner/native_runner"
+    fi
+
+    if [ ! -x "$runner" ]; then
+        log_error "找不到 native runner: ${runner}"
+        if [ -n "$install_dir" ]; then
+            log_error "请先执行: star install"
+        else
+            log_error "请先执行: star build"
+        fi
+        return 1
+    fi
+
+    exec "$runner" --selftest-transport "${args[@]}"
+}
+
 run_ci_guard() {
     local build_dir="${PROJECT_ROOT}/build"
     local install_dir=""
@@ -738,6 +795,10 @@ case "${1:-}" in
     doctor)
         shift
         invoke_runner --doctor "$@"
+        ;;
+    selftest)
+        shift
+        run_transport_selftest "$@"
         ;;
     param)
         shift

@@ -1,7 +1,7 @@
 #ifndef __NATIVE_PARAMETER_STORE_H__
 #define __NATIVE_PARAMETER_STORE_H__
 
-#include "basement/transport/api/parameter_store.h"
+#include "basement/runtime/parameter/parameter_store.h"
 
 #include <mutex>
 #include <string>
@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace star::transport {
+namespace star::runtime {
 
 class NativeParameterStore final : public ParameterStore {
 public:
@@ -53,6 +53,6 @@ private:
     std::unordered_map<std::string, star::schema::SchemaValue> values_;
 };
 
-}  // namespace star::transport
+}  // namespace star::runtime
 
 #endif // __NATIVE_PARAMETER_STORE_H__

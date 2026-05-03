@@ -1,17 +1,21 @@
 #ifndef __RESOURCE_MONITOR_H__
 #define __RESOURCE_MONITOR_H__
 
+#include <dirent.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdint>
-#include <dirent.h>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <sys/syscall.h>
-#include <unistd.h>
 #include <unordered_map>
 #include <vector>
+
+#include "basement/core/fd_guard.h"
 
 namespace star::runtime::observability {
 
@@ -26,25 +30,25 @@ struct ResourceSnapshot {
 
     auto format_line() const -> std::string {
         char buf[256]{};
-        std::snprintf(buf, sizeof(buf),
-                     "resource pid=%ld name=%s cpu=%.1f%% rss=%lukB fds=%d threads=%ld",
-                     static_cast<long>(pid), name.c_str(), cpu_percent,
-                     static_cast<unsigned long>(rss_kb), fd_count,
-                     static_cast<long>(thread_count));
+        std::snprintf(buf, sizeof(buf), "resource pid=%ld name=%s cpu=%.1f%% rss=%lukB fds=%d threads=%ld", static_cast<long>(pid), name.c_str(), cpu_percent, static_cast<unsigned long>(rss_kb),
+                      fd_count, static_cast<long>(thread_count));
         return std::string(buf);
     }
 };
 
 class ResourceMonitor {
   public:
-    auto sample_self() -> ResourceSnapshot {
-        return sample(getpid());
-    }
+    using ClockFn = std::function<int64_t()>;
+
+    ResourceMonitor() : clock_fn_(default_clock()) {}
+    explicit ResourceMonitor(ClockFn clock_fn) : clock_fn_(std::move(clock_fn)) {}
+
+    auto sample_self() -> ResourceSnapshot { return sample(getpid()); }
 
     auto sample(int64_t pid) -> ResourceSnapshot {
         auto snap = ResourceSnapshot{};
         snap.pid = pid;
-        snap.timestamp_ns = steady_now_ns();
+        snap.timestamp_ns = clock_fn_();
 
         const auto stat = read_proc_stat(pid);
         if (not stat.has_value()) {
@@ -94,11 +98,7 @@ class ResourceMonitor {
         uint64_t total_tick{0};
     };
 
-    static auto steady_now_ns() -> int64_t {
-        return static_cast<int64_t>(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
-    }
+    static auto steady_now_ns() -> int64_t { return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
 
     static auto get_clk_tck() -> long {
         static const long val = sysconf(_SC_CLK_TCK);
@@ -132,18 +132,23 @@ class ResourceMonitor {
             return std::nullopt;
         }
 
-        FILE* fp = fopen("/proc/stat", "r");
-        if (fp == nullptr) {
+        FILE* raw_fp = fopen("/proc/stat", "r");
+        if (raw_fp == nullptr) {
             times.total_tick = 1;
             return times;
         }
+        auto fp = star::base::FileGuard(raw_fp);
         char buf[256]{};
-        if (fgets(buf, sizeof(buf), fp) != nullptr) {
+        if (fgets(buf, sizeof(buf), fp.get()) != nullptr) {
             const auto parts = split_whitespace(buf);
             if (parts.size() >= 8) {
                 uint64_t sum = 0;
                 for (size_t i = 1; i <= 7 && i < parts.size(); ++i) {
-                    try { sum += std::stoull(parts[i]); } catch (...) { sum += 0; }
+                    try {
+                        sum += std::stoull(parts[i]);
+                    } catch (...) {
+                        sum += 0;
+                    }
                 }
                 times.total_tick = sum > 0 ? sum : 1;
             } else {
@@ -152,14 +157,12 @@ class ResourceMonitor {
         } else {
             times.total_tick = 1;
         }
-        fclose(fp);
 
         return times;
     }
 
-    static auto compute_cpu_percent(int64_t pid, const CpuTimes& current) -> double {
-        std::lock_guard<std::mutex> lock(cpu_cache_mutex());
-        auto& prev = cpu_cache()[pid];
+    auto compute_cpu_percent(int64_t pid, const CpuTimes& current) -> double {
+        auto& prev = cpu_cache_[pid];
         if (prev.total_tick == 0 || current.total_tick == prev.total_tick) {
             prev = current;
             return 0.0;
@@ -189,7 +192,11 @@ class ResourceMonitor {
             if (line.compare(0, 6, "VmRSS:") == 0) {
                 const auto pos = line.find_first_of("0123456789", 6);
                 if (pos != std::string::npos) {
-                    try { return std::stoul(line.substr(pos)); } catch (...) { return 0; }
+                    try {
+                        return std::stoul(line.substr(pos));
+                    } catch (...) {
+                        return 0;
+                    }
                 }
                 break;
             }
@@ -225,7 +232,11 @@ class ResourceMonitor {
         }
         const auto fields = split_stat_fields(line);
         if (fields.size() >= 20) {
-            try { return std::stoll(fields[19]); } catch (...) { return 0; }
+            try {
+                return std::stoll(fields[19]);
+            } catch (...) {
+                return 0;
+            }
         }
         return 0;
     }
@@ -293,20 +304,14 @@ class ResourceMonitor {
 
     mutable std::mutex mutex_;
     std::unordered_map<int64_t, ResourceSnapshot> tracked_;
+    std::unordered_map<int64_t, CpuTimes> cpu_cache_;
+    ClockFn clock_fn_;
 
-    static inline std::mutex& cpu_cache_mutex() {
-        static std::mutex m;
-        return m;
+    static auto default_clock() -> ClockFn {
+        return []() -> int64_t { return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
     }
 
-    static inline auto cpu_cache() -> std::unordered_map<int64_t, CpuTimes>& {
-        static std::unordered_map<int64_t, CpuTimes> c;
-        return c;
-    }
-
-    static auto getpid() -> int64_t {
-        return static_cast<int64_t>(::getpid());
-    }
+    static auto getpid() -> int64_t { return static_cast<int64_t>(::getpid()); }
 };
 
 }  // namespace star::runtime::observability

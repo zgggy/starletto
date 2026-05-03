@@ -2,7 +2,6 @@
 #define __NATIVE_SERVICE_BUS_H__
 
 #include <atomic>
-#include <exception>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -37,6 +36,14 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
             return bus->call_service(name_, request);
         }
 
+        auto call_serialized(const SerializedServiceRequest& request) -> ServiceResponse override {
+            auto bus = bus_.lock();
+            if (not bus) {
+                throw star::excep::RuntimeError("NativeServiceBus client call_serialized failed, bus expired: ", name_);
+            }
+            return bus->call_service_serialized(name_, request);
+        }
+
         auto async_call(const ServiceRequest& request) -> std::future<ServiceResponse> override {
             auto bus = bus_.lock();
             if (not bus) {
@@ -45,6 +52,16 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
                 return promise->get_future();
             }
             return bus->async_call_service(name_, request);
+        }
+
+        auto async_call_serialized(const SerializedServiceRequest& request) -> std::future<ServiceResponse> override {
+            auto bus = bus_.lock();
+            if (not bus) {
+                auto promise = std::make_shared<std::promise<ServiceResponse>>();
+                promise->set_exception(std::make_exception_ptr(star::excep::RuntimeError("NativeServiceBus client async_call_serialized failed, bus expired: ", name_)));
+                return promise->get_future();
+            }
+            return bus->async_call_service_serialized(name_, request);
         }
 
       private:
@@ -56,12 +73,21 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
       public:
         NativeServer(std::shared_ptr<NativeServiceBus> bus, std::string name, uint64_t id) : bus_(std::move(bus)), name_(std::move(name)), id_(id) {}
 
-        ~NativeServer() override {
+        ~NativeServer() override { stop(); }
+
+        void start() override {}
+
+        void stop() override {
+            if (id_ == 0) {
+                return;
+            }
             auto bus = bus_.lock();
             if (not bus) {
+                id_ = 0;
                 return;
             }
             bus->erase_service(name_, id_);
+            id_ = 0;
         }
 
       private:
@@ -97,7 +123,9 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
             }
             entry.handlers.emplace(id, std::move(handler));
         }
-        return std::make_shared<NativeServer>(this->shared_from_this(), descriptor.name, id);
+        auto server = std::make_shared<NativeServer>(this->shared_from_this(), descriptor.name, id);
+        server->start();
+        return server;
     }
 
   private:
@@ -112,6 +140,10 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
     }
 
     auto call_service(const std::string& name, const ServiceRequest& request) -> ServiceResponse {
+        return call_service_serialized(name, SerializedServiceRequest{request, {}});
+    }
+
+    auto call_service_serialized(const std::string& name, const SerializedServiceRequest& request) -> ServiceResponse {
         Handler handler;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -121,70 +153,37 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
             }
             handler = it->second.handlers.begin()->second;
         }
-        auto response = handler(request);
-        response.correlation_id = request.correlation_id;
+        auto response = handler(request.request).response;
+        response.body.correlation_id = request.request.body.correlation_id;
         return response;
     }
 
     auto async_call_service(const std::string& name, const ServiceRequest& request) -> std::future<ServiceResponse> {
-        auto cid = request.correlation_id.is_valid() ? request.correlation_id : CorrelationId::generate();
-        auto augmented_request = request;
-        augmented_request.correlation_id = cid;
+        return async_call_service_serialized(name, SerializedServiceRequest{request, {}});
+    }
 
-        auto promise = std::make_shared<std::promise<ServiceResponse>>();
-        auto future = promise->get_future();
-
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            pending_calls_[cid] = promise;
+    auto async_call_service_serialized(const std::string& name, const SerializedServiceRequest& request) -> std::future<ServiceResponse> {
+        auto self = this->shared_from_this();
+        auto augmented_request = request.request;
+        if (not augmented_request.body.correlation_id.is_valid()) {
+            augmented_request.body.correlation_id = CorrelationId::generate();
         }
 
-        try {
+        return std::async(std::launch::async, [self, name, augmented_request]() -> ServiceResponse {
             Handler handler;
             {
-                std::lock_guard<std::mutex> lock(mutex_);
-                const auto it = services_.find(name);
-                if (it == services_.end() || it->second.handlers.empty()) {
+                std::lock_guard<std::mutex> lock(self->mutex_);
+                const auto it = self->services_.find(name);
+                if (it == self->services_.end() || it->second.handlers.empty()) {
                     throw star::excep::RuntimeError("NativeServiceBus async_call failed, service unavailable: ", name);
                 }
                 handler = it->second.handlers.begin()->second;
             }
-            auto response = handler(augmented_request);
-            response.correlation_id = cid;
-            fulfill_pending(cid, response);
-        } catch (...) {
-            reject_pending(cid, std::current_exception());
-        }
 
-        return future;
-    }
-
-    void fulfill_pending(CorrelationId cid, const ServiceResponse& response) {
-        std::shared_ptr<std::promise<ServiceResponse>> promise;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto it = pending_calls_.find(cid);
-            if (it == pending_calls_.end()) {
-                return;
-            }
-            promise = std::move(it->second);
-            pending_calls_.erase(it);
-        }
-        promise->set_value(response);
-    }
-
-    void reject_pending(CorrelationId cid, std::exception_ptr ep) {
-        std::shared_ptr<std::promise<ServiceResponse>> promise;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto it = pending_calls_.find(cid);
-            if (it == pending_calls_.end()) {
-                return;
-            }
-            promise = std::move(it->second);
-            pending_calls_.erase(it);
-        }
-        promise->set_exception(ep);
+            auto response = handler(augmented_request).response;
+            response.body.correlation_id = augmented_request.body.correlation_id;
+            return response;
+        });
     }
 
     void erase_service(const std::string& name, uint64_t id) {
@@ -201,7 +200,6 @@ class NativeServiceBus final : public ServiceBus, public std::enable_shared_from
 
     mutable std::mutex mutex_;
     std::unordered_map<std::string, ServiceEntry> services_;
-    std::unordered_map<CorrelationId, std::shared_ptr<std::promise<ServiceResponse>>> pending_calls_;
     std::atomic<uint64_t> next_server_id_{1};
 };
 

@@ -1,114 +1,19 @@
-#ifndef ___HOME_ZGY_PROJECTS_STARLETTO_BASEMENT_SCHEMA_BUILTIN_MANIFEST_COMPONENT_S_H__
-#define ___HOME_ZGY_PROJECTS_STARLETTO_BASEMENT_SCHEMA_BUILTIN_MANIFEST_COMPONENT_S_H__
+#ifndef __MANIFEST_COMPONENT__
+#define __MANIFEST_COMPONENT__
 
-#include "basement/schema/binary_codec.h"
-#include "basement/schema/schema_ast.h"
+#include "basement/schema/schema_codec_helpers.h"
 #include "basement/schema/schema_registry.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/common/fixed_layout_codec.h"
 
-#include <concepts>
 #include <cstring>
-#include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
-#include <string>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace star::generated::manifest::component {
 
-template <typename _ValueType>
-concept SchemaStructType = requires(const star::schema::SchemaValue& value, const _ValueType& item) {
-    { _ValueType::from_value(value) } -> std::same_as<_ValueType>;
-    { item.to_value() } -> std::same_as<star::schema::SchemaValue>;
-};
-
-template <typename _ValueType>
-struct IsStdVector : std::false_type {
-};
-
-template <typename _ItemType, typename _Allocator>
-struct IsStdVector<std::vector<_ItemType, _Allocator>> : std::true_type {
-    using Item = _ItemType;
-};
-
-template <typename _ValueType>
-struct IsStdMap : std::false_type {
-};
-
-template <typename _MappedType, typename _Compare, typename _Allocator>
-struct IsStdMap<std::map<std::string, _MappedType, _Compare, _Allocator>> : std::true_type {
-    using Item = _MappedType;
-};
-
-template <typename _ValueType>
-auto schema_read(const star::schema::SchemaValue& value) -> _ValueType {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        using _Item = typename IsStdVector<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& arr = value.as_array();
-        out.reserve(arr.size());
-        for (const auto& item : arr) {
-            out.emplace_back(schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        using _Item = typename IsStdMap<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& obj = value.as_object();
-        for (const auto& [key, item] : obj) {
-            out.emplace(key, schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (std::is_same_v<_ValueType, std::string>) {
-        return value.as<std::string>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, bool>) {
-        return value.as<bool>();
-    } else if constexpr (std::is_same_v<_ValueType, int64_t>) {
-        return value.as<int64_t>();
-    } else if constexpr (std::is_same_v<_ValueType, double>) {
-        return value.as<double>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return value.as_object();
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return _ValueType::from_value(value);
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_read type");
-    }
-}
-
-template <typename _ValueType>
-auto schema_write(const _ValueType& value) -> star::schema::SchemaValue {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        auto out = star::schema::SchemaArray{};
-        out.reserve(value.size());
-        for (const auto& item : value) {
-            out.emplace_back(schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        auto out = star::schema::SchemaObject{};
-        for (const auto& [key, item] : value) {
-            out.emplace(key, schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, std::string> || std::is_same_v<_ValueType, bool> ||
-                  std::is_same_v<_ValueType, int64_t> || std::is_same_v<_ValueType, double>) {
-        return star::schema::schema_value_from(value);
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return star::schema::SchemaValue(value);
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return value.to_value();
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_write type");
-    }
-}
+using star::schema::schema_read;
+using star::schema::schema_write;
 
 inline auto _schema_type_id() -> star::schema::SchemaTypeId {
     auto out = star::schema::SchemaTypeId{};
@@ -127,6 +32,7 @@ inline auto _build_fields_GlobalInfo() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -137,6 +43,7 @@ inline auto _build_fields_GlobalInfo() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -147,6 +54,7 @@ inline auto _build_fields_GlobalInfo() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -162,6 +70,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -172,6 +81,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -182,6 +92,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -192,6 +103,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -202,6 +114,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -212,6 +125,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::BOOL;
         field.type_name = "bool";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.default_value = star::schema::SchemaValue(false);
         out.emplace_back(std::move(field));
@@ -223,6 +137,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -233,6 +148,7 @@ inline auto _build_fields_ComponentInfo() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -248,6 +164,7 @@ inline auto _build_fields_TriggerInfo() -> std::vector<star::schema::FieldDescri
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -258,6 +175,7 @@ inline auto _build_fields_TriggerInfo() -> std::vector<star::schema::FieldDescri
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -268,6 +186,7 @@ inline auto _build_fields_TriggerInfo() -> std::vector<star::schema::FieldDescri
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -278,6 +197,7 @@ inline auto _build_fields_TriggerInfo() -> std::vector<star::schema::FieldDescri
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         out.emplace_back(std::move(field));
     }
@@ -293,6 +213,7 @@ inline auto _build_fields_QosProfile() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -303,6 +224,7 @@ inline auto _build_fields_QosProfile() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -313,6 +235,7 @@ inline auto _build_fields_QosProfile() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -323,6 +246,7 @@ inline auto _build_fields_QosProfile() -> std::vector<star::schema::FieldDescrip
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -338,6 +262,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -348,6 +273,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -358,6 +284,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -368,6 +295,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -378,6 +306,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -388,6 +317,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -398,6 +328,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -408,6 +339,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -418,6 +350,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "QosProfile";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_QosProfile();
         out.emplace_back(std::move(field));
@@ -429,6 +362,7 @@ inline auto _build_fields_Port() -> std::vector<star::schema::FieldDescriptor> {
         field.kind = star::schema::FieldKind::BOOL;
         field.type_name = "bool";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -444,6 +378,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "GlobalInfo";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_GlobalInfo();
         out.emplace_back(std::move(field));
@@ -455,6 +390,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "ComponentInfo";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_ComponentInfo();
         out.emplace_back(std::move(field));
@@ -466,6 +402,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "object";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -476,6 +413,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "TriggerInfo";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_TriggerInfo();
         out.emplace_back(std::move(field));
@@ -487,6 +425,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "Port";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.has_value_kind = true;
         field.value_kind = star::schema::FieldKind::OBJECT;
@@ -501,6 +440,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "Port";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.has_value_kind = true;
         field.value_kind = star::schema::FieldKind::OBJECT;
@@ -515,6 +455,7 @@ inline auto _build_fields_ComponentConf() -> std::vector<star::schema::FieldDesc
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "Port";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.has_value_kind = true;
         field.value_kind = star::schema::FieldKind::OBJECT;
@@ -534,6 +475,8 @@ inline auto _schema_descriptor() -> star::schema::SchemaDescriptor {
     out.fields = _build_fields_ComponentConf();
     return out;
 }
+
+struct GlobalInfoBuilder;
 
 struct GlobalInfo {
     static constexpr uint32_t kFieldId_process_group = 1;
@@ -593,49 +536,139 @@ struct GlobalInfo {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> GlobalInfo;
 };
 
 struct GlobalInfoView {
-    GlobalInfo value{};
+    static constexpr size_t kFieldCount = 3;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> GlobalInfoView {
-        return GlobalInfoView{GlobalInfo::from_value(value)};
-    }
+    GlobalInfoView() = default;
+    explicit GlobalInfoView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit GlobalInfoView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_process_group = 0;
+    static constexpr size_t kSlotIndex_scheduler_policy = 1;
+    static constexpr size_t kSlotIndex_executor_threads = 2;
 
     auto Has_process_group() const -> bool {
-        return value.has_process_group();
+        return not view_.is_null(0);
     }
 
-    auto process_group() const -> const std::string& {
-        if (not value.process_group.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: process_group");
-        }
-        return *value.process_group;
+    auto process_group() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_scheduler_policy() const -> bool {
-        return value.has_scheduler_policy();
+        return not view_.is_null(1);
     }
 
-    auto scheduler_policy() const -> const std::string& {
-        if (not value.scheduler_policy.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: scheduler_policy");
-        }
-        return *value.scheduler_policy;
+    auto scheduler_policy() const -> std::string_view {
+        auto v = view_.get_string(1);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_executor_threads() const -> bool {
-        return value.has_executor_threads();
+        return not view_.is_null(2);
     }
 
-    auto executor_threads() const -> const int64_t& {
-        if (not value.executor_threads.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: executor_threads");
-        }
-        return *value.executor_threads;
+    auto executor_threads() const -> int64_t {
+        auto v = view_.get_int64(2);
+        return v.has_value() ? *v : int64_t{0};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct GlobalInfoBuilder {
+    static constexpr size_t kFieldCount = 3;
+
+    GlobalInfoBuilder() : writer_(3) {}
+
+    void set_process_group(std::string_view value) { writer_.set_string(0, value); }
+    void set_scheduler_policy(std::string_view value) { writer_.set_string(1, value); }
+    void set_executor_threads(int64_t value) { writer_.set_int64(2, value); }
+
+    void clear_process_group() { writer_.set_null(0); }
+    void clear_scheduler_policy() { writer_.set_null(1); }
+    void clear_executor_threads() { writer_.set_null(2); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto GlobalInfo::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = GlobalInfoBuilder();
+    if (process_group.has_value()) {
+        builder.set_process_group(*process_group);
+    } else {
+        builder.clear_process_group();
+    }
+    if (scheduler_policy.has_value()) {
+        builder.set_scheduler_policy(*scheduler_policy);
+    } else {
+        builder.clear_scheduler_policy();
+    }
+    if (executor_threads.has_value()) {
+        builder.set_executor_threads(*executor_threads);
+    } else {
+        builder.clear_executor_threads();
+    }
+    return builder.Serialize();
+}
+
+inline auto GlobalInfo::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = GlobalInfoBuilder();
+    if (process_group.has_value()) {
+        builder.set_process_group(*process_group);
+    } else {
+        builder.clear_process_group();
+    }
+    if (scheduler_policy.has_value()) {
+        builder.set_scheduler_policy(*scheduler_policy);
+    } else {
+        builder.clear_scheduler_policy();
+    }
+    if (executor_threads.has_value()) {
+        builder.set_executor_threads(*executor_threads);
+    } else {
+        builder.clear_executor_threads();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto GlobalInfo::from_fixed_layout(std::span<const uint8_t> data) -> GlobalInfo {
+    auto view = GlobalInfoView(data.data(), data.size());
+    auto out = GlobalInfo();
+    if (view.Has_process_group()) { out.process_group = view.process_group(); }
+    if (view.Has_scheduler_policy()) { out.scheduler_policy = view.scheduler_policy(); }
+    if (view.Has_executor_threads()) { out.executor_threads = view.executor_threads(); }
+    return out;
+}
+
+struct ComponentInfoBuilder;
 
 struct ComponentInfo {
     static constexpr uint32_t kFieldId_name = 1;
@@ -740,92 +773,218 @@ struct ComponentInfo {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> ComponentInfo;
 };
 
 struct ComponentInfoView {
-    ComponentInfo value{};
+    static constexpr size_t kFieldCount = 8;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> ComponentInfoView {
-        return ComponentInfoView{ComponentInfo::from_value(value)};
-    }
+    ComponentInfoView() = default;
+    explicit ComponentInfoView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit ComponentInfoView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_name = 0;
+    static constexpr size_t kSlotIndex_type = 1;
+    static constexpr size_t kSlotIndex_component_library = 2;
+    static constexpr size_t kSlotIndex_component_class = 3;
+    static constexpr size_t kSlotIndex_config_file_path = 4;
+    static constexpr size_t kSlotIndex_static_link = 5;
+    static constexpr size_t kSlotIndex_component_group = 6;
+    static constexpr size_t kSlotIndex_priority = 7;
 
     auto Has_name() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto name() const -> const std::string& {
-        return value.name;
+    auto name() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_type() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto type() const -> const std::string& {
-        return value.type;
+    auto type() const -> std::string_view {
+        auto v = view_.get_string(1);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_component_library() const -> bool {
-        return value.has_component_library();
+        return not view_.is_null(2);
     }
 
-    auto component_library() const -> const std::string& {
-        if (not value.component_library.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: component_library");
-        }
-        return *value.component_library;
+    auto component_library() const -> std::string_view {
+        auto v = view_.get_string(2);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_component_class() const -> bool {
-        return true;
+        return not view_.is_null(3);
     }
 
-    auto component_class() const -> const std::string& {
-        return value.component_class;
+    auto component_class() const -> std::string_view {
+        auto v = view_.get_string(3);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_config_file_path() const -> bool {
-        return value.has_config_file_path();
+        return not view_.is_null(4);
     }
 
-    auto config_file_path() const -> const std::string& {
-        if (not value.config_file_path.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: config_file_path");
-        }
-        return *value.config_file_path;
+    auto config_file_path() const -> std::string_view {
+        auto v = view_.get_string(4);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_static_link() const -> bool {
-        return true;
+        return not view_.is_null(5);
     }
 
-    auto static_link() const -> const bool& {
-        return value.static_link;
+    auto static_link() const -> bool {
+        auto v = view_.get_bool(5);
+        return v.has_value() ? *v : false;
     }
 
     auto Has_component_group() const -> bool {
-        return value.has_component_group();
+        return not view_.is_null(6);
     }
 
-    auto component_group() const -> const std::string& {
-        if (not value.component_group.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: component_group");
-        }
-        return *value.component_group;
+    auto component_group() const -> std::string_view {
+        auto v = view_.get_string(6);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_priority() const -> bool {
-        return value.has_priority();
+        return not view_.is_null(7);
     }
 
-    auto priority() const -> const int64_t& {
-        if (not value.priority.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: priority");
-        }
-        return *value.priority;
+    auto priority() const -> int64_t {
+        auto v = view_.get_int64(7);
+        return v.has_value() ? *v : int64_t{0};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct ComponentInfoBuilder {
+    static constexpr size_t kFieldCount = 8;
+
+    ComponentInfoBuilder() : writer_(8) {}
+
+    void set_name(std::string_view value) { writer_.set_string(0, value); }
+    void set_type(std::string_view value) { writer_.set_string(1, value); }
+    void set_component_library(std::string_view value) { writer_.set_string(2, value); }
+    void set_component_class(std::string_view value) { writer_.set_string(3, value); }
+    void set_config_file_path(std::string_view value) { writer_.set_string(4, value); }
+    void set_static_link(bool value) { writer_.set_bool(5, value); }
+    void set_component_group(std::string_view value) { writer_.set_string(6, value); }
+    void set_priority(int64_t value) { writer_.set_int64(7, value); }
+
+    void clear_component_library() { writer_.set_null(2); }
+    void clear_config_file_path() { writer_.set_null(4); }
+    void clear_component_group() { writer_.set_null(6); }
+    void clear_priority() { writer_.set_null(7); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto ComponentInfo::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = ComponentInfoBuilder();
+    builder.set_name(name);
+    builder.set_type(type);
+    if (component_library.has_value()) {
+        builder.set_component_library(*component_library);
+    } else {
+        builder.clear_component_library();
+    }
+    builder.set_component_class(component_class);
+    if (config_file_path.has_value()) {
+        builder.set_config_file_path(*config_file_path);
+    } else {
+        builder.clear_config_file_path();
+    }
+    builder.set_static_link(static_link);
+    if (component_group.has_value()) {
+        builder.set_component_group(*component_group);
+    } else {
+        builder.clear_component_group();
+    }
+    if (priority.has_value()) {
+        builder.set_priority(*priority);
+    } else {
+        builder.clear_priority();
+    }
+    return builder.Serialize();
+}
+
+inline auto ComponentInfo::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = ComponentInfoBuilder();
+    builder.set_name(name);
+    builder.set_type(type);
+    if (component_library.has_value()) {
+        builder.set_component_library(*component_library);
+    } else {
+        builder.clear_component_library();
+    }
+    builder.set_component_class(component_class);
+    if (config_file_path.has_value()) {
+        builder.set_config_file_path(*config_file_path);
+    } else {
+        builder.clear_config_file_path();
+    }
+    builder.set_static_link(static_link);
+    if (component_group.has_value()) {
+        builder.set_component_group(*component_group);
+    } else {
+        builder.clear_component_group();
+    }
+    if (priority.has_value()) {
+        builder.set_priority(*priority);
+    } else {
+        builder.clear_priority();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto ComponentInfo::from_fixed_layout(std::span<const uint8_t> data) -> ComponentInfo {
+    auto view = ComponentInfoView(data.data(), data.size());
+    auto out = ComponentInfo();
+    out.name = view.name();
+    out.type = view.type();
+    if (view.Has_component_library()) { out.component_library = view.component_library(); }
+    out.component_class = view.component_class();
+    if (view.Has_config_file_path()) { out.config_file_path = view.config_file_path(); }
+    out.static_link = view.static_link();
+    if (view.Has_component_group()) { out.component_group = view.component_group(); }
+    if (view.Has_priority()) { out.priority = view.priority(); }
+    return out;
+}
+
+struct TriggerInfoBuilder;
 
 struct TriggerInfo {
     static constexpr uint32_t kFieldId_type = 1;
@@ -899,60 +1058,162 @@ struct TriggerInfo {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> TriggerInfo;
 };
 
 struct TriggerInfoView {
-    TriggerInfo value{};
+    static constexpr size_t kFieldCount = 4;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> TriggerInfoView {
-        return TriggerInfoView{TriggerInfo::from_value(value)};
-    }
+    TriggerInfoView() = default;
+    explicit TriggerInfoView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit TriggerInfoView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_type = 0;
+    static constexpr size_t kSlotIndex_cycle_ms = 1;
+    static constexpr size_t kSlotIndex_task_name = 2;
+    static constexpr size_t kSlotIndex_readers = 3;
 
     auto Has_type() const -> bool {
-        return value.has_type();
+        return not view_.is_null(0);
     }
 
-    auto type() const -> const std::string& {
-        if (not value.type.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: type");
-        }
-        return *value.type;
+    auto type() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_cycle_ms() const -> bool {
-        return value.has_cycle_ms();
+        return not view_.is_null(1);
     }
 
-    auto cycle_ms() const -> const int64_t& {
-        if (not value.cycle_ms.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: cycle_ms");
-        }
-        return *value.cycle_ms;
+    auto cycle_ms() const -> int64_t {
+        auto v = view_.get_int64(1);
+        return v.has_value() ? *v : int64_t{0};
     }
 
     auto Has_task_name() const -> bool {
-        return value.has_task_name();
+        return not view_.is_null(2);
     }
 
-    auto task_name() const -> const std::string& {
-        if (not value.task_name.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: task_name");
-        }
-        return *value.task_name;
+    auto task_name() const -> std::string_view {
+        auto v = view_.get_string(2);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_readers() const -> bool {
-        return value.has_readers();
+        return not view_.is_null(3);
     }
 
-    auto readers() const -> const std::vector<std::string>& {
-        if (not value.readers.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: readers");
-        }
-        return *value.readers;
+    auto readers() const -> std::vector<std::string> {
+        auto v = view_.get_array_bytes(3);
+        return v.has_value() ? star::transport::decode_string_array(*v) : std::vector<std::string>{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct TriggerInfoBuilder {
+    static constexpr size_t kFieldCount = 4;
+
+    TriggerInfoBuilder() : writer_(4) {}
+
+    void set_type(std::string_view value) { writer_.set_string(0, value); }
+    void set_cycle_ms(int64_t value) { writer_.set_int64(1, value); }
+    void set_task_name(std::string_view value) { writer_.set_string(2, value); }
+    void set_readers(const std::vector<std::string>& value) { auto bytes = star::transport::encode_string_array(value); writer_.set_array(3, bytes); }
+
+    void clear_type() { writer_.set_null(0); }
+    void clear_cycle_ms() { writer_.set_null(1); }
+    void clear_task_name() { writer_.set_null(2); }
+    void clear_readers() { writer_.set_null(3); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto TriggerInfo::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = TriggerInfoBuilder();
+    if (type.has_value()) {
+        builder.set_type(*type);
+    } else {
+        builder.clear_type();
+    }
+    if (cycle_ms.has_value()) {
+        builder.set_cycle_ms(*cycle_ms);
+    } else {
+        builder.clear_cycle_ms();
+    }
+    if (task_name.has_value()) {
+        builder.set_task_name(*task_name);
+    } else {
+        builder.clear_task_name();
+    }
+    if (readers.has_value()) {
+        builder.set_readers(*readers);
+    } else {
+        builder.clear_readers();
+    }
+    return builder.Serialize();
+}
+
+inline auto TriggerInfo::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = TriggerInfoBuilder();
+    if (type.has_value()) {
+        builder.set_type(*type);
+    } else {
+        builder.clear_type();
+    }
+    if (cycle_ms.has_value()) {
+        builder.set_cycle_ms(*cycle_ms);
+    } else {
+        builder.clear_cycle_ms();
+    }
+    if (task_name.has_value()) {
+        builder.set_task_name(*task_name);
+    } else {
+        builder.clear_task_name();
+    }
+    if (readers.has_value()) {
+        builder.set_readers(*readers);
+    } else {
+        builder.clear_readers();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto TriggerInfo::from_fixed_layout(std::span<const uint8_t> data) -> TriggerInfo {
+    auto view = TriggerInfoView(data.data(), data.size());
+    auto out = TriggerInfo();
+    if (view.Has_type()) { out.type = view.type(); }
+    if (view.Has_cycle_ms()) { out.cycle_ms = view.cycle_ms(); }
+    if (view.Has_task_name()) { out.task_name = view.task_name(); }
+    if (view.Has_readers()) { out.readers = view.readers(); }
+    return out;
+}
+
+struct QosProfileBuilder;
 
 struct QosProfile {
     static constexpr uint32_t kFieldId_depth = 1;
@@ -1026,60 +1287,162 @@ struct QosProfile {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> QosProfile;
 };
 
 struct QosProfileView {
-    QosProfile value{};
+    static constexpr size_t kFieldCount = 4;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> QosProfileView {
-        return QosProfileView{QosProfile::from_value(value)};
-    }
+    QosProfileView() = default;
+    explicit QosProfileView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit QosProfileView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_depth = 0;
+    static constexpr size_t kSlotIndex_history = 1;
+    static constexpr size_t kSlotIndex_reliability = 2;
+    static constexpr size_t kSlotIndex_durability = 3;
 
     auto Has_depth() const -> bool {
-        return value.has_depth();
+        return not view_.is_null(0);
     }
 
-    auto depth() const -> const int64_t& {
-        if (not value.depth.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: depth");
-        }
-        return *value.depth;
+    auto depth() const -> int64_t {
+        auto v = view_.get_int64(0);
+        return v.has_value() ? *v : int64_t{0};
     }
 
     auto Has_history() const -> bool {
-        return value.has_history();
+        return not view_.is_null(1);
     }
 
-    auto history() const -> const std::string& {
-        if (not value.history.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: history");
-        }
-        return *value.history;
+    auto history() const -> std::string_view {
+        auto v = view_.get_string(1);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_reliability() const -> bool {
-        return value.has_reliability();
+        return not view_.is_null(2);
     }
 
-    auto reliability() const -> const std::string& {
-        if (not value.reliability.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: reliability");
-        }
-        return *value.reliability;
+    auto reliability() const -> std::string_view {
+        auto v = view_.get_string(2);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_durability() const -> bool {
-        return value.has_durability();
+        return not view_.is_null(3);
     }
 
-    auto durability() const -> const std::string& {
-        if (not value.durability.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: durability");
-        }
-        return *value.durability;
+    auto durability() const -> std::string_view {
+        auto v = view_.get_string(3);
+        return v.has_value() ? *v : std::string_view{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct QosProfileBuilder {
+    static constexpr size_t kFieldCount = 4;
+
+    QosProfileBuilder() : writer_(4) {}
+
+    void set_depth(int64_t value) { writer_.set_int64(0, value); }
+    void set_history(std::string_view value) { writer_.set_string(1, value); }
+    void set_reliability(std::string_view value) { writer_.set_string(2, value); }
+    void set_durability(std::string_view value) { writer_.set_string(3, value); }
+
+    void clear_depth() { writer_.set_null(0); }
+    void clear_history() { writer_.set_null(1); }
+    void clear_reliability() { writer_.set_null(2); }
+    void clear_durability() { writer_.set_null(3); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto QosProfile::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = QosProfileBuilder();
+    if (depth.has_value()) {
+        builder.set_depth(*depth);
+    } else {
+        builder.clear_depth();
+    }
+    if (history.has_value()) {
+        builder.set_history(*history);
+    } else {
+        builder.clear_history();
+    }
+    if (reliability.has_value()) {
+        builder.set_reliability(*reliability);
+    } else {
+        builder.clear_reliability();
+    }
+    if (durability.has_value()) {
+        builder.set_durability(*durability);
+    } else {
+        builder.clear_durability();
+    }
+    return builder.Serialize();
+}
+
+inline auto QosProfile::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = QosProfileBuilder();
+    if (depth.has_value()) {
+        builder.set_depth(*depth);
+    } else {
+        builder.clear_depth();
+    }
+    if (history.has_value()) {
+        builder.set_history(*history);
+    } else {
+        builder.clear_history();
+    }
+    if (reliability.has_value()) {
+        builder.set_reliability(*reliability);
+    } else {
+        builder.clear_reliability();
+    }
+    if (durability.has_value()) {
+        builder.set_durability(*durability);
+    } else {
+        builder.clear_durability();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto QosProfile::from_fixed_layout(std::span<const uint8_t> data) -> QosProfile {
+    auto view = QosProfileView(data.data(), data.size());
+    auto out = QosProfile();
+    if (view.Has_depth()) { out.depth = view.depth(); }
+    if (view.Has_history()) { out.history = view.history(); }
+    if (view.Has_reliability()) { out.reliability = view.reliability(); }
+    if (view.Has_durability()) { out.durability = view.durability(); }
+    return out;
+}
+
+struct PortBuilder;
 
 struct Port {
     static constexpr uint32_t kFieldId_channel = 1;
@@ -1231,123 +1594,291 @@ struct Port {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> Port;
 };
 
 struct PortView {
-    Port value{};
+    static constexpr size_t kFieldCount = 10;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> PortView {
-        return PortView{Port::from_value(value)};
-    }
+    PortView() = default;
+    explicit PortView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit PortView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_channel = 0;
+    static constexpr size_t kSlotIndex_type = 1;
+    static constexpr size_t kSlotIndex_msg_type = 2;
+    static constexpr size_t kSlotIndex_ack = 3;
+    static constexpr size_t kSlotIndex_ack_type = 4;
+    static constexpr size_t kSlotIndex_status = 5;
+    static constexpr size_t kSlotIndex_status_type = 6;
+    static constexpr size_t kSlotIndex_pending_queue_size = 7;
+    static constexpr size_t kSlotIndex_qos_profile = 8;
+    static constexpr size_t kSlotIndex_record = 9;
 
     auto Has_channel() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto channel() const -> const std::string& {
-        return value.channel;
+    auto channel() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_type() const -> bool {
-        return value.has_type();
+        return not view_.is_null(1);
     }
 
-    auto type() const -> const std::string& {
-        if (not value.type.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: type");
-        }
-        return *value.type;
+    auto type() const -> std::string_view {
+        auto v = view_.get_string(1);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_msg_type() const -> bool {
-        return value.has_msg_type();
+        return not view_.is_null(2);
     }
 
-    auto msg_type() const -> const std::string& {
-        if (not value.msg_type.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: msg_type");
-        }
-        return *value.msg_type;
+    auto msg_type() const -> std::string_view {
+        auto v = view_.get_string(2);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_ack() const -> bool {
-        return value.has_ack();
+        return not view_.is_null(3);
     }
 
-    auto ack() const -> const std::string& {
-        if (not value.ack.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: ack");
-        }
-        return *value.ack;
+    auto ack() const -> std::string_view {
+        auto v = view_.get_string(3);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_ack_type() const -> bool {
-        return value.has_ack_type();
+        return not view_.is_null(4);
     }
 
-    auto ack_type() const -> const std::string& {
-        if (not value.ack_type.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: ack_type");
-        }
-        return *value.ack_type;
+    auto ack_type() const -> std::string_view {
+        auto v = view_.get_string(4);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_status() const -> bool {
-        return value.has_status();
+        return not view_.is_null(5);
     }
 
-    auto status() const -> const std::string& {
-        if (not value.status.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: status");
-        }
-        return *value.status;
+    auto status() const -> std::string_view {
+        auto v = view_.get_string(5);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_status_type() const -> bool {
-        return value.has_status_type();
+        return not view_.is_null(6);
     }
 
-    auto status_type() const -> const std::string& {
-        if (not value.status_type.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: status_type");
-        }
-        return *value.status_type;
+    auto status_type() const -> std::string_view {
+        auto v = view_.get_string(6);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_pending_queue_size() const -> bool {
-        return value.has_pending_queue_size();
+        return not view_.is_null(7);
     }
 
-    auto pending_queue_size() const -> const int64_t& {
-        if (not value.pending_queue_size.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: pending_queue_size");
-        }
-        return *value.pending_queue_size;
+    auto pending_queue_size() const -> int64_t {
+        auto v = view_.get_int64(7);
+        return v.has_value() ? *v : int64_t{0};
     }
 
     auto Has_qos_profile() const -> bool {
-        return value.has_qos_profile();
+        return not view_.is_null(8);
     }
 
-    auto qos_profile() const -> const QosProfile& {
-        if (not value.qos_profile.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: qos_profile");
-        }
-        return *value.qos_profile;
+    auto qos_profile_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(8);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_record() const -> bool {
-        return value.has_record();
+        return not view_.is_null(9);
     }
 
-    auto record() const -> const bool& {
-        if (not value.record.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: record");
-        }
-        return *value.record;
+    auto record() const -> bool {
+        auto v = view_.get_bool(9);
+        return v.has_value() ? *v : false;
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct PortBuilder {
+    static constexpr size_t kFieldCount = 10;
+
+    PortBuilder() : writer_(10) {}
+
+    void set_channel(std::string_view value) { writer_.set_string(0, value); }
+    void set_type(std::string_view value) { writer_.set_string(1, value); }
+    void set_msg_type(std::string_view value) { writer_.set_string(2, value); }
+    void set_ack(std::string_view value) { writer_.set_string(3, value); }
+    void set_ack_type(std::string_view value) { writer_.set_string(4, value); }
+    void set_status(std::string_view value) { writer_.set_string(5, value); }
+    void set_status_type(std::string_view value) { writer_.set_string(6, value); }
+    void set_pending_queue_size(int64_t value) { writer_.set_int64(7, value); }
+    void set_qos_profile_bytes(std::span<const uint8_t> value) { writer_.set_object(8, value); }
+    void set_record(bool value) { writer_.set_bool(9, value); }
+
+    void clear_type() { writer_.set_null(1); }
+    void clear_msg_type() { writer_.set_null(2); }
+    void clear_ack() { writer_.set_null(3); }
+    void clear_ack_type() { writer_.set_null(4); }
+    void clear_status() { writer_.set_null(5); }
+    void clear_status_type() { writer_.set_null(6); }
+    void clear_pending_queue_size() { writer_.set_null(7); }
+    void clear_qos_profile() { writer_.set_null(8); }
+    void clear_record() { writer_.set_null(9); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto Port::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = PortBuilder();
+    builder.set_channel(channel);
+    if (type.has_value()) {
+        builder.set_type(*type);
+    } else {
+        builder.clear_type();
+    }
+    if (msg_type.has_value()) {
+        builder.set_msg_type(*msg_type);
+    } else {
+        builder.clear_msg_type();
+    }
+    if (ack.has_value()) {
+        builder.set_ack(*ack);
+    } else {
+        builder.clear_ack();
+    }
+    if (ack_type.has_value()) {
+        builder.set_ack_type(*ack_type);
+    } else {
+        builder.clear_ack_type();
+    }
+    if (status.has_value()) {
+        builder.set_status(*status);
+    } else {
+        builder.clear_status();
+    }
+    if (status_type.has_value()) {
+        builder.set_status_type(*status_type);
+    } else {
+        builder.clear_status_type();
+    }
+    if (pending_queue_size.has_value()) {
+        builder.set_pending_queue_size(*pending_queue_size);
+    } else {
+        builder.clear_pending_queue_size();
+    }
+    if (qos_profile.has_value()) {
+        { auto bytes = qos_profile->encode_fixed_layout(); builder.set_qos_profile_bytes(bytes); }
+    } else {
+        builder.clear_qos_profile();
+    }
+    if (record.has_value()) {
+        builder.set_record(*record);
+    } else {
+        builder.clear_record();
+    }
+    return builder.Serialize();
+}
+
+inline auto Port::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = PortBuilder();
+    builder.set_channel(channel);
+    if (type.has_value()) {
+        builder.set_type(*type);
+    } else {
+        builder.clear_type();
+    }
+    if (msg_type.has_value()) {
+        builder.set_msg_type(*msg_type);
+    } else {
+        builder.clear_msg_type();
+    }
+    if (ack.has_value()) {
+        builder.set_ack(*ack);
+    } else {
+        builder.clear_ack();
+    }
+    if (ack_type.has_value()) {
+        builder.set_ack_type(*ack_type);
+    } else {
+        builder.clear_ack_type();
+    }
+    if (status.has_value()) {
+        builder.set_status(*status);
+    } else {
+        builder.clear_status();
+    }
+    if (status_type.has_value()) {
+        builder.set_status_type(*status_type);
+    } else {
+        builder.clear_status_type();
+    }
+    if (pending_queue_size.has_value()) {
+        builder.set_pending_queue_size(*pending_queue_size);
+    } else {
+        builder.clear_pending_queue_size();
+    }
+    if (qos_profile.has_value()) {
+        { auto bytes = qos_profile->encode_fixed_layout(); builder.set_qos_profile_bytes(bytes); }
+    } else {
+        builder.clear_qos_profile();
+    }
+    if (record.has_value()) {
+        builder.set_record(*record);
+    } else {
+        builder.clear_record();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto Port::from_fixed_layout(std::span<const uint8_t> data) -> Port {
+    auto view = PortView(data.data(), data.size());
+    auto out = Port();
+    out.channel = view.channel();
+    if (view.Has_type()) { out.type = view.type(); }
+    if (view.Has_msg_type()) { out.msg_type = view.msg_type(); }
+    if (view.Has_ack()) { out.ack = view.ack(); }
+    if (view.Has_ack_type()) { out.ack_type = view.ack_type(); }
+    if (view.Has_status()) { out.status = view.status(); }
+    if (view.Has_status_type()) { out.status_type = view.status_type(); }
+    if (view.Has_pending_queue_size()) { out.pending_queue_size = view.pending_queue_size(); }
+    if (view.Has_qos_profile()) { auto bytes = view.qos_profile_bytes(); out.qos_profile = QosProfile::from_fixed_layout(bytes); }
+    if (view.Has_record()) { out.record = view.record(); }
+    return out;
+}
+
+struct ComponentConfBuilder;
 
 struct ComponentConf {
     static constexpr uint32_t kFieldId_global = 1;
@@ -1489,134 +2020,227 @@ struct ComponentConf {
     void set_unknown_fields(star::schema::UnknownFieldSet unknown_fields) {
         unknown_fields_ = std::move(unknown_fields);
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> ComponentConf;
 };
 
 struct ComponentConfView {
-    ComponentConf value{};
+    static constexpr size_t kFieldCount = 7;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> ComponentConfView {
-        return ComponentConfView{ComponentConf::from_value(value)};
-    }
+    ComponentConfView() = default;
+    explicit ComponentConfView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit ComponentConfView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
 
     static auto FromBinary(std::span<const uint8_t> bytes) -> ComponentConfView {
-        return ComponentConfView{ComponentConf::from_binary(bytes)};
+        return ComponentConfView(bytes);
     }
 
-    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {
-        return value.unknown_fields();
-    }
+    static constexpr size_t kSlotIndex_global = 0;
+    static constexpr size_t kSlotIndex_component = 1;
+    static constexpr size_t kSlotIndex_parameters = 2;
+    static constexpr size_t kSlotIndex_trigger = 3;
+    static constexpr size_t kSlotIndex_readers = 4;
+    static constexpr size_t kSlotIndex_writers = 5;
+    static constexpr size_t kSlotIndex_commands = 6;
 
     auto Has_global() const -> bool {
-        return value.has_global();
+        return not view_.is_null(0);
     }
 
-    auto global() const -> const GlobalInfo& {
-        if (not value.global.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: global");
-        }
-        return *value.global;
+    auto global_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(0);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_component() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto component() const -> const ComponentInfo& {
-        return value.component;
+    auto component_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(1);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_parameters() const -> bool {
-        return value.has_parameters();
+        return not view_.is_null(2);
     }
 
-    auto parameters() const -> const star::schema::SchemaObject& {
-        if (not value.parameters.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: parameters");
-        }
-        return *value.parameters;
+    auto parameters() const -> std::string_view {
+        auto v = view_.get_string(2);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_trigger() const -> bool {
-        return value.has_trigger();
+        return not view_.is_null(3);
     }
 
-    auto trigger() const -> const TriggerInfo& {
-        if (not value.trigger.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: trigger");
-        }
-        return *value.trigger;
+    auto trigger_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(3);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_readers() const -> bool {
-        return value.has_readers();
+        return not view_.is_null(4);
     }
 
-    auto readers() const -> const std::map<std::string, Port>& {
-        if (not value.readers.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: readers");
-        }
-        return *value.readers;
+    auto readers_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_map_bytes(4);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_writers() const -> bool {
-        return value.has_writers();
+        return not view_.is_null(5);
     }
 
-    auto writers() const -> const std::map<std::string, Port>& {
-        if (not value.writers.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: writers");
-        }
-        return *value.writers;
+    auto writers_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_map_bytes(5);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_commands() const -> bool {
-        return value.has_commands();
+        return not view_.is_null(6);
     }
 
-    auto commands() const -> const std::map<std::string, Port>& {
-        if (not value.commands.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: commands");
-        }
-        return *value.commands;
+    auto commands_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_map_bytes(6);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
 
 struct ComponentConfBuilder {
-    ComponentConf value{};
-    star::schema::UnknownFieldSet unknown_fields{};
+    static constexpr size_t kFieldCount = 7;
 
-    static auto FromValue(const ComponentConf& value) -> ComponentConfBuilder {
-        return ComponentConfBuilder{value, value.unknown_fields()};
-    }
+    ComponentConfBuilder() : writer_(7) {}
 
-    void set_unknown_fields(star::schema::UnknownFieldSet value_in) {
-        unknown_fields = std::move(value_in);
-    }
+    void set_global_bytes(std::span<const uint8_t> value) { writer_.set_object(0, value); }
+    void set_component_bytes(std::span<const uint8_t> value) { writer_.set_object(1, value); }
+    void set_parameters(std::string_view value) { writer_.set_string(2, value); }
+    void set_trigger_bytes(std::span<const uint8_t> value) { writer_.set_object(3, value); }
+    void set_readers_bytes(std::span<const uint8_t> value) { writer_.set_map(4, value); }
+    void set_writers_bytes(std::span<const uint8_t> value) { writer_.set_map(5, value); }
+    void set_commands_bytes(std::span<const uint8_t> value) { writer_.set_map(6, value); }
+
+    void clear_global() { writer_.set_null(0); }
+    void clear_parameters() { writer_.set_null(2); }
+    void clear_trigger() { writer_.set_null(3); }
+    void clear_readers() { writer_.set_null(4); }
+    void clear_writers() { writer_.set_null(5); }
+    void clear_commands() { writer_.set_null(6); }
 
     auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
-        if (buf == nullptr) {
-            return 0;
-        }
-        auto tmp = value;
-        tmp.set_unknown_fields(unknown_fields);
-        const auto bytes = tmp.encode_binary();
-        if (bytes.size() > cap) {
-            return 0;
-        }
-        if (not bytes.empty()) {
-            std::memcpy(buf, bytes.data(), bytes.size());
-        }
-        return bytes.size();
+        return writer_.serialize_into(buf, cap);
     }
 
     auto EncodeTo(std::span<uint8_t> out) const -> size_t {
         return EncodeTo(out.data(), out.size());
     }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
 };
+
+inline auto ComponentConf::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = ComponentConfBuilder();
+    if (global.has_value()) {
+        { auto bytes = global->encode_fixed_layout(); builder.set_global_bytes(bytes); }
+    } else {
+        builder.clear_global();
+    }
+    { auto bytes = component.encode_fixed_layout(); builder.set_component_bytes(bytes); }
+    if (parameters.has_value()) {
+        { auto text = star::schema::dump_schema_text(star::schema::SchemaValue(*parameters)); builder.set_parameters(text); }
+    } else {
+        builder.clear_parameters();
+    }
+    if (trigger.has_value()) {
+        { auto bytes = trigger->encode_fixed_layout(); builder.set_trigger_bytes(bytes); }
+    } else {
+        builder.clear_trigger();
+    }
+    if (readers.has_value()) {
+        { auto bytes = star::transport::encode_object_map(*readers); builder.set_readers_bytes(bytes); }
+    } else {
+        builder.clear_readers();
+    }
+    if (writers.has_value()) {
+        { auto bytes = star::transport::encode_object_map(*writers); builder.set_writers_bytes(bytes); }
+    } else {
+        builder.clear_writers();
+    }
+    if (commands.has_value()) {
+        { auto bytes = star::transport::encode_object_map(*commands); builder.set_commands_bytes(bytes); }
+    } else {
+        builder.clear_commands();
+    }
+    return builder.Serialize();
+}
+
+inline auto ComponentConf::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = ComponentConfBuilder();
+    if (global.has_value()) {
+        { auto bytes = global->encode_fixed_layout(); builder.set_global_bytes(bytes); }
+    } else {
+        builder.clear_global();
+    }
+    { auto bytes = component.encode_fixed_layout(); builder.set_component_bytes(bytes); }
+    if (parameters.has_value()) {
+        { auto text = star::schema::dump_schema_text(star::schema::SchemaValue(*parameters)); builder.set_parameters(text); }
+    } else {
+        builder.clear_parameters();
+    }
+    if (trigger.has_value()) {
+        { auto bytes = trigger->encode_fixed_layout(); builder.set_trigger_bytes(bytes); }
+    } else {
+        builder.clear_trigger();
+    }
+    if (readers.has_value()) {
+        { auto bytes = star::transport::encode_object_map(*readers); builder.set_readers_bytes(bytes); }
+    } else {
+        builder.clear_readers();
+    }
+    if (writers.has_value()) {
+        { auto bytes = star::transport::encode_object_map(*writers); builder.set_writers_bytes(bytes); }
+    } else {
+        builder.clear_writers();
+    }
+    if (commands.has_value()) {
+        { auto bytes = star::transport::encode_object_map(*commands); builder.set_commands_bytes(bytes); }
+    } else {
+        builder.clear_commands();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto ComponentConf::from_fixed_layout(std::span<const uint8_t> data) -> ComponentConf {
+    auto view = ComponentConfView(data.data(), data.size());
+    auto out = ComponentConf();
+    if (view.Has_global()) { auto bytes = view.global_bytes(); out.global = GlobalInfo::from_fixed_layout(bytes); }
+    { auto bytes = view.component_bytes(); out.component = ComponentInfo::from_fixed_layout(bytes); }
+    if (view.Has_parameters()) { auto text = view.parameters(); auto val = star::schema::parse_schema_text(text); out.parameters = val.as_object(); }
+    if (view.Has_trigger()) { auto bytes = view.trigger_bytes(); out.trigger = TriggerInfo::from_fixed_layout(bytes); }
+    if (view.Has_readers()) { auto bytes = view.readers_bytes(); out.readers = star::transport::decode_object_map<Port>(bytes); }
+    if (view.Has_writers()) { auto bytes = view.writers_bytes(); out.writers = star::transport::decode_object_map<Port>(bytes); }
+    if (view.Has_commands()) { auto bytes = view.commands_bytes(); out.commands = star::transport::decode_object_map<Port>(bytes); }
+    return out;
+}
 
 using ComponentConfSchema = ComponentConf;
 
 }  // namespace star::generated::manifest::component
 
-#endif // ___HOME_ZGY_PROJECTS_STARLETTO_BASEMENT_SCHEMA_BUILTIN_MANIFEST_COMPONENT_S_H__
+#endif // __MANIFEST_COMPONENT__

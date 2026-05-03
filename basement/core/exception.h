@@ -60,4 +60,11 @@ class RuntimeError : public StarException {
 
 }  // namespace star::excep
 
+namespace star::base {
+using StarException = star::excep::StarException;
+using BugError = star::excep::BugError;
+using LogicError = star::excep::LogicError;
+using RuntimeError = star::excep::RuntimeError;
+}  // namespace star::base
+
 #endif  // __EXCEPTION_H__

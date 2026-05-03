@@ -16,7 +16,6 @@ enum class FieldKind : uint8_t {
     FLOAT64 = 2,
     STRING = 3,
     OBJECT = 4,
-    ARRAY = 5,
 };
 
 struct FieldDescriptor {
@@ -29,6 +28,7 @@ struct FieldDescriptor {
     std::string value_type_name;
     bool allow_unknown_fields{false};
     bool optional{false};
+    bool explicit_required{false};
     bool repeated{false};
     bool has_default{false};
     star::schema::SchemaValue default_value{};

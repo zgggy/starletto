@@ -11,6 +11,7 @@
 #include "basement/schema/binary_codec.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/api/service_bus.h"
+#include "basement/transport/shm/shm_views.h"
 #include "libraries/common/schema/schema_value.h"
 #include "modules/setting/parameter/parameter_store_service.h"
 #include "modules/setting/schema/planning/motion.s.h"
@@ -37,9 +38,9 @@ public:
         if (not context()) {
             throw star::excep::RuntimeError("ParameterComponent init failed, context is null");
         }
-        auto parameter_store = std::shared_ptr<star::transport::ParameterStore>(
+        auto parameter_store = std::shared_ptr<star::runtime::ParameterStore>(
             &context()->parameter_store(),
-            [](star::transport::ParameterStore*) {});
+            [](star::runtime::ParameterStore*) {});
         store_service_ = std::make_shared<ParameterStoreService>(std::move(parameter_store));
 
         if (not store_service_) {
@@ -116,22 +117,22 @@ private:
     void register_parameter_services() {
         get_server_ = context()->service_bus().create_server(
             star::transport::ServiceDescriptor{default_get_service_name()},
-            [this](const star::transport::ServiceRequest& request) {
+            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
                 return handle_get_service(request);
             });
         set_server_ = context()->service_bus().create_server(
             star::transport::ServiceDescriptor{default_set_service_name()},
-            [this](const star::transport::ServiceRequest& request) {
+            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
                 return handle_set_service(request);
             });
         list_server_ = context()->service_bus().create_server(
             star::transport::ServiceDescriptor{default_list_service_name()},
-            [this](const star::transport::ServiceRequest& request) {
+            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
                 return handle_list_service(request);
             });
     }
 
-    auto handle_get_service(const star::transport::ServiceRequest& request) -> star::transport::ServiceResponse {
+    auto handle_get_service(const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
         try {
             const auto typed_request =
                 decode_typed_request<star::setting::service::parameter::get_request::ParameterGetRequest>(request);
@@ -152,7 +153,7 @@ private:
         }
     }
 
-    auto handle_set_service(const star::transport::ServiceRequest& request) -> star::transport::ServiceResponse {
+    auto handle_set_service(const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
         try {
             const auto typed_request =
                 decode_typed_request<star::setting::service::parameter::set_request::ParameterSetRequest>(request);
@@ -171,7 +172,7 @@ private:
         }
     }
 
-    auto handle_list_service(const star::transport::ServiceRequest& request) -> star::transport::ServiceResponse {
+    auto handle_list_service(const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
         try {
             const auto typed_request =
                 decode_typed_request<star::setting::service::parameter::list_request::ParameterListRequest>(request);
@@ -187,37 +188,42 @@ private:
 
     template <typename _RequestT>
     static auto decode_typed_request(const star::transport::ServiceRequest& request) -> _RequestT {
-        if (const auto typed = request.data_typed.as<_RequestT>()) {
+        if (const auto typed = request.body.payload.as<_RequestT>()) {
             return *typed;
         }
-        if (request.encode_binary) {
-            const auto bytes = request.encode_binary();
-            if (not bytes.empty()) {
-                return _RequestT::from_binary(std::span<const uint8_t>(bytes.data(), bytes.size()));
+        if (const auto slot = request.body.payload.as<star::transport::ShmSlotView>()) {
+            if (slot->size > 0) {
+                return _RequestT::from_binary(slot->bytes());
             }
         }
-        if (request.data.is_object()) {
-            return _RequestT::from_value(request.data);
+        if (const auto binary = request.body.payload.as<star::transport::BinaryPayloadView>()) {
+            if (binary->size > 0) {
+                return _RequestT::from_binary(binary->bytes());
+            }
         }
         throw star::excep::RuntimeError("ParameterComponent decode typed service request failed");
     }
 
     template <typename _ResponseT>
-    static auto response_ok_typed(_ResponseT response_value) -> star::transport::ServiceResponse {
+    static auto response_ok_typed(_ResponseT response_value) -> star::transport::SerializedServiceResponse {
         auto response = star::transport::ServiceResponse{};
         response.ok = true;
         auto msg = std::make_shared<const _ResponseT>(std::move(response_value));
-        response.data_typed = star::base::TypedConstPtr::from(msg);
-        response.schema_type_id = _ResponseT::schema_type_id();
-        response.encode_binary = [msg]() { return msg->encode_binary(); };
-        return response;
+        response.body.payload = star::base::TypedConstPtr::from(msg);
+        response.body.schema_type_id = _ResponseT::schema_type_id();
+        auto serializer = star::transport::MessageSerializer{};
+        serializer.encode_binary = [msg]() { return msg->encode_binary(); };
+        if constexpr (has_encode_fixed_layout_into<_ResponseT>::value) {
+            serializer.encode_into = [msg](uint8_t* buf, size_t cap) -> size_t { return msg->encode_fixed_layout_into(buf, cap); };
+        }
+        return star::transport::SerializedServiceResponse{response, serializer};
     }
 
-    static auto response_error(std::string message) -> star::transport::ServiceResponse {
+    static auto response_error(std::string message) -> star::transport::SerializedServiceResponse {
         auto response = star::transport::ServiceResponse{};
         response.ok = false;
         response.message = std::move(message);
-        return response;
+        return star::transport::SerializedServiceResponse{response, {}};
     }
 
     static auto replace_all(std::string s, char from, char to) -> std::string {
@@ -321,7 +327,8 @@ private:
         if (not schema) {
             return;
         }
-        star::schema::SchemaValidator::validate(*schema, value);
+        star::schema::SchemaValidator::apply_defaults(*schema, value);
+        star::schema::SchemaValidator::validate(*schema, *value);
         const auto bytes = star::schema::BinaryCodec::encode(*schema, *value);
         *value = star::schema::BinaryCodec::decode(*schema, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
@@ -376,15 +383,20 @@ private:
         auto payload = snapshot.to_value();
         const auto schema = context()->schema_registry().find_by_name(default_snapshot_schema_type_id().name);
         if (schema) {
-            star::schema::SchemaValidator::validate(*schema, &payload);
+            star::schema::SchemaValidator::apply_defaults(*schema, &payload);
+            star::schema::SchemaValidator::validate(*schema, payload);
         }
         auto msg = std::make_shared<const star::generated::setting::parameter::snapshot::ParameterSnapshot>(std::move(snapshot));
 
-        star::transport::MessageView view;
-        view.data = star::base::TypedConstPtr::from(msg);
+        auto view = star::transport::MessageView{};
+        view.payload = star::base::TypedConstPtr::from(msg);
         view.schema_type_id = default_snapshot_schema_type_id();
-        view.encode_binary = [msg]() { return msg->encode_binary(); };
-        writer_->write(view);
+        auto serializer = star::transport::MessageSerializer{};
+        serializer.encode_binary = [msg]() { return msg->encode_binary(); };
+        const auto r = writer_->write_serialized(star::transport::SerializedMessage{view, serializer});
+        if (!r.ok()) {
+            throw star::excep::RuntimeError("ParameterComponent publish_snapshot failed: status=", star::transport::write_status_string(r.status), ", err=", r.error_message);
+        }
         logI << "ParameterComponent snapshot entries: binary_only=" << binary_only_entries
              << ", debug_text_only=" << debug_text_only_entries;
     }
@@ -422,6 +434,13 @@ private:
     std::shared_ptr<star::transport::ServiceServer> get_server_;
     std::shared_ptr<star::transport::ServiceServer> set_server_;
     std::shared_ptr<star::transport::ServiceServer> list_server_;
+
+    template <typename _T, typename = void>
+    struct has_encode_fixed_layout_into : std::false_type {};
+
+    template <typename _T>
+    struct has_encode_fixed_layout_into<_T, std::void_t<decltype(std::declval<const _T&>().encode_fixed_layout_into(std::declval<uint8_t*>(), std::declval<size_t>()))>>
+        : std::true_type {};
 };
 
 inline auto register_native_parameter_components(star::runtime::ComponentRegistry& registry) -> void {

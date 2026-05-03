@@ -114,6 +114,7 @@ def ModuleConf {
 - `.schema` 是 schema 体系的 IDL
 - 当前最小变更是给字段加 field id，例如 `1 module : ModuleInfo`
 - optional/required 与类型名之间必须有空格：`string ?` / `string !`
+- `?` 表示字段可缺省；`!` 表示字段必须显式提供，即使该字段声明了默认值也不会因为默认值而变成可缺省
 - repeated 使用 `type[]` 表达
 
 ### 4.3 示例：值文件
@@ -195,7 +196,13 @@ Schema v1 不使用 protobuf 的 group。
 
 - 完整 UnknownFieldSet
 - 无 schema 的任意 object 编码
-- 真正零拷贝的生成态 View/Builder 内部实现
+
+已完成（2026-04-17）：
+
+- ✅ 零拷贝的生成态 View/Builder 内部实现（FixedLayoutCodec + codegen 生成）
+- ✅ View：对 bytes 的只读结构化访问，直接映射 SHM 内存
+- ✅ Builder：在可写 buffer 上构造消息，支持 `serialize_into` 直接写入 SHM loan
+- ✅ 端到端测试：ModuleConf/ModuleInfo/LayoutInfo/DependencyInfo 的 View/Builder 往返验证
 
 ## 6. 生成态接口
 
@@ -309,6 +316,8 @@ Schema 运行时至少提供：
 当前已有：
 
 - `SchemaRegistry/SchemaValidator`
+  - `SchemaValidator::validate(...)` 只做结构与类型校验，不再修改输入值
+  - `SchemaValidator::apply_defaults(...)` 负责根据 schema 默认值补齐缺失字段
 - `schema_codegen.py`
 
 升级步骤：
@@ -389,6 +398,7 @@ def TypeName {                   # 结构体定义
 #   Other   → 嵌套 struct       FieldKind::OBJECT
 #   ?       → std::optional<>    optional=true
 #   []      -> std::vector<>     repeated=true
+#   运行时 descriptor 不再使用独立的 ARRAY kind，数组统一表达为 repeated=true + 元素 kind/type_name
 ```
 
 ### 12.3 生成物（每个 .s.h）
@@ -409,6 +419,7 @@ def TypeName {                   # 结构体定义
 3. **struct TypeNameBuilder** — 构造器
 
 4. **_build_fields_TypeName()** — FieldDescriptor 列表
+   - map 字段的 `type_name` 统一表示 value 的实际类型名；是否为 map 由 `has_value_kind/value_*` 表达
 
 5. **_schema_type_id()** / **_schema_descriptor()** — 元信息
 

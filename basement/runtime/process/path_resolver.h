@@ -87,16 +87,17 @@ inline auto find_nearest_module_conf(const std::filesystem::path& component_conf
 }
 
 inline auto collect_component_confs_from_module_conf(const std::filesystem::path& module_conf_path, const star::runtime::plan::PlanLoader& loader) -> std::vector<std::string> {
-    auto module_conf = loader.load_module(module_conf_path.string());
-    if (not module_conf) {
+    const auto module_conf = loader.try_load_module(module_conf_path.string());
+    if (not module_conf.value) {
+        logE << "load module.conf failed: path=" << module_conf_path.string() << ", error=" << module_conf.error;
         return {};
     }
 
-    if (module_conf->components.has_value() && not module_conf->components->empty()) {
+    if (module_conf.value->components.has_value() && not module_conf.value->components->empty()) {
         std::vector<std::string> out;
-        out.reserve(module_conf->components->size());
+        out.reserve(module_conf.value->components->size());
         const auto base = module_conf_path.parent_path();
-        for (const auto& rel : *module_conf->components) {
+        for (const auto& rel : *module_conf.value->components) {
             auto p = std::filesystem::path(rel);
             if (not p.is_absolute()) {
                 p = base / p;
@@ -114,9 +115,9 @@ inline auto collect_component_confs_from_module_conf(const std::filesystem::path
     }
 
     auto base = module_conf_path.parent_path();
-    auto component_dir = base / (module_conf->layout.has_value() && module_conf->layout->component_dir.has_value() ? *module_conf->layout->component_dir : ".");
+    auto component_dir = base / (module_conf.value->layout.has_value() && module_conf.value->layout->component_dir.has_value() ? *module_conf.value->layout->component_dir : ".");
     auto out = expand_component_confs_from_dir(component_dir);
-    const auto config_dir_value = module_conf->layout.has_value() && module_conf->layout->config_dir.has_value() ? *module_conf->layout->config_dir : ".";
+    const auto config_dir_value = module_conf.value->layout.has_value() && module_conf.value->layout->config_dir.has_value() ? *module_conf.value->layout->config_dir : ".";
     const auto config_dir = std::filesystem::weakly_canonical(base / config_dir_value);
     out.erase(std::remove_if(out.begin(), out.end(),
                              [&config_dir](const std::string& path) {
@@ -157,14 +158,17 @@ inline auto collect_module_conf_order(const std::filesystem::path& module_conf_p
             return;
         }
         visited.insert(key);
-        auto module_conf = loader.load_module(p.string());
-        if (module_conf) {
-            const auto& deps = module_conf->dependency.has_value() && module_conf->dependency->modules.has_value() ? *module_conf->dependency->modules : std::vector<std::string>{};
+        const auto module_conf = loader.try_load_module(p.string());
+        if (module_conf.value) {
+            const auto& deps =
+                module_conf.value->dependency.has_value() && module_conf.value->dependency->modules.has_value() ? *module_conf.value->dependency->modules : std::vector<std::string>{};
             for (const auto& dep : deps) {
                 if (auto dep_path = resolve_dep(dep)) {
                     dfs(*dep_path);
                 }
             }
+        } else {
+            logE << "load module.conf failed: path=" << p.string() << ", error=" << module_conf.error;
         }
         order.push_back(p);
     };

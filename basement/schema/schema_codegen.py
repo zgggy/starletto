@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 import argparse
+
+_BINARY_ONLY_TYPES = {"SchemaValue"}
+
+_SCHEMA_TEXT_TYPES = {"object"}
+
+def _is_binary_only_type(type_name):
+    return type_name in _BINARY_ONLY_TYPES
+
+def _is_schema_text_type(type_name):
+    return type_name in _SCHEMA_TEXT_TYPES
+
+def _cpp_type_for_binary_only(type_name):
+    if type_name == "object":
+        return "star::schema::SchemaValue"
+    return type_name
 import pathlib
 import re
 import sys
@@ -257,8 +272,8 @@ def cpp_namespace(doc: SchemaDoc) -> list[str]:
     return [part for part in re.split(r"[:.]+", raw) if part]
 
 
-def guard_name(output_path: pathlib.Path) -> str:
-    text = str(output_path).upper().replace("/", "_").replace(".", "_").replace("-", "_")
+def guard_name(schema_name: str) -> str:
+    text = schema_name.upper().replace(".", "_").replace("-", "_").replace("/", "_")
     return f"__{text}__"
 
 
@@ -401,121 +416,26 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         visit(def_name)
 
     lines: list[str] = []
-    guard = guard_name(output_path)
+    guard = guard_name(doc.schema_name)
     lines.extend([
         f"#ifndef {guard}",
         f"#define {guard}",
         "",
-        '#include "basement/schema/binary_codec.h"',
-        '#include "basement/schema/schema_ast.h"',
+        '#include "basement/schema/schema_codec_helpers.h"',
         '#include "basement/schema/schema_registry.h"',
-        '#include "libraries/common/schema/schema_value.h"',
+        '#include "basement/transport/common/fixed_layout_codec.h"',
         "",
-        "#include <concepts>",
         "#include <cstring>",
-        "#include <cstdint>",
-        "#include <map>",
         "#include <optional>",
         "#include <span>",
-        "#include <string>",
-        "#include <type_traits>",
         "#include <utility>",
-        "#include <vector>",
         "",
     ])
     lines.append(f"namespace {'::'.join(ns)} {{")
     lines.append("")
     lines.extend([
-        "template <typename _ValueType>",
-        "concept SchemaStructType = requires(const star::schema::SchemaValue& value, const _ValueType& item) {",
-        "    { _ValueType::from_value(value) } -> std::same_as<_ValueType>;",
-        "    { item.to_value() } -> std::same_as<star::schema::SchemaValue>;",
-        "};",
-        "",
-        "template <typename _ValueType>",
-        "struct IsStdVector : std::false_type {",
-        "};",
-        "",
-        "template <typename _ItemType, typename _Allocator>",
-        "struct IsStdVector<std::vector<_ItemType, _Allocator>> : std::true_type {",
-        "    using Item = _ItemType;",
-        "};",
-        "",
-        "template <typename _ValueType>",
-        "struct IsStdMap : std::false_type {",
-        "};",
-        "",
-        "template <typename _MappedType, typename _Compare, typename _Allocator>",
-        "struct IsStdMap<std::map<std::string, _MappedType, _Compare, _Allocator>> : std::true_type {",
-        "    using Item = _MappedType;",
-        "};",
-        "",
-        "template <typename _ValueType>",
-        "auto schema_read(const star::schema::SchemaValue& value) -> _ValueType {",
-        "    if constexpr (IsStdVector<_ValueType>::value) {",
-        "        using _Item = typename IsStdVector<_ValueType>::Item;",
-        "        auto out = _ValueType{};",
-        "        const auto& arr = value.as_array();",
-        "        out.reserve(arr.size());",
-        "        for (const auto& item : arr) {",
-        "            out.emplace_back(schema_read<_Item>(item));",
-        "        }",
-        "        return out;",
-        "    } else if constexpr (IsStdMap<_ValueType>::value) {",
-        "        using _Item = typename IsStdMap<_ValueType>::Item;",
-        "        auto out = _ValueType{};",
-        "        const auto& obj = value.as_object();",
-        "        for (const auto& [key, item] : obj) {",
-        "            out.emplace(key, schema_read<_Item>(item));",
-        "        }",
-        "        return out;",
-        "    } else if constexpr (std::is_same_v<_ValueType, std::string>) {",
-        "        return value.as<std::string>();",
-        "    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {",
-        "        return value;",
-        "    } else if constexpr (std::is_same_v<_ValueType, bool>) {",
-        "        return value.as<bool>();",
-        "    } else if constexpr (std::is_same_v<_ValueType, int64_t>) {",
-        "        return value.as<int64_t>();",
-        "    } else if constexpr (std::is_same_v<_ValueType, double>) {",
-        "        return value.as<double>();",
-        "    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {",
-        "        return value.as_object();",
-        "    } else if constexpr (SchemaStructType<_ValueType>) {",
-        "        return _ValueType::from_value(value);",
-        "    } else {",
-        "        static_assert(std::is_same_v<_ValueType, void>, \"unsupported schema_read type\");",
-        "    }",
-        "}",
-        "",
-        "template <typename _ValueType>",
-        "auto schema_write(const _ValueType& value) -> star::schema::SchemaValue {",
-        "    if constexpr (IsStdVector<_ValueType>::value) {",
-        "        auto out = star::schema::SchemaArray{};",
-        "        out.reserve(value.size());",
-        "        for (const auto& item : value) {",
-        "            out.emplace_back(schema_write(item));",
-        "        }",
-        "        return star::schema::SchemaValue(std::move(out));",
-        "    } else if constexpr (IsStdMap<_ValueType>::value) {",
-        "        auto out = star::schema::SchemaObject{};",
-        "        for (const auto& [key, item] : value) {",
-        "            out.emplace(key, schema_write(item));",
-        "        }",
-        "        return star::schema::SchemaValue(std::move(out));",
-        "    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {",
-        "        return value;",
-        "    } else if constexpr (std::is_same_v<_ValueType, std::string> || std::is_same_v<_ValueType, bool> ||",
-        "                  std::is_same_v<_ValueType, int64_t> || std::is_same_v<_ValueType, double>) {",
-        "        return star::schema::schema_value_from(value);",
-        "    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {",
-        "        return star::schema::SchemaValue(value);",
-        "    } else if constexpr (SchemaStructType<_ValueType>) {",
-        "        return value.to_value();",
-        "    } else {",
-        "        static_assert(std::is_same_v<_ValueType, void>, \"unsupported schema_write type\");",
-        "    }",
-        "}",
+        "using star::schema::schema_read;",
+        "using star::schema::schema_write;",
         "",
     ])
     lines.extend([
@@ -536,6 +456,7 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
             f"{prefix}field.kind = {field_kind_expr(field.type_ref, defs)};",
             f'{prefix}field.type_name = "{field_type_name(field.type_ref)}";',
             f"{prefix}field.optional = {'true' if field.type_ref.optional else 'false'};",
+            f"{prefix}field.explicit_required = {'true' if field.type_ref.explicit_required else 'false'};",
             f"{prefix}field.repeated = {'true' if field.type_ref.category == 'array' else 'false'};",
         ]
         if field.type_ref.category == "map":
@@ -578,6 +499,8 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
     ])
     for block in ordered_defs:
         def_name = block.name
+        lines.append(f"struct {def_name}Builder;")
+        lines.append("")
         lines.append(f"struct {def_name} {{")
         for field in block.fields:
             if field.id > 0:
@@ -663,82 +586,292 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
             lines.append("    void set_unknown_fields(star::schema::UnknownFieldSet unknown_fields) {")
             lines.append("        unknown_fields_ = std::move(unknown_fields);")
             lines.append("    }")
+        lines.append("")
+        lines.append("    auto encode_fixed_layout() const -> std::vector<uint8_t>;")
+        lines.append("")
+        lines.append("    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;")
+        lines.append("")
+        lines.append(f"    static auto from_fixed_layout(std::span<const uint8_t> data) -> {def_name};")
         lines.append("};")
         lines.append("")
         lines.append(f"struct {def_name}View {{")
-        lines.append(f"    {def_name} value{{}};")
+        lines.append(f"    static constexpr size_t kFieldCount = {len(block.fields)};")
         lines.append("")
-        lines.append(f"    static auto FromValue(const star::schema::SchemaValue& value) -> {def_name}View {{")
-        lines.append(f"        return {def_name}View{{{def_name}::from_value(value)}};")
-        lines.append("    }")
+        lines.append(f"    {def_name}View() = default;")
+        lines.append(f"    explicit {def_name}View(const uint8_t* data, size_t size) : view_(data, size) {{}}")
+        lines.append(f"    explicit {def_name}View(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {{}}")
+        lines.append("")
+        lines.append(f"    auto valid() const -> bool {{ return view_.valid(); }}")
         if def_name == doc.root_name:
             lines.append("")
             lines.append(f"    static auto FromBinary(std::span<const uint8_t> bytes) -> {def_name}View {{")
-            lines.append(f"        return {def_name}View{{{def_name}::from_binary(bytes)}};")
-            lines.append("    }")
-            lines.append("")
-            lines.append("    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {")
-            lines.append("        return value.unknown_fields();")
+            lines.append(f"        return {def_name}View(bytes);")
             lines.append("    }")
         lines.append("")
-        for field in block.fields:
+        for i, field in enumerate(block.fields):
+            lines.append(f"    static constexpr size_t kSlotIndex_{field.name} = {i};")
+        if block.fields:
+            lines.append("")
+        for i, field in enumerate(block.fields):
             if field.type_ref.optional and field.default is None:
                 lines.append(f"    auto Has_{field.name}() const -> bool {{")
-                lines.append(f"        return value.has_{field.name}();")
-                lines.append("    }")
-                lines.append("")
-                lines.append(f"    auto {field.name}() const -> const {view_inner_cpp_type(field)}& {{")
-                lines.append(f"        if (not value.{field.name}.has_value()) {{")
-                lines.append(f'            throw star::excep::RuntimeError("schema generated view access failed, missing field: {field.name}");')
-                lines.append("        }")
-                lines.append(f"        return *value.{field.name};")
+                lines.append(f"        return not view_.is_null({i});")
                 lines.append("    }")
                 lines.append("")
             else:
                 lines.append(f"    auto Has_{field.name}() const -> bool {{")
-                lines.append("        return true;")
+                lines.append(f"        return not view_.is_null({i});")
                 lines.append("    }")
                 lines.append("")
-                lines.append(f"    auto {field.name}() const -> const {view_inner_cpp_type(field)}& {{")
-                lines.append(f"        return value.{field.name};")
+            if field.type_ref.category == "array":
+                if field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64"}:
+                    lines.append(f"    auto {field.name}() const -> std::vector<int64_t> {{")
+                    lines.append(f"        auto v = view_.get_array_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_primitive_array<int64_t>(*v) : std::vector<int64_t>{{}};")
+                    lines.append("    }")
+                elif field.type_ref.name in {"float", "double", "float64"}:
+                    lines.append(f"    auto {field.name}() const -> std::vector<double> {{")
+                    lines.append(f"        auto v = view_.get_array_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_primitive_array<double>(*v) : std::vector<double>{{}};")
+                    lines.append("    }")
+                elif field.type_ref.name == "bool":
+                    lines.append(f"    auto {field.name}() const -> std::vector<bool> {{")
+                    lines.append(f"        auto v = view_.get_array_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_bool_array(*v) : std::vector<bool>{{}};")
+                    lines.append("    }")
+                elif field.type_ref.name == "string":
+                    lines.append(f"    auto {field.name}() const -> std::vector<std::string> {{")
+                    lines.append(f"        auto v = view_.get_array_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_string_array(*v) : std::vector<std::string>{{}};")
+                    lines.append("    }")
+                else:
+                    lines.append(f"    auto {field.name}_bytes() const -> std::span<const uint8_t> {{")
+                    lines.append(f"        auto v = view_.get_array_bytes({i});")
+                    lines.append(f"        return v.has_value() ? *v : std::span<const uint8_t>{{}};")
+                    lines.append("    }")
+            elif field.type_ref.category == "map":
+                if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64"}:
+                    lines.append(f"    auto {field.name}() const -> std::map<std::string, int64_t> {{")
+                    lines.append(f"        auto v = view_.get_map_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_primitive_map<int64_t>(*v) : std::map<std::string, int64_t>{{}};")
+                    lines.append("    }")
+                elif field.type_ref.value_name in {"float", "double", "float64"}:
+                    lines.append(f"    auto {field.name}() const -> std::map<std::string, double> {{")
+                    lines.append(f"        auto v = view_.get_map_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_primitive_map<double>(*v) : std::map<std::string, double>{{}};")
+                    lines.append("    }")
+                elif field.type_ref.value_name == "string":
+                    lines.append(f"    auto {field.name}() const -> std::map<std::string, std::string> {{")
+                    lines.append(f"        auto v = view_.get_map_bytes({i});")
+                    lines.append(f"        return v.has_value() ? star::transport::decode_string_map(*v) : std::map<std::string, std::string>{{}};")
+                    lines.append("    }")
+                else:
+                    lines.append(f"    auto {field.name}_bytes() const -> std::span<const uint8_t> {{")
+                    lines.append(f"        auto v = view_.get_map_bytes({i});")
+                    lines.append(f"        return v.has_value() ? *v : std::span<const uint8_t>{{}};")
+                    lines.append("    }")
+            elif field.type_ref.name == "bool":
+                lines.append(f"    auto {field.name}() const -> bool {{")
+                lines.append(f"        auto v = view_.get_bool({i});")
+                lines.append(f"        return v.has_value() ? *v : false;")
                 lines.append("    }")
-                lines.append("")
+            elif field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64"}:
+                lines.append(f"    auto {field.name}() const -> int64_t {{")
+                lines.append(f"        auto v = view_.get_int64({i});")
+                lines.append(f"        return v.has_value() ? *v : int64_t{{0}};")
+                lines.append("    }")
+            elif field.type_ref.name in {"float", "double", "float64"}:
+                lines.append(f"    auto {field.name}() const -> double {{")
+                lines.append(f"        auto v = view_.get_float64({i});")
+                lines.append(f"        return v.has_value() ? *v : 0.0;")
+                lines.append("    }")
+            elif field.type_ref.name == "string":
+                lines.append(f"    auto {field.name}() const -> std::string_view {{")
+                lines.append(f"        auto v = view_.get_string({i});")
+                lines.append(f"        return v.has_value() ? *v : std::string_view{{}};")
+                lines.append("    }")
+            elif _is_schema_text_type(field.type_ref.name):
+                lines.append(f"    auto {field.name}() const -> std::string_view {{")
+                lines.append(f"        auto v = view_.get_string({i});")
+                lines.append(f"        return v.has_value() ? *v : std::string_view{{}};")
+                lines.append("    }")
+            else:
+                lines.append(f"    auto {field.name}_bytes() const -> std::span<const uint8_t> {{")
+                lines.append(f"        auto v = view_.get_object_bytes({i});")
+                lines.append(f"        return v.has_value() ? *v : std::span<const uint8_t>{{}};")
+                lines.append("    }")
+            lines.append("")
+        lines.append("    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }")
+        lines.append("")
+        lines.append("  private:")
+        lines.append("    star::transport::FixedLayoutView view_;")
         lines.append("};")
         lines.append("")
-        if def_name == doc.root_name:
-            lines.append(f"struct {def_name}Builder {{")
-            lines.append(f"    {def_name} value{{}};")
-            lines.append("    star::schema::UnknownFieldSet unknown_fields{};")
+        lines.append(f"struct {def_name}Builder {{")
+        lines.append(f"    static constexpr size_t kFieldCount = {len(block.fields)};")
+        lines.append("")
+        lines.append(f"    {def_name}Builder() : writer_({len(block.fields)}) {{}}")
+        lines.append("")
+        for i, field in enumerate(block.fields):
+            if field.type_ref.category == "array":
+                if field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64"}:
+                    lines.append(f"    void set_{field.name}(const std::vector<int64_t>& value) {{ auto bytes = star::transport::encode_primitive_array<int64_t>(value); writer_.set_array({i}, bytes); }}")
+                elif field.type_ref.name in {"float", "double", "float64"}:
+                    lines.append(f"    void set_{field.name}(const std::vector<double>& value) {{ auto bytes = star::transport::encode_primitive_array<double>(value); writer_.set_array({i}, bytes); }}")
+                elif field.type_ref.name == "bool":
+                    lines.append(f"    void set_{field.name}(const std::vector<bool>& value) {{ auto bytes = star::transport::encode_bool_array(value); writer_.set_array({i}, bytes); }}")
+                elif field.type_ref.name == "string":
+                    lines.append(f"    void set_{field.name}(const std::vector<std::string>& value) {{ auto bytes = star::transport::encode_string_array(value); writer_.set_array({i}, bytes); }}")
+                else:
+                    lines.append(f"    void set_{field.name}_bytes(std::span<const uint8_t> value) {{ writer_.set_array({i}, value); }}")
+            elif field.type_ref.category == "map":
+                if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64"}:
+                    lines.append(f"    void set_{field.name}(const std::map<std::string, int64_t>& value) {{ auto bytes = star::transport::encode_primitive_map<int64_t>(value); writer_.set_map({i}, bytes); }}")
+                elif field.type_ref.value_name in {"float", "double", "float64"}:
+                    lines.append(f"    void set_{field.name}(const std::map<std::string, double>& value) {{ auto bytes = star::transport::encode_primitive_map<double>(value); writer_.set_map({i}, bytes); }}")
+                elif field.type_ref.value_name == "string":
+                    lines.append(f"    void set_{field.name}(const std::map<std::string, std::string>& value) {{ auto bytes = star::transport::encode_string_map(value); writer_.set_map({i}, bytes); }}")
+                else:
+                    lines.append(f"    void set_{field.name}_bytes(std::span<const uint8_t> value) {{ writer_.set_map({i}, value); }}")
+            elif field.type_ref.name == "bool":
+                lines.append(f"    void set_{field.name}(bool value) {{ writer_.set_bool({i}, value); }}")
+            elif field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64"}:
+                lines.append(f"    void set_{field.name}(int64_t value) {{ writer_.set_int64({i}, value); }}")
+            elif field.type_ref.name in {"float", "double", "float64"}:
+                lines.append(f"    void set_{field.name}(double value) {{ writer_.set_float64({i}, value); }}")
+            elif field.type_ref.name == "string":
+                lines.append(f"    void set_{field.name}(std::string_view value) {{ writer_.set_string({i}, value); }}")
+            elif _is_schema_text_type(field.type_ref.name):
+                lines.append(f"    void set_{field.name}(std::string_view value) {{ writer_.set_string({i}, value); }}")
+            else:
+                lines.append(f"    void set_{field.name}_bytes(std::span<const uint8_t> value) {{ writer_.set_object({i}, value); }}")
+        if block.fields:
             lines.append("")
-            lines.append(f"    static auto FromValue(const {def_name}& value) -> {def_name}Builder {{")
-            lines.append(f"        return {def_name}Builder{{value, value.unknown_fields()}};")
-            lines.append("    }")
+        for i, field in enumerate(block.fields):
+            if field.type_ref.optional and field.default is None:
+                lines.append(f"    void clear_{field.name}() {{ writer_.set_null({i}); }}")
+        if any(f.type_ref.optional and f.default is None for f in block.fields):
             lines.append("")
-            lines.append("    void set_unknown_fields(star::schema::UnknownFieldSet value_in) {")
-            lines.append("        unknown_fields = std::move(value_in);")
-            lines.append("    }")
-            lines.append("")
-            lines.append("    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {")
-            lines.append("        if (buf == nullptr) {")
-            lines.append("            return 0;")
-            lines.append("        }")
-            lines.append("        auto tmp = value;")
-            lines.append("        tmp.set_unknown_fields(unknown_fields);")
-            lines.append("        const auto bytes = tmp.encode_binary();")
-            lines.append("        if (bytes.size() > cap) {")
-            lines.append("            return 0;")
-            lines.append("        }")
-            lines.append("        if (not bytes.empty()) {")
-            lines.append("            std::memcpy(buf, bytes.data(), bytes.size());")
-            lines.append("        }")
-            lines.append("        return bytes.size();")
-            lines.append("    }")
-            lines.append("")
-            lines.append("    auto EncodeTo(std::span<uint8_t> out) const -> size_t {")
-            lines.append("        return EncodeTo(out.data(), out.size());")
-            lines.append("    }")
-            lines.append("};")
-            lines.append("")
+        lines.append("    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {")
+        lines.append("        return writer_.serialize_into(buf, cap);")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    auto EncodeTo(std::span<uint8_t> out) const -> size_t {")
+        lines.append("        return EncodeTo(out.data(), out.size());")
+        lines.append("    }")
+        lines.append("")
+        lines.append("    auto Serialize() const -> std::vector<uint8_t> {")
+        lines.append("        return writer_.serialize();")
+        lines.append("    }")
+        lines.append("")
+        lines.append("  private:")
+        lines.append("    star::transport::FixedLayoutWriter writer_;")
+        lines.append("};")
+        lines.append("")
+        def _gen_field_set(field, is_optional, indent):
+            if field.type_ref.category == "array":
+                if field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "bool", "string"}:
+                    lines.append(f"{indent}builder.set_{field.name}({'*' + field.name if is_optional else field.name});")
+                elif _is_binary_only_type(field.type_ref.name):
+                    lines.append(f"{indent}{{ auto bytes = star::transport::encode_binary_value_array<{_cpp_type_for_binary_only(field.type_ref.name)}>({'*' + field.name if is_optional else field.name}); builder.set_{field.name}_bytes(bytes); }}")
+                else:
+                    lines.append(f"{indent}{{ auto bytes = star::transport::encode_object_array({'*' + field.name if is_optional else field.name}); builder.set_{field.name}_bytes(bytes); }}")
+            elif field.type_ref.category == "map":
+                if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
+                    lines.append(f"{indent}builder.set_{field.name}({'*' + field.name if is_optional else field.name});")
+                elif _is_binary_only_type(field.type_ref.value_name):
+                    lines.append(f"{indent}{{ auto bytes = star::transport::encode_binary_value_map<{_cpp_type_for_binary_only(field.type_ref.value_name)}>({'*' + field.name if is_optional else field.name}); builder.set_{field.name}_bytes(bytes); }}")
+                else:
+                    lines.append(f"{indent}{{ auto bytes = star::transport::encode_object_map({'*' + field.name if is_optional else field.name}); builder.set_{field.name}_bytes(bytes); }}")
+            elif field.type_ref.name in {"bool", "int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
+                lines.append(f"{indent}builder.set_{field.name}({'*' + field.name if is_optional else field.name});")
+            elif _is_binary_only_type(field.type_ref.name):
+                lines.append(f"{indent}{{ auto bytes = {field.name + '->' if is_optional else field.name + '.'}encode_binary(); builder.set_{field.name}_bytes(bytes); }}")
+            elif _is_schema_text_type(field.type_ref.name):
+                lines.append(f"{indent}{{ auto text = star::schema::dump_schema_text(star::schema::SchemaValue({'*' + field.name if is_optional else field.name})); builder.set_{field.name}(text); }}")
+            else:
+                lines.append(f"{indent}{{ auto bytes = {field.name + '->' if is_optional else field.name + '.'}encode_fixed_layout(); builder.set_{field.name}_bytes(bytes); }}")
+        lines.append(f"inline auto {def_name}::encode_fixed_layout() const -> std::vector<uint8_t> {{")
+        lines.append(f"    auto builder = {def_name}Builder();")
+        for i, field in enumerate(block.fields):
+            if field.type_ref.optional and field.default is None:
+                lines.append(f"    if ({field.name}.has_value()) {{")
+                _gen_field_set(field, True, "        ")
+                lines.append("    } else {")
+                lines.append(f"        builder.clear_{field.name}();")
+                lines.append("    }")
+            else:
+                _gen_field_set(field, False, "    ")
+        lines.append("    return builder.Serialize();")
+        lines.append("}")
+        lines.append("")
+        lines.append(f"inline auto {def_name}::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {{")
+        lines.append(f"    auto builder = {def_name}Builder();")
+        for i, field in enumerate(block.fields):
+            if field.type_ref.optional and field.default is None:
+                lines.append(f"    if ({field.name}.has_value()) {{")
+                _gen_field_set(field, True, "        ")
+                lines.append("    } else {")
+                lines.append(f"        builder.clear_{field.name}();")
+                lines.append("    }")
+            else:
+                _gen_field_set(field, False, "    ")
+        lines.append("    return builder.EncodeTo(buf, cap);")
+        lines.append("}")
+        lines.append("")
+        lines.append(f"inline auto {def_name}::from_fixed_layout(std::span<const uint8_t> data) -> {def_name} {{")
+        lines.append(f"    auto view = {def_name}View(data.data(), data.size());")
+        lines.append(f"    auto out = {def_name}();")
+        for i, field in enumerate(block.fields):
+            if field.type_ref.optional and field.default is None:
+                if field.type_ref.category == "array":
+                    if field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "bool", "string"}:
+                        lines.append(f"    if (view.Has_{field.name}()) {{ out.{field.name} = view.{field.name}(); }}")
+                    elif _is_binary_only_type(field.type_ref.name):
+                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_binary_value_array<{_cpp_type_for_binary_only(field.type_ref.name)}>(bytes); }}")
+                    else:
+                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_object_array<{field.type_ref.name}>(bytes); }}")
+                elif field.type_ref.category == "map":
+                    if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
+                        lines.append(f"    if (view.Has_{field.name}()) {{ out.{field.name} = view.{field.name}(); }}")
+                    elif _is_binary_only_type(field.type_ref.value_name):
+                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_binary_value_map<{_cpp_type_for_binary_only(field.type_ref.value_name)}>(bytes); }}")
+                    else:
+                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_object_map<{field.type_ref.value_name}>(bytes); }}")
+                elif field.type_ref.name in {"bool", "int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
+                    lines.append(f"    if (view.Has_{field.name}()) {{ out.{field.name} = view.{field.name}(); }}")
+                elif _is_binary_only_type(field.type_ref.name):
+                    lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {_cpp_type_for_binary_only(field.type_ref.name)}::from_binary(bytes); }}")
+                elif _is_schema_text_type(field.type_ref.name):
+                    lines.append(f"    if (view.Has_{field.name}()) {{ auto text = view.{field.name}(); auto val = star::schema::parse_schema_text(text); out.{field.name} = val.as_object(); }}")
+                else:
+                    lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {field.type_ref.name}::from_fixed_layout(bytes); }}")
+            else:
+                if field.type_ref.category == "array":
+                    if field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "bool", "string"}:
+                        lines.append(f"    out.{field.name} = view.{field.name}();")
+                    elif _is_binary_only_type(field.type_ref.name):
+                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_binary_value_array<{_cpp_type_for_binary_only(field.type_ref.name)}>(bytes); }}")
+                    else:
+                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_object_array<{field.type_ref.name}>(bytes); }}")
+                elif field.type_ref.category == "map":
+                    if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
+                        lines.append(f"    out.{field.name} = view.{field.name}();")
+                    elif _is_binary_only_type(field.type_ref.value_name):
+                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_binary_value_map<{_cpp_type_for_binary_only(field.type_ref.value_name)}>(bytes); }}")
+                    else:
+                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::transport::decode_object_map<{field.type_ref.value_name}>(bytes); }}")
+                elif field.type_ref.name in {"bool", "int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
+                    lines.append(f"    out.{field.name} = view.{field.name}();")
+                elif _is_binary_only_type(field.type_ref.name):
+                    lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {_cpp_type_for_binary_only(field.type_ref.name)}::from_binary(bytes); }}")
+                elif _is_schema_text_type(field.type_ref.name):
+                    lines.append(f"    {{ auto text = view.{field.name}(); auto val = star::schema::parse_schema_text(text); out.{field.name} = val.as_object(); }}")
+                else:
+                    lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {field.type_ref.name}::from_fixed_layout(bytes); }}")
+        lines.append("    return out;")
+        lines.append("}")
+        lines.append("")
     lines.append(f"using {doc.root_name}Schema = {doc.root_name};")
     lines.append("")
     lines.append(f"}}  // namespace {'::'.join(ns)}")

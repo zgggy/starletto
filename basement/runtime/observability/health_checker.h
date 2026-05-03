@@ -11,6 +11,7 @@
 
 #include "basement/runtime/observability/resource_monitor.h"
 #include "basement/transport/api/message_bus.h"
+#include "basement/transport/common/channel_stats.h"
 
 namespace star::runtime::observability {
 
@@ -34,7 +35,7 @@ struct ResourceHealthRule {
 
 struct ComponentHealthRule {
     std::string name;
-    ChannelHealthRule topic_rule;
+    ChannelHealthRule channel_rule;
     ResourceHealthRule resource_rule;
 };
 
@@ -60,7 +61,7 @@ struct ResourceHealthStatus {
 struct ComponentHealthReport {
     std::string component_name;
     bool overall_healthy{true};
-    std::vector<ChannelHealthStatus> topic_statuses;
+    std::vector<ChannelHealthStatus> channel_statuses;
     ResourceHealthStatus resource_status;
     std::string summary_message;
     HealthSeverity max_severity{HealthSeverity::OK};
@@ -75,8 +76,8 @@ struct ComponentHealthReport {
             sev_str = "CRIT";
         }
         char buf[512]{};
-        std::snprintf(buf, sizeof(buf), "health component=%s status=%s severity=%s topics=%zu cpu=%.1f%% rss=%lukB fds=%d msg=%s", component_name.c_str(), overall_healthy ? "ok" : "unhealthy",
-                      sev_str, topic_statuses.size(), resource_status.cpu_percent, static_cast<unsigned long>(resource_status.rss_kb), resource_status.fd_count, summary_message.c_str());
+        std::snprintf(buf, sizeof(buf), "health component=%s status=%s severity=%s channels=%zu cpu=%.1f%% rss=%lukB fds=%d msg=%s", component_name.c_str(), overall_healthy ? "ok" : "unhealthy",
+                      sev_str, channel_statuses.size(), resource_status.cpu_percent, static_cast<unsigned long>(resource_status.rss_kb), resource_status.fd_count, summary_message.c_str());
         return std::string(buf);
     }
 };
@@ -95,12 +96,12 @@ class HealthChecker {
 
     void set_unhealthy_action(UnhealthyAction action) { unhealthy_action_ = std::move(action); }
 
-    auto check_all_topics() const -> std::vector<ChannelHealthStatus> {
+    auto check_all_channels() const -> std::vector<ChannelHealthStatus> {
         auto results = std::vector<ChannelHealthStatus>{};
-        const auto stats_lines = bus_->dump_stats_lines();
-        auto stats = parse_stats(stats_lines);
+        const auto all_stats = bus_->all_channel_stats();
+        auto stats_map = build_stats_map(all_stats);
         for (const auto& rule : channel_rules_) {
-            results.push_back(check_topic_rule(rule, stats));
+            results.push_back(check_channel_rule(rule, stats_map));
         }
         return results;
     }
@@ -126,14 +127,14 @@ class HealthChecker {
             report.max_severity = std::max(report.max_severity, report.resource_status.severity);
         }
 
+        const auto all_stats = bus_->all_channel_stats();
+        auto stats_map = build_stats_map(all_stats);
         for (const auto& rule : channel_rules_) {
-            const auto stats_lines = bus_->dump_stats_lines();
-            const auto stats = parse_stats(stats_lines);
-            auto ts = check_topic_rule(rule, stats);
-            report.topic_statuses.push_back(std::move(ts));
-            if (!report.topic_statuses.back().healthy) {
+            auto ts = check_channel_rule(rule, stats_map);
+            report.channel_statuses.push_back(std::move(ts));
+            if (!report.channel_statuses.back().healthy) {
                 report.overall_healthy = false;
-                report.max_severity = std::max(report.max_severity, report.topic_statuses.back().severity);
+                report.max_severity = std::max(report.max_severity, report.channel_statuses.back().severity);
             }
         }
 
@@ -156,7 +157,7 @@ class HealthChecker {
 
     auto dump_health_lines() const -> std::vector<std::string> {
         auto lines = std::vector<std::string>{};
-        lines.emplace_back("[Health] component | status | severity | topics | cpu% | rss_kB | fds | message");
+        lines.emplace_back("[Health] component | status | severity | channels | cpu% | rss_kB | fds | message");
         const auto reports = check_all_components();
         for (const auto& r : reports) {
             lines.push_back(r.format_line());
@@ -165,15 +166,18 @@ class HealthChecker {
     }
 
   private:
-    struct TopicStatsSnapshot {
-        double hz{0};
-        uint64_t publish_count{0};
-        uint64_t dropped_count{0};
-    };
-
     static auto steady_now_ns() -> int64_t { return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
 
-    static auto check_topic_rule(const ChannelHealthRule& rule, const std::unordered_map<std::string, TopicStatsSnapshot>& stats) -> ChannelHealthStatus {
+    static auto build_stats_map(const std::vector<star::transport::ChannelStatsSnapshot>& all_stats) -> std::unordered_map<std::string, star::transport::ChannelStatsSnapshot> {
+        auto out = std::unordered_map<std::string, star::transport::ChannelStatsSnapshot>{};
+        out.reserve(all_stats.size());
+        for (const auto& snap : all_stats) {
+            out[snap.channel_name] = snap;
+        }
+        return out;
+    }
+
+    static auto check_channel_rule(const ChannelHealthRule& rule, const std::unordered_map<std::string, star::transport::ChannelStatsSnapshot>& stats) -> ChannelHealthStatus {
         auto status = ChannelHealthStatus{};
         status.channel = rule.channel;
         auto it = stats.find(rule.channel);
@@ -183,11 +187,11 @@ class HealthChecker {
             status.severity = HealthSeverity::WARNING;
             return status;
         }
-        status.actual_hz = it->second.hz;
-        if (rule.min_hz > 0 && it->second.hz < rule.min_hz) {
+        status.actual_hz = it->second.avg_hz;
+        if (rule.min_hz > 0 && it->second.avg_hz < rule.min_hz) {
             status.healthy = false;
-            status.severity = (it->second.hz > 0) ? HealthSeverity::WARNING : HealthSeverity::CRITICAL;
-            status.message = "frequency below threshold: " + std::to_string(it->second.hz) + "hz < " + std::to_string(rule.min_hz) + "hz";
+            status.severity = (it->second.avg_hz > 0) ? HealthSeverity::WARNING : HealthSeverity::CRITICAL;
+            status.message = "frequency below threshold: " + std::to_string(it->second.avg_hz) + "hz < " + std::to_string(rule.min_hz) + "hz";
         } else {
             status.healthy = true;
             status.message = "ok";
@@ -255,59 +259,6 @@ class HealthChecker {
             }
         }
         report->summary_message = parts.empty() ? "unhealthy" : parts;
-    }
-
-    static auto parse_stats(const std::vector<std::string>& lines) -> std::unordered_map<std::string, TopicStatsSnapshot> {
-        auto out = std::unordered_map<std::string, TopicStatsSnapshot>{};
-        for (const auto& line : lines) {
-            auto snap = TopicStatsSnapshot{};
-            const auto channel = extract_field(line, "channel=", &snap);
-            if (not channel.has_value()) {
-                continue;
-            }
-            snap.publish_count = extract_uint64(line, "publish=");
-            snap.dropped_count = extract_uint64(line, "dropped=");
-            snap.hz = extract_double(line, "avg_hz=");
-            out[*channel] = snap;
-        }
-        return out;
-    }
-
-    static auto extract_field(const std::string& line, const std::string& key, void*) -> std::optional<std::string> {
-        const auto pos = line.find(key);
-        if (pos == std::string::npos) {
-            return std::nullopt;
-        }
-        const auto start = pos + key.size();
-        auto end = line.find(' ', start);
-        if (end == std::string::npos) {
-            end = line.size();
-        }
-        return line.substr(start, end - start);
-    }
-
-    static auto extract_uint64(const std::string& line, const std::string& key) -> uint64_t {
-        const auto val = extract_field(line, key, nullptr);
-        if (not val) {
-            return 0;
-        }
-        try {
-            return std::stoull(*val);
-        } catch (...) {
-            return 0;
-        }
-    }
-
-    static auto extract_double(const std::string& line, const std::string& key) -> double {
-        const auto val = extract_field(line, key, nullptr);
-        if (not val) {
-            return 0.0;
-        }
-        try {
-            return std::stod(*val);
-        } catch (...) {
-            return 0.0;
-        }
     }
 
     static auto getpid() -> int64_t { return static_cast<int64_t>(::getpid()); }

@@ -4,26 +4,93 @@ class PathPlanner {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.width = canvas.width;
-        this.height = 200; // 调整为200px，以适应新的布局
+        this.height = canvas.height; // 使用canvas的实际高度
         
         // 配置参数
-        this.padding = 40;
-        this.gridSize = 10; // 增大网格密度
+        this.padding = 20; // 减少padding，使显示更占满canvas
+        this.gridSize = 5; // 增大网格密度（更密）
         this.carWidth = 20; // 2米宽
         this.carLength = 50; // 5米长
         this.obstacleSize = 20; // 2米的小正方形障碍物
         this.safetyMargin = 10; // 1米的挤压距离
         this.obstacleOccupancyMargin = 10; // 障碍物占据网格的额外空间（1米）
-        this.obstacles = [
-            { x: 200, y: 150, width: this.obstacleSize, height: this.obstacleSize, dragging: false },
-            { x: 300, y: 250, width: this.obstacleSize, height: this.obstacleSize, dragging: false }
-        ];
-        this.path = [];
-        this.lastPath = [];
         
         // 坐标转换参数（像素到米）
         this.pixelToMeter = 10; // 10像素 = 1米
         this.meterToPixel = 10; // 1米 = 10像素
+        
+        // 浮动参数
+        this.floatTime = 0;
+        this.floatOffset = [];
+        
+        // 初始化3个随机障碍物，在l=-2~+2附近，且s值不要太近
+        this.obstacles = [];
+        const centerX = this.padding + (this.width - 2 * this.padding) / 2;
+        const centerY = this.height / 2;
+        
+        // 确保障碍物之间的最小距离（以像素为单位）
+        const minDistance = this.obstacleSize * 2; // 至少两倍障碍物宽度
+        const maxAttempts = 100; // 最大尝试次数，避免死循环
+        
+        // s方向的限制范围（单位：米）
+        const sMinInit = 5; // s不能小于5米
+        const sMaxInit = (this.width - 2 * this.padding) / this.meterToPixel - 5; // s不能大于max_s-5米
+        
+        for (let i = 0; i < 3; i++) {
+            let x, s;
+            let validPosition = false;
+            let attempts = 0;
+            
+            // 尝试生成有效的位置，确保与已有障碍物不重叠
+            while (!validPosition && attempts < maxAttempts) {
+                // s范围：sMinInit~+sMaxInit米，转换为像素（沿路径方向分布）
+                s = sMinInit + Math.random() * (sMaxInit - sMinInit); // sMinInit to sMaxInit
+                x = this.padding + s * this.meterToPixel;
+                
+                // 检查与已有障碍物的距离
+                validPosition = true;
+                for (let existingObstacle of this.obstacles) {
+                    const distance = Math.abs(x - existingObstacle.x);
+                    if (distance < minDistance) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+                attempts++;
+            }
+            
+            // 如果超过最大尝试次数，强制使用当前位置
+            if (!validPosition) {
+                // 直接在s轴上均匀分布
+                const step = (sMaxInit - sMinInit) / 2;
+                s = sMinInit + i * step; // sMinInit, sMinInit+step, sMinInit+2*step
+                x = this.padding + s * this.meterToPixel;
+            }
+            
+            // l范围：-2~+2米，转换为像素（在中心线附近）
+            const l = (Math.random() * 4 - 2); // -2 to 2
+            const y = centerY - l * this.meterToPixel;
+            
+            this.obstacles.push({
+                x: x,
+                y: y,
+                width: this.obstacleSize,
+                height: this.obstacleSize,
+                dragging: false
+            });
+            
+            // 初始化障碍物的浮动参数
+            this.floatOffset.push({
+                x: x, // 使用实际位置作为初始值
+                y: y,
+                targetX: null,
+                targetY: null,
+                reachedTarget: true, // 初始时标记为已到达，会在下一帧选择新目标
+                speed: 0.3 + Math.random() * 0.5
+            });
+        }
+        this.path = [];
+        this.lastPath = [];
         
         // l的上下边界（米）
         this.lLowerBound = -4; // -4米
@@ -31,11 +98,78 @@ class PathPlanner {
         
         // 鼠标事件
         this.mousePos = { x: 0, y: 0 };
+        this.draggingObstacle = null; // 记录当前拖动的障碍物
         this.setupEventListeners();
         
         // 初始化
         this.updatePath();
         this.startAnimation();
+    }
+    
+    // 更新浮动 - 改为目标点移动方式（使用绝对位置）
+    updateFloat() {
+        // s方向的限制范围（单位：米）
+        const sMin = 4; // s不能小于4米
+        const sMax = (this.width - 2 * this.padding) / this.meterToPixel - 4; // s不能大于max_s-4米
+        const sMinPixel = this.padding + sMin * this.meterToPixel;
+        const sMaxPixel = this.padding + sMax * this.meterToPixel - this.obstacleSize;
+        
+        // l方向的限制范围（grid范围内）
+        // lUpperBound = 4, lLowerBound = -4
+        // l=4米在上方（canvas y小），l=-4米在下方（canvas y大）
+        const centerY = this.height / 2;
+        // grid上边界（l=4，对应较小的canvas y）
+        const lMinPixel = centerY - this.lUpperBound * this.meterToPixel;
+        // grid下边界（l=-4，对应较大的canvas y）
+        const lMaxPixel = centerY - this.lLowerBound * this.meterToPixel - this.obstacleSize;
+        
+        for (let i = 0; i < this.obstacles.length; i++) {
+            // 如果障碍物正在被拖动，跳过浮动
+            if (this.obstacles[i].dragging) continue;
+            
+            // 如果没有目标点，或者已经到达目标点，选择新目标
+            if (!this.floatOffset[i].targetX || this.floatOffset[i].reachedTarget) {
+                // 随机选择目标位置（在grid范围内）
+                this.floatOffset[i].targetX = sMinPixel + Math.random() * (sMaxPixel - sMinPixel);
+                this.floatOffset[i].targetY = lMinPixel + Math.random() * (lMaxPixel - lMinPixel);
+                this.floatOffset[i].reachedTarget = false;
+                
+                // 随机选择移动速度（很慢）
+                this.floatOffset[i].speed = 0.1 + Math.random() * 0.2; // 0.1到0.3之间，很慢的速度
+            }
+            
+            // 计算到目标位置的距离
+            const dx = this.floatOffset[i].targetX - this.floatOffset[i].x;
+            const dy = this.floatOffset[i].targetY - this.floatOffset[i].y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // 如果到达目标点附近，标记为已到达
+            if (distance < 1) {
+                this.floatOffset[i].reachedTarget = true;
+            } else {
+                // 缓慢移动向目标位置
+                const moveSpeed = this.floatOffset[i].speed;
+                this.floatOffset[i].x += (dx / distance) * moveSpeed;
+                this.floatOffset[i].y += (dy / distance) * moveSpeed;
+                
+                // 确保位置在边界内
+                this.floatOffset[i].x = Math.max(sMinPixel, Math.min(sMaxPixel, this.floatOffset[i].x));
+                this.floatOffset[i].y = Math.max(lMinPixel, Math.min(lMaxPixel, this.floatOffset[i].y));
+            }
+        }
+    }
+    
+    // 获取障碍物考虑浮动后的实际位置
+    getObstaclePosition(index) {
+        const obstacle = this.obstacles[index];
+        const offset = this.floatOffset[index];
+        // 直接使用浮动位置（绝对位置）
+        return {
+            x: offset ? offset.x : obstacle.x,
+            y: offset ? offset.y : obstacle.y,
+            width: obstacle.width,
+            height: obstacle.height
+        };
     }
     
     setupEventListeners() {
@@ -48,15 +182,20 @@ class PathPlanner {
     
     handleMouseDown(e) {
         const rect = this.canvas.getBoundingClientRect();
+        // 计算鼠标在canvas中的实际坐标，考虑canvas的缩放
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
         this.mousePos = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top) * scaleY
         };
         
-        // 检查是否点击到障碍物
-        for (let obstacle of this.obstacles) {
+        // 检查是否点击到障碍物（使用浮动后的位置）
+        for (let i = 0; i < this.obstacles.length; i++) {
+            const obstacle = this.getObstaclePosition(i);
             if (this.isPointInRect(this.mousePos, obstacle)) {
-                obstacle.dragging = true;
+                this.obstacles[i].dragging = true;
+                this.draggingObstacle = this.obstacles[i];
                 break;
             }
         }
@@ -64,30 +203,37 @@ class PathPlanner {
     
     handleMouseMove(e) {
         const rect = this.canvas.getBoundingClientRect();
+        // 计算鼠标在canvas中的实际坐标，考虑canvas的缩放
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
         this.mousePos = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
+            x: (e.clientX - rect.left) * scaleX,
+            y: (e.clientY - rect.top) * scaleY
         };
         
         // 拖动障碍物
-        for (let obstacle of this.obstacles) {
-            if (obstacle.dragging) {
+        for (let i = 0; i < this.obstacles.length; i++) {
+            if (this.obstacles[i].dragging) {
                 // 计算障碍物中心位置并吸附到网格
-                let centerX = Math.round(this.mousePos.x / this.gridSize) * this.gridSize;
-                let centerY = Math.round(this.mousePos.y / this.gridSize) * this.gridSize;
-                
-                // 更新障碍物位置
-                obstacle.x = centerX - obstacle.width / 2;
-                obstacle.y = centerY - obstacle.height / 2;
-                
-                // 确保障碍物在画布内
-                obstacle.x = Math.max(this.padding, Math.min(this.width - this.padding - obstacle.width, obstacle.x));
-                obstacle.y = Math.max(this.padding, Math.min(this.height - this.padding - obstacle.height, obstacle.y));
-                
-                // 再次吸附到网格，确保障碍物位置对齐网格
-                obstacle.x = Math.round(obstacle.x / this.gridSize) * this.gridSize;
-                obstacle.y = Math.round(obstacle.y / this.gridSize) * this.gridSize;
-                
+                let gridCenterX = Math.round(this.mousePos.x / this.gridSize) * this.gridSize;
+                let gridCenterY = Math.round(this.mousePos.y / this.gridSize) * this.gridSize;
+
+                // 更新浮动偏移中的位置
+                this.floatOffset[i].x = gridCenterX - this.obstacles[i].width / 2;
+                this.floatOffset[i].y = gridCenterY - this.obstacles[i].height / 2;
+
+                // 确保障碍物在边界内
+                const sMin = 4;
+                const sMax = (this.width - 2 * this.padding) / this.meterToPixel - 4;
+                const sMinPixel = this.padding + sMin * this.meterToPixel;
+                const sMaxPixel = this.padding + sMax * this.meterToPixel - this.obstacleSize;
+                const boundCenterY = this.height / 2;
+                const lMinPixel = boundCenterY - this.lUpperBound * this.meterToPixel;
+                const lMaxPixel = boundCenterY - this.lLowerBound * this.meterToPixel - this.obstacleSize;
+
+                this.floatOffset[i].x = Math.max(sMinPixel, Math.min(sMaxPixel, this.floatOffset[i].x));
+                this.floatOffset[i].y = Math.max(lMinPixel, Math.min(lMaxPixel, this.floatOffset[i].y));
+
                 // 更新路径
                 this.updatePath();
                 break;
@@ -96,16 +242,25 @@ class PathPlanner {
     }
     
     handleMouseUp(e) {
-        for (let obstacle of this.obstacles) {
-            obstacle.dragging = false;
+        // 停止所有障碍物的拖动
+        for (let i = 0; i < this.obstacles.length; i++) {
+            this.obstacles[i].dragging = false;
+            // 将当前位置设为新的基础位置，重置浮动偏移
+            if (this.draggingObstacle === this.obstacles[i]) {
+                this.floatOffset[i].x = 0;
+                this.floatOffset[i].y = 0;
+            }
         }
         this.draggingObstacle = null;
     }
     
     handleDoubleClick(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
+        // 计算点击在canvas中的实际坐标，考虑canvas的缩放
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const mouseX = (e.clientX - rect.left) * scaleX;
+        const mouseY = (e.clientY - rect.top) * scaleY;
         
         // 检查是否点击了障碍物
         let clickedObstacle = null;
@@ -265,7 +420,10 @@ class PathPlanner {
                 
                 // 检查是否被障碍物占据（包括额外的1米空间）
                 let passable = true;
-                for (let obstacle of this.obstacles) {
+                for (let j = 0; j < this.obstacles.length; j++) {
+                    // 获取考虑浮动后的障碍物位置
+                    const obstacle = this.getObstaclePosition(j);
+                    
                     // 创建包含额外空间的扩展障碍物边界
                     const extendedObstacle = {
                         x: obstacle.x - this.obstacleOccupancyMargin,
@@ -468,12 +626,13 @@ class PathPlanner {
     }
     
     drawObstacles() {
-        for (let obstacle of this.obstacles) {
+        for (let i = 0; i < this.obstacles.length; i++) {
+            const obstacle = this.getObstaclePosition(i);
             this.ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
             this.ctx.strokeStyle = '#ff0000';
             this.ctx.lineWidth = 2;
-            this.ctx.fillRect(obstacle.x, obstacle.y, this.obstacleSize, this.obstacleSize);
-            this.ctx.strokeRect(obstacle.x, obstacle.y, this.obstacleSize, this.obstacleSize);
+            this.ctx.fillRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
+            this.ctx.strokeRect(obstacle.x, obstacle.y, obstacle.width, obstacle.height);
         }
     }
     
@@ -515,6 +674,7 @@ class PathPlanner {
         
         function animate(currentTime) {
             if (currentTime - lastTime >= updateInterval) {
+                self.updateFloat();
                 self.updatePath();
                 self.draw();
                 lastTime = currentTime;

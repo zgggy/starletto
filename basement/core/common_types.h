@@ -1,6 +1,7 @@
 #ifndef __COMMON_TYPES_H__
 #define __COMMON_TYPES_H__
 
+#include <cstring>
 #include <memory>
 #include <typeinfo>
 
@@ -9,12 +10,14 @@ namespace star::base {
 struct TypedConstPtr {
     std::shared_ptr<const void> ptr;
     const std::type_info* type{nullptr};
+    const char* type_name{nullptr};
 
     template <typename _T>
     static auto from(std::shared_ptr<const _T> p) -> TypedConstPtr {
         TypedConstPtr out;
         out.ptr = std::static_pointer_cast<const void>(std::move(p));
         out.type = &typeid(_T);
+        out.type_name = typeid(_T).name();
         return out;
     }
 
@@ -23,6 +26,7 @@ struct TypedConstPtr {
         TypedConstPtr out;
         out.ptr = std::static_pointer_cast<const void>(std::move(p));
         out.type = &typeid(_T);
+        out.type_name = typeid(_T).name();
         return out;
     }
 
@@ -31,22 +35,30 @@ struct TypedConstPtr {
         if (not ptr) {
             return nullptr;
         }
-        if (type  and  *type != typeid(_T)) {
+        if (type && *type == typeid(_T)) {
+            return std::static_pointer_cast<const _T>(ptr);
+        }
+        if (type_name && std::strcmp(type_name, typeid(_T).name()) == 0) {
+            return std::static_pointer_cast<const _T>(ptr);
+        }
+        if (not type) {
             return nullptr;
         }
-        return std::static_pointer_cast<const _T>(ptr);
+        return nullptr;
     }
 };
 
 struct TypedPtr {
     std::shared_ptr<void> ptr;
     const std::type_info* type{nullptr};
+    const char* type_name{nullptr};
 
     template <typename _T>
     static auto from(std::shared_ptr<_T> p) -> TypedPtr {
         TypedPtr out;
         out.ptr = std::static_pointer_cast<void>(std::move(p));
         out.type = &typeid(_T);
+        out.type_name = typeid(_T).name();
         return out;
     }
 
@@ -55,10 +67,16 @@ struct TypedPtr {
         if (not ptr) {
             return nullptr;
         }
-        if (type  and  *type != typeid(_T)) {
+        if (type && *type == typeid(_T)) {
+            return std::static_pointer_cast<_T>(ptr);
+        }
+        if (type_name && std::strcmp(type_name, typeid(_T).name()) == 0) {
+            return std::static_pointer_cast<_T>(ptr);
+        }
+        if (not type) {
             return nullptr;
         }
-        return std::static_pointer_cast<_T>(ptr);
+        return nullptr;
     }
 };
 

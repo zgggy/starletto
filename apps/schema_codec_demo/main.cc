@@ -35,11 +35,12 @@ auto main(int argc, char** argv) -> int {
 
         const auto schema = star::schema::NativeSchemaLoader().load_file(schema_path);
         auto value = star::schema::parse_schema_text(read_text_file(value_path));
-        star::schema::SchemaValidator::validate(schema, &value);
+        star::schema::SchemaValidator::apply_defaults(schema, &value);
+        star::schema::SchemaValidator::validate(schema, value);
 
         const auto bytes = star::schema::BinaryCodec::encode(schema, value);
         auto decoded = star::schema::BinaryCodec::decode(schema, bytes);
-        star::schema::SchemaValidator::validate(schema, &decoded);
+        star::schema::SchemaValidator::validate(schema, decoded);
 
         const auto before = star::schema::dump_schema_text(value);
         const auto after = star::schema::dump_schema_text(decoded);

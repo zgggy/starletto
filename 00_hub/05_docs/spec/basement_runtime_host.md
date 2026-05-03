@@ -226,7 +226,7 @@ After:
 ### 7.7 兼容性规则
 
 - **不破坏已有组件**：motion_component.h / control_component.h 中现有的 `declare_reader`/`declare_writer` 调用在 `init()` 中执行，会覆盖 `auto_configure` 创建的同名 reader/writer
-- **conf 必须包含有效的 type_name/msg_type**：`read_latest<T>()` 依赖运行时类型信息做 decode fallback；若 conf 缺少 type 信息，SHM 路径降级为指针路径
+- **conf 必须包含有效的 type/type_name/msg_type**：`type` 与 `msg_type` 视为同义字段；若两者同时存在则必须一致。`read_latest<T>()` 依赖运行时类型信息做 decode fallback；若 conf 缺少 type 信息，SHM 路径降级为指针路径
 - **`publish()` 与 `write()` 等价**：`publish` 是 `write` 的别名，语义更清晰
 
 ## 8. 验收标准

@@ -64,6 +64,10 @@ class NativeSchemaLoader {
         return out;
     }
 
+    auto load_schema_text(std::string_view text) const -> SchemaDescriptor {
+        return load_schema_text_impl(text);
+    }
+
   private:
     static auto is_new_schema_syntax(std::string_view text) -> bool {
         size_t pos = 0;
@@ -104,7 +108,7 @@ class NativeSchemaLoader {
         return text[pos] != '{';
     }
 
-    auto load_schema_text(std::string_view text) const -> SchemaDescriptor {
+    auto load_schema_text_impl(std::string_view text) const -> SchemaDescriptor {
         const auto doc = SchemaSyntaxParser(text).parse();
         if (doc.schema_name.empty()) {
             throw star::excep::RuntimeError("NativeSchemaLoader load failed, schema name is empty");
@@ -151,6 +155,7 @@ class NativeSchemaLoader {
         out.id = field.id;
         out.name = field.name;
         out.optional = field.type.optional;
+        out.explicit_required = field.type.explicit_required;
         out.has_default = field.has_default;
         if (field.has_default) {
             out.default_value = field.default_value;
@@ -222,7 +227,7 @@ class NativeSchemaLoader {
             throw star::excep::RuntimeError("NativeSchemaLoader load failed, map key must be string");
         }
         field->kind = FieldKind::OBJECT;
-        field->type_name = "map";
+        field->type_name = type_ref.value_name;
         field->has_value_kind = true;
         field->value_type_name = type_ref.value_name;
 
@@ -240,10 +245,11 @@ class NativeSchemaLoader {
             if (not field_obj) {
                 continue;
             }
+            const auto kind_text = get_string(*field_obj, "kind");
             FieldDescriptor field;
             field.id = static_cast<uint32_t>(get_uint64(*field_obj, "id"));
             field.name = field_name;
-            field.kind = parse_kind(get_string(*field_obj, "kind"));
+            field.kind = parse_kind(kind_text);
             field.type_name = get_string(*field_obj, "type");
             const auto value_kind = get_string(*field_obj, "value_kind");
             if (not value_kind.empty()) {
@@ -253,7 +259,10 @@ class NativeSchemaLoader {
             field.value_type_name = get_string(*field_obj, "value_type");
             field.allow_unknown_fields = get_bool(*field_obj, "allow_unknown");
             field.optional = get_bool(*field_obj, "optional");
+            field.explicit_required = get_bool(*field_obj, "explicit_required");
             field.repeated = get_bool(*field_obj, "repeated");
+            normalize_legacy_array_field(kind_text, &field);
+            normalize_map_field(&field);
 
             const auto default_it = field_obj->find("default");
             if (default_it != field_obj->end()) {
@@ -270,6 +279,26 @@ class NativeSchemaLoader {
             out.emplace_back(std::move(field));
         }
         return out;
+    }
+
+    static void normalize_legacy_array_field(const std::string& kind_text, FieldDescriptor* field) {
+        if (field == nullptr || kind_text != "array") {
+            return;
+        }
+        field->repeated = true;
+        field->kind = infer_kind_from_type_name(field->type_name, field->children, field->has_value_kind);
+    }
+
+    static void normalize_map_field(FieldDescriptor* field) {
+        if (field == nullptr || !field->has_value_kind) {
+            return;
+        }
+        if (field->type_name == "map" && !field->value_type_name.empty()) {
+            field->type_name = field->value_type_name;
+        }
+        if (field->value_type_name.empty() && !field->type_name.empty()) {
+            field->value_type_name = field->type_name;
+        }
     }
 
     static void validate_field_ids(const std::vector<FieldDescriptor>& fields, const std::string& scope) {
@@ -303,10 +332,17 @@ class NativeSchemaLoader {
         if (value == "object") {
             return FieldKind::OBJECT;
         }
-        if (value == "array") {
-            return FieldKind::ARRAY;
-        }
         return FieldKind::STRING;
+    }
+
+    static auto infer_kind_from_type_name(
+        const std::string& type_name,
+        const std::vector<FieldDescriptor>& children,
+        bool has_value_kind) -> FieldKind {
+        if (has_value_kind || !children.empty() || type_name == "object" || type_name == "map") {
+            return FieldKind::OBJECT;
+        }
+        return parse_kind(type_name);
     }
 
     static auto get_object(const star::schema::SchemaObject& obj, const std::string& key)
@@ -352,11 +388,29 @@ class NativeSchemaLoader {
     }
 
     static auto get_uint64(const star::schema::SchemaObject& obj, const std::string& key) -> uint64_t {
-        const auto v = get_int64(obj, key);
-        if (v <= 0) {
+        const auto it = obj.find(key);
+        if (it == obj.end()) {
             return 0;
         }
-        return static_cast<uint64_t>(v);
+        const auto* scalar = it->second.get_scalar_ptr();
+        if (not scalar) {
+            return 0;
+        }
+        if (std::holds_alternative<int64_t>(*scalar)) {
+            const auto v = std::get<int64_t>(*scalar);
+            if (v < 0) {
+                throw star::excep::RuntimeError("NativeSchemaLoader get_uint64 failed, negative value: key=", key);
+            }
+            return static_cast<uint64_t>(v);
+        }
+        if (std::holds_alternative<double>(*scalar)) {
+            const auto v = std::get<double>(*scalar);
+            if (v < 0) {
+                throw star::excep::RuntimeError("NativeSchemaLoader get_uint64 failed, negative value: key=", key);
+            }
+            return static_cast<uint64_t>(static_cast<int64_t>(v));
+        }
+        return 0;
     }
 
     static auto get_bool(const star::schema::SchemaObject& obj, const std::string& key) -> bool {

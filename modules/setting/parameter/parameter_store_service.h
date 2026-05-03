@@ -1,7 +1,7 @@
 #ifndef __PARAMETER_STORE_SERVICE_H__
 #define __PARAMETER_STORE_SERVICE_H__
 
-#include "basement/transport/api/parameter_store.h"
+#include "basement/runtime/parameter/parameter_store.h"
 
 #include <memory>
 #include <string>
@@ -11,7 +11,7 @@ namespace star::setting {
 
 class ParameterStoreService {
 public:
-    explicit ParameterStoreService(std::shared_ptr<star::transport::ParameterStore> parameter_store)
+    explicit ParameterStoreService(std::shared_ptr<star::runtime::ParameterStore> parameter_store)
         : parameter_store_(std::move(parameter_store)) {}
 
     auto get(const std::string& key) const -> star::schema::SchemaValue {
@@ -27,7 +27,7 @@ public:
     }
 
 private:
-    std::shared_ptr<star::transport::ParameterStore> parameter_store_;
+    std::shared_ptr<star::runtime::ParameterStore> parameter_store_;
 };
 
 }  // namespace star::setting

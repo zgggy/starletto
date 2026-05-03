@@ -81,6 +81,7 @@ static auto parse_args(int argc, char** argv) -> Inputs {
         if (a == "--list") { inputs.options.mode = "list"; continue; }
         if (a == "--doctor") { inputs.options.mode = "doctor"; continue; }
         if (a == "--monitor") { inputs.options.mode = "monitor"; continue; }
+        if (a == "--selftest-transport") { inputs.options.mode = "selftest_transport"; continue; }
         if (a.rfind("--graph=", 0) == 0) {
             inputs.options.mode = "graph";
             inputs.options.graph_format = a.substr(std::string("--graph=").size());
@@ -147,6 +148,9 @@ auto main(int argc, char** argv) -> int {
         if (inputs.options.mode == "monitor") {
             auto component_confs = star::native_runner::normalize_inputs_to_component_conf_paths(inputs.paths);
             return app.monitor(inputs.options, component_confs);
+        }
+        if (inputs.options.mode == "selftest_transport") {
+            return app.selftest_transport(inputs.options);
         }
         auto component_conf_paths = star::native_runner::normalize_inputs_to_component_conf_paths(inputs.paths);
         if (inputs.options.multi_process && not inputs.options.worker) {

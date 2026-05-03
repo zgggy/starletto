@@ -15,29 +15,39 @@ namespace star::base {
 struct RollingPolicy {
     uint64_t max_file_size{10 * 1024 * 1024};
     uint64_t max_backup_files{5};
+    bool flush_each_line{true};
 };
 
 class RollingFileLogger final : public Logger {
   public:
     explicit RollingFileLogger(std::string base_path, RollingPolicy policy = {}) : base_path_(std::move(base_path)), policy_(std::move(policy)) { open_current(); }
 
-    void log(Level level, const std::string& message, const char* file, int line, const char* function) override {
-        if (level < level_) {
-            return;
-        }
-        const auto formatted = format_message(level, message, file, line, function);
+    void write(Level /*level*/, const std::string& formatted) override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (not current_) {
             return;
         }
-        *current_ << "[" << level_string(level) << "] " << formatted << "\n";
-        current_->flush();
+        *current_ << formatted << "\n";
+        if (policy_.flush_each_line) {
+            current_->flush();
+        }
+        current_size_ += formatted.size() + 1;
         if (should_roll()) {
             roll();
         }
     }
 
   private:
+    void open_current_trunc() {
+        std::error_code ec;
+        const auto p = std::filesystem::path(base_path_);
+        if (p.has_parent_path()) {
+            std::filesystem::create_directories(p.parent_path(), ec);
+        }
+        current_ = std::make_unique<std::ofstream>(base_path_, std::ios::trunc);
+        current_size_ = 0;
+    }
+
     void open_current() {
         std::error_code ec;
         const auto p = std::filesystem::path(base_path_);
@@ -55,13 +65,25 @@ class RollingFileLogger final : public Logger {
 
     void roll() {
         current_.reset();
+        if (policy_.max_backup_files == 0) {
+            open_current_trunc();
+            return;
+        }
         remove_oldest_backup();
         shift_backups();
-        std::filesystem::rename(base_path_, backup_path(0));
+        std::error_code ec;
+        std::filesystem::rename(base_path_, backup_path(0), ec);
+        if (ec) {
+            open_current_trunc();
+            return;
+        }
         open_current();
     }
 
     void remove_oldest_backup() {
+        if (policy_.max_backup_files == 0) {
+            return;
+        }
         const auto oldest = backup_path(static_cast<int>(policy_.max_backup_files) - 1);
         if (std::filesystem::exists(oldest)) {
             std::filesystem::remove(oldest);
@@ -69,6 +91,9 @@ class RollingFileLogger final : public Logger {
     }
 
     void shift_backups() {
+        if (policy_.max_backup_files == 0) {
+            return;
+        }
         for (int i = static_cast<int>(policy_.max_backup_files) - 1; i > 0; --i) {
             const auto src = backup_path(i - 1);
             const auto dst = backup_path(i);

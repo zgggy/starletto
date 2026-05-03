@@ -20,7 +20,7 @@ namespace star::transport {
 
 class MessageReplayer final {
   public:
-    using PublishFn = std::function<void(const std::string& channel_name, const std::string& type_name, int64_t timestamp_ns, const std::vector<uint8_t>& payload)>;
+    using WriteFn = std::function<void(const std::string& channel_name, const std::string& type_name, int64_t timestamp_ns, const std::vector<uint8_t>& payload)>;
 
     explicit MessageReplayer(std::string file_path) : file_path_(std::move(file_path)) {}
 
@@ -57,13 +57,13 @@ class MessageReplayer final {
         return std::vector<std::string>(unique.begin(), unique.end());
     }
 
-    void play_all(PublishFn publish_fn, double speed = 1.0) {
+    void play_all(WriteFn write_fn, double speed = 1.0) {
         std::vector<RecordEntry> entries;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             entries = entries_;
         }
-        if (entries.empty() or not publish_fn) {
+        if (entries.empty() or not write_fn) {
             return;
         }
         const auto start_ns = entries.front().timestamp_ns;
@@ -75,11 +75,11 @@ class MessageReplayer final {
             if (target_us > actual_us) {
                 std::this_thread::sleep_for(std::chrono::microseconds(target_us - actual_us));
             }
-            publish_fn(entry.channel_name, entry.type_name, entry.timestamp_ns, entry.payload);
+            write_fn(entry.channel_name, entry.type_name, entry.timestamp_ns, entry.payload);
         }
     }
 
-    void play_channel(const std::string& channel, PublishFn publish_fn, double speed = 1.0) {
+    void play_channel(const std::string& channel, WriteFn write_fn, double speed = 1.0) {
         std::vector<RecordEntry> filtered;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -89,7 +89,7 @@ class MessageReplayer final {
                 }
             }
         }
-        if (filtered.empty() or not publish_fn) {
+        if (filtered.empty() or not write_fn) {
             return;
         }
         const auto start_ns = filtered.front().timestamp_ns;
@@ -101,7 +101,7 @@ class MessageReplayer final {
             if (target_us > actual_us) {
                 std::this_thread::sleep_for(std::chrono::microseconds(target_us - actual_us));
             }
-            publish_fn(entry.channel_name, entry.type_name, entry.timestamp_ns, entry.payload);
+            write_fn(entry.channel_name, entry.type_name, entry.timestamp_ns, entry.payload);
         }
     }
 

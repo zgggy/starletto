@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <memory>
@@ -22,9 +23,9 @@
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/common/channel_stats.h"
+#include "basement/transport/common/qos_manager.h"
 #include "basement/transport/shm/shm_channel.h"
 #include "basement/transport/shm/shm_views.h"
-#include "libraries/common/schema/schema_value.h"
 
 namespace star::transport {
 
@@ -33,12 +34,24 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
       public:
         ShmWriter(std::shared_ptr<ShmMessageBus> bus, std::string channel_name) : bus_(std::move(bus)), channel_name_(std::move(channel_name)) {}
 
-        void write(const MessageView& message) override {
+        auto write(const MessageView& message) -> WriteResult override {
             auto bus = bus_.lock();
             if (not bus) {
-                return;
+                auto out = WriteResult{};
+                out.status = WriteStatus::BUS_EXPIRED;
+                return out;
             }
-            bus->publish_internal(channel_name_, message);
+            return bus->write_internal(channel_name_, message, nullptr);
+        }
+
+        auto write_serialized(const SerializedMessage& message) -> WriteResult override {
+            auto bus = bus_.lock();
+            if (not bus) {
+                auto out = WriteResult{};
+                out.status = WriteStatus::BUS_EXPIRED;
+                return out;
+            }
+            return bus->write_internal(channel_name_, message.view, &message.serializer);
         }
 
       private:
@@ -67,6 +80,18 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             }
         }
 
+        auto peek_latest() const -> std::optional<MessageView> override {
+            auto bus = bus_.lock();
+            if (not bus) {
+                return std::nullopt;
+            }
+            return bus->peek_latest(channel_name_);
+        }
+
+        auto has_data() const -> bool override {
+            return peek_latest().has_value();
+        }
+
       private:
         void poll_loop() {
             if (not channel_) {
@@ -82,8 +107,8 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                         if (r->dropped > 0) {
                             bus->record_drop(channel_name_, r->dropped);
                         }
-                        bus->record_latency(channel_name_, r->publish_ns);
-                        bus->deliver_shm_view(channel_name_, r->slot, r->size);
+                        bus->record_latency(channel_name_, r->write_ns);
+                        bus->deliver_to_reader(channel_name_, id_, r->slot, r->size);
                     }
                     continue;
                 }
@@ -92,13 +117,16 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
 
         static auto resolve_wait_ms() -> int64_t {
-            if (const auto* v = std::getenv("STAR_SHM_WAIT_MS"); v != nullptr && std::string(v).size() > 0) {
-                try {
-                    return std::max<int64_t>(1, std::stoll(v));
-                } catch (...) {
+            static const int64_t cached = []() -> int64_t {
+                if (const auto* v = std::getenv("STAR_SHM_WAIT_MS"); v != nullptr && std::string(v).size() > 0) {
+                    try {
+                        return std::max<int64_t>(1, std::stoll(v));
+                    } catch (...) {
+                    }
                 }
-            }
-            return 100;
+                return 100;
+            }();
+            return cached;
         }
 
         std::weak_ptr<ShmMessageBus> bus_;
@@ -153,7 +181,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
         declare_channel(descriptor);
         maybe_register_reader(descriptor.name);
-        const auto id = next_sub_id_.fetch_add(1, std::memory_order_relaxed);
+        const auto id = next_reader_id_.fetch_add(1, std::memory_order_relaxed);
         std::shared_ptr<ShmChannel> channel;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -164,16 +192,16 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         return std::make_shared<ShmReader>(this->shared_from_this(), descriptor.name, id, std::move(channel));
     }
 
-    auto create_ack_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<AckWriter> override {
-        (void)descriptor;
-        return nullptr;
+    auto create_delivery_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<DeliveryWriter> override {
+        declare_channel(descriptor);
+        throw star::excep::RuntimeError("ShmMessageBus create_delivery_writer failed, delivery semantics are not supported for SHM stream channel: ", descriptor.name);
     }
 
     auto dump_stats_lines() const -> std::vector<std::string> override {
         auto out = std::vector<std::string>{};
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [channel_name, channel] : channels_) {
-            if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
+            if (channel.stats.write_count == 0 && channel.stats.deliver_count == 0) {
                 continue;
             }
             out.emplace_back(format_stats_line("shm", channel_name, channel.stats));
@@ -187,7 +215,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         if (it == channels_.end()) {
             return std::nullopt;
         }
-        if (it->second.stats.publish_count == 0 && it->second.stats.deliver_count == 0) {
+        if (it->second.stats.write_count == 0 && it->second.stats.deliver_count == 0) {
             return std::nullopt;
         }
         return make_stats_snapshot(channel_name, it->second.stats);
@@ -197,12 +225,29 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         auto out = std::vector<ChannelStatsSnapshot>{};
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [channel_name, channel] : channels_) {
-            if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
+            if (channel.stats.write_count == 0 && channel.stats.deliver_count == 0) {
                 continue;
             }
             out.push_back(make_stats_snapshot(channel_name, channel.stats));
         }
         return out;
+    }
+
+    auto peek_latest(const std::string& channel_name) const -> std::optional<MessageView> override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = channels_.find(channel_name);
+        if (it == channels_.end()) {
+            return std::nullopt;
+        }
+        MessageView latest;
+        bool found = false;
+        for (const auto& [_, history] : it->second.reader_history) {
+            if (not history.empty()) {
+                latest = history.back();
+                found = true;
+            }
+        }
+        return found ? std::optional<MessageView>{latest} : std::nullopt;
     }
 
     auto declared_channels() const -> std::vector<std::string> override {
@@ -237,119 +282,146 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         ChannelStats stats;
     };
 
-    void publish_internal(const std::string& channel_name, const MessageView& message) {
+    auto write_internal(const std::string& channel_name, const MessageView& message, const MessageSerializer* serializer) -> WriteResult {
         std::shared_ptr<ShmChannel> channel;
         uint64_t payload_size = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = channels_.find(channel_name);
             if (it == channels_.end()) {
-                return;
+                auto out = WriteResult{};
+                out.status = WriteStatus::CHANNEL_UNKNOWN;
+                out.shm_required = true;
+                return out;
             }
             channel = it->second.channel;
-            payload_size = estimate_payload_size(message);
-            it->second.stats.record_publish(payload_size);
+            payload_size = estimate_payload_size(message, serializer);
         }
         if (not channel) {
-            return;
+            auto out = WriteResult{};
+            out.status = WriteStatus::CHANNEL_NOT_READY;
+            out.shm_required = true;
+            return out;
         }
 
-        if (message.encode_binary) {
-            const auto bytes = message.encode_binary();
-            channel->write(bytes.data(), static_cast<uint32_t>(bytes.size()));
-        } else if (const auto conf = message.data.as<star::schema::SchemaValue>()) {
-            auto loaned = channel->loan(channel->slot_size());
-            const auto size = star::schema::dump_schema_text_into(*conf, reinterpret_cast<char*>(loaned.data()), static_cast<size_t>(loaned.capacity));
-            loaned.commit(static_cast<uint32_t>(size));
-        } else if (const auto view = message.data.as<ShmTextView>()) {
-            channel->write(view->data, static_cast<uint32_t>(view->size));
-        } else {
-            throw star::excep::RuntimeError("ShmMessageBus publish failed, unsupported message payload for channel: ", channel_name);
+        if (serializer == nullptr) {
+            auto out = WriteResult{};
+            out.status = WriteStatus::SERIALIZER_REQUIRED;
+            out.shm_required = true;
+            return out;
+        }
+
+        try {
+            if (serializer->encode_into) {
+                auto loaned = channel->loan(channel->slot_size());
+                const auto size = serializer->encode_into(loaned.data(), loaned.capacity);
+                if (size == 0) {
+                    auto out = WriteResult{};
+                    out.status = WriteStatus::ENCODE_FAILED;
+                    out.shm_required = true;
+                    return out;
+                }
+                loaned.commit(static_cast<uint32_t>(size));
+                auto out = WriteResult{};
+                out.status = WriteStatus::OK;
+                out.shm_ok = true;
+                out.shm_required = true;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto it = channels_.find(channel_name);
+                    if (it != channels_.end()) {
+                        it->second.stats.record_write(payload_size);
+                    }
+                }
+                return out;
+            }
+            if (serializer->encode_binary) {
+                const auto bytes = serializer->encode_binary();
+                if (bytes.empty()) {
+                    auto out = WriteResult{};
+                    out.status = WriteStatus::ENCODE_FAILED;
+                    out.shm_required = true;
+                    return out;
+                }
+                channel->write(bytes.data(), static_cast<uint32_t>(bytes.size()));
+                auto out = WriteResult{};
+                out.status = WriteStatus::OK;
+                out.shm_ok = true;
+                out.shm_required = true;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto it = channels_.find(channel_name);
+                    if (it != channels_.end()) {
+                        it->second.stats.record_write(payload_size);
+                    }
+                }
+                return out;
+            }
+            auto out = WriteResult{};
+            out.status = WriteStatus::ENCODE_FAILED;
+            out.shm_required = true;
+            return out;
+        } catch (const std::exception& e) {
+            auto out = WriteResult{};
+            out.status = WriteStatus::EXCEPTION;
+            out.shm_required = true;
+            out.error_message = e.what();
+            return out;
+        } catch (...) {
+            auto out = WriteResult{};
+            out.status = WriteStatus::EXCEPTION;
+            out.shm_required = true;
+            return out;
         }
     }
 
-    void deliver_shm_view(const std::string& channel_name, uint32_t slot, uint32_t size) {
-        std::vector<std::pair<uint64_t, Reader::Callback>> callbacks;
+    void deliver_to_reader(const std::string& channel_name, uint64_t reader_id, uint32_t slot, uint32_t size) {
+        Reader::Callback cb;
+        MessageView msg;
+        bool should_deliver = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = channels_.find(channel_name);
             if (it == channels_.end()) {
                 return;
             }
+            auto cb_it = it->second.readers.find(reader_id);
+            if (cb_it == it->second.readers.end()) {
+                return;
+            }
+            cb = cb_it->second;
+
             const auto& options = it->second.descriptor.options;
-            for (const auto& [reader_id, cb] : it->second.readers) {
-                if (options.depth > 0) {
-                    auto& history = it->second.reader_history[reader_id];
-                    MessageView msg_snapshot;
-                    msg_snapshot.schema_type_id = it->second.descriptor.schema_type_id;
-                    if (options.drop_policy == DropPolicy::KEEP_LAST) {
-                        build_shm_message_view(channel_name, slot, size, it, msg_snapshot);
-                        history.push_back(msg_snapshot);
-                        while (history.size() > options.depth) {
-                            history.pop_front();
-                            it->second.stats.record_drop(1);
-                        }
-                    } else {
-                        if (history.size() >= options.depth) {
-                            it->second.stats.record_drop(1);
-                            continue;
-                        }
-                        build_shm_message_view(channel_name, slot, size, it, msg_snapshot);
-                        history.push_back(msg_snapshot);
-                    }
-                    it->second.stats.update_queue_depth(history.size());
+            build_shm_message_view(channel_name, slot, size, it, msg);
+            if (options.depth > 0) {
+                auto& history = it->second.reader_history[reader_id];
+                auto result = apply_qos(history, msg, options, it->second.stats);
+                if (!result.should_deliver) {
+                    return;
                 }
-                callbacks.emplace_back(reader_id, cb);
             }
-            it->second.stats.record_deliver(callbacks.size());
+            it->second.stats.record_deliver(1);
+            should_deliver = true;
         }
-        for (const auto& [reader_id, cb] : callbacks) {
-            MessageView msg;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                auto it = channels_.find(channel_name);
-                if (it == channels_.end()) {
-                    continue;
-                }
-                const auto& options = it->second.descriptor.options;
-                if (options.depth > 0) {
-                    auto hist_it = it->second.reader_history.find(reader_id);
-                    if (hist_it != it->second.reader_history.end() && not hist_it->second.empty()) {
-                        msg = hist_it->second.back();
-                    } else {
-                        continue;
-                    }
-                } else {
-                    build_shm_message_view(channel_name, slot, size, it, msg);
-                }
-            }
+        if (should_deliver) {
             cb(msg);
         }
     }
 
     void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
         msg.schema_type_id = it->second.descriptor.schema_type_id;
+        msg.correlation_id = CorrelationId{};
         auto channel = it->second.channel;
         if (not channel) {
             return;
         }
-        if (it->second.descriptor.type_name == "star::schema::SchemaValue") {
-            auto view = std::make_shared<ShmTextView>();
-            view->mapping = channel->mapping();
-            view->data = reinterpret_cast<const char*>(channel->payload_ptr(slot));
-            view->size = size;
-            view->channel_name = channel_name;
-            view->schema_type_id = it->second.descriptor.schema_type_id;
-            msg.data = star::base::TypedConstPtr::from(std::move(view));
-        } else {
-            auto view = std::make_shared<ShmBinaryView>();
-            view->mapping = channel->mapping();
-            view->data = channel->payload_ptr(slot);
-            view->size = size;
-            view->channel_name = channel_name;
-            view->schema_type_id = it->second.descriptor.schema_type_id;
-            msg.data = star::base::TypedConstPtr::from(std::move(view));
-        }
+        auto view = std::make_shared<ShmSlotView>();
+        view->mapping = channel->mapping();
+        view->data = channel->payload_ptr(slot);
+        view->size = size;
+        view->channel_name = channel_name;
+        view->schema_type_id = it->second.descriptor.schema_type_id;
+        msg.payload = star::base::TypedConstPtr::from(std::move(view));
     }
 
     void erase_reader(const std::string& channel_name, uint64_t id) {
@@ -359,6 +431,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             return;
         }
         it->second.readers.erase(id);
+        it->second.reader_history.erase(id);
     }
 
     void record_drop(const std::string& channel_name, uint64_t dropped) {
@@ -373,15 +446,15 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         it->second.stats.record_drop(dropped);
     }
 
-    void record_latency(const std::string& channel_name, uint64_t publish_ns) {
-        if (publish_ns == 0) {
+    void record_latency(const std::string& channel_name, uint64_t write_ns) {
+        if (write_ns == 0) {
             return;
         }
         const auto now_ns = ShmChannel::now_steady_ns();
-        if (now_ns < publish_ns) {
+        if (now_ns < write_ns) {
             return;
         }
-        const auto latency_us = (now_ns - publish_ns) / 1000;
+        const auto latency_us = (now_ns - write_ns) / 1000;
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = channels_.find(channel_name);
         if (it == channels_.end()) {
@@ -399,18 +472,14 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         return std::string(buf);
     }
 
-    static auto estimate_payload_size(const MessageView& message) -> uint64_t {
-        if (message.encode_binary) {
-            return message.encode_binary().size();
+    static auto estimate_payload_size(const MessageView& message, const MessageSerializer* serializer) -> uint64_t {
+        if (serializer != nullptr) {
+            if (serializer->payload_size_hint > 0) {
+                return serializer->payload_size_hint;
+            }
         }
-        if (const auto conf = message.data.as<star::schema::SchemaValue>()) {
-            return star::schema::dump_schema_text(*conf).size();
-        }
-        if (const auto view = message.data.as<ShmTextView>()) {
-            return view->size;
-        }
-        if (const auto view = message.data.as<ShmBinaryView>()) {
-            return view->size;
+        if (const auto slot = message.payload.as<ShmSlotView>()) {
+            return slot->size;
         }
         return 0;
     }
@@ -440,7 +509,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
     mutable std::mutex mutex_;
     std::shared_ptr<ChannelRegistry> channel_registry_;
     std::unordered_map<std::string, ChannelState> channels_;
-    std::atomic<uint64_t> next_sub_id_{1};
+    std::atomic<uint64_t> next_reader_id_{1};
 };
 
 }  // namespace star::transport

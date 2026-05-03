@@ -3,47 +3,23 @@
 
 #include <atomic>
 
+#include "basement/schema/builtin/manifest/component.s.h"
+#include "basement/schema/builtin/manifest/module.s.h"
+#include "basement/schema/builtin/runtime/component_load_plan.s.h"
+#include "basement/schema/builtin/runtime/process_plan.s.h"
 #include "basement/schema/schema_registry.h"
-#include "modules/setting/schema/config/component.s.h"
-#include "modules/setting/schema/config/logger.s.h"
-#include "modules/setting/schema/config/sensor.s.h"
-#include "modules/setting/schema/config/system.s.h"
-#include "modules/setting/schema/config/vehicle.s.h"
-#include "modules/setting/schema/config_snapshot.s.h"
-#include "modules/setting/schema/control/command.s.h"
-#include "modules/setting/schema/parameter_snapshot.s.h"
-#include "modules/setting/schema/planning/motion.s.h"
-#include "modules/setting/schema/planning/trajectory.s.h"
-#include "modules/setting/schema/service/parameter_get_request.s.h"
-#include "modules/setting/schema/service/parameter_get_response.s.h"
-#include "modules/setting/schema/service/parameter_list_request.s.h"
-#include "modules/setting/schema/service/parameter_list_response.s.h"
-#include "modules/setting/schema/service/parameter_set_request.s.h"
-#include "modules/setting/schema/service/parameter_set_response.s.h"
 
 namespace star::schema::native {
 
-inline auto register_business_schemas(SchemaRegistry& registry) -> void {
+inline auto register_builtin_schemas(SchemaRegistry& registry) -> void {
     static std::atomic<bool> registered{false};
     if (registered.exchange(true)) {
         return;
     }
-    star::generated::setting::parameter::snapshot::ParameterSnapshot::register_schema(registry);
-    star::generated::setting::config::snapshot::ConfigSnapshot::register_schema(registry);
-    star::setting::parameter::planning::MotionParameter::register_schema(registry);
-    star::setting::service::parameter::get_request::ParameterGetRequest::register_schema(registry);
-    star::setting::service::parameter::get_response::ParameterGetResponse::register_schema(registry);
-    star::setting::service::parameter::list_request::ParameterListRequest::register_schema(registry);
-    star::setting::service::parameter::list_response::ParameterListResponse::register_schema(registry);
-    star::setting::service::parameter::set_request::ParameterSetRequest::register_schema(registry);
-    star::setting::service::parameter::set_response::ParameterSetResponse::register_schema(registry);
-    star::setting::config::component::ComponentConfig::register_schema(registry);
-    star::setting::config::logger::LoggerConfig::register_schema(registry);
-    star::setting::config::sensor::SensorConfig::register_schema(registry);
-    star::setting::config::system::SystemConfig::register_schema(registry);
-    star::setting::config::vehicle::VehicleConfig::register_schema(registry);
-    star::setting::planning::TrajectoryOutput::register_schema(registry);
-    star::setting::control::ControlCommand::register_schema(registry);
+    star::generated::manifest::component::ComponentConf::register_schema(registry);
+    star::generated::manifest::module::ModuleConf::register_schema(registry);
+    star::generated::runtime::component_load_plan::ComponentLoadPlan::register_schema(registry);
+    star::generated::runtime::process_plan::ProcessPlan::register_schema(registry);
 }
 
 }  // namespace star::schema::native

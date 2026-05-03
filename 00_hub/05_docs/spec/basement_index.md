@@ -7,22 +7,22 @@
 
 - **core**
   - 职责：异常、日志、时间、基础类型、内存与调试设施
-  - Spec：[basement_core.md](file:///home/zgy/projects/starletto/document/spec/basement_core.md)
+  - Spec：[basement_core.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_core.md)
 - **schema**
   - 职责：`.schema` + 值文件 + codec + reflection + compat（对齐并超过 protobuf）
-  - Spec：[basement_schema.md](file:///home/zgy/projects/starletto/document/spec/basement_schema.md)
+  - Spec：[basement_schema.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_schema.md)
 - **transport**
   - 职责：topic/service/event 的传输层（inproc 指针、跨进程 shm 零拷贝、观测）
-  - Spec：[basement_transport.md](file:///home/zgy/projects/starletto/document/spec/basement_transport.md)
+  - Spec：[basement_transport.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md)
 - **runtime**（必须拆分，禁止“大而全 runtime”）
   - 职责：组件生命周期、装配、调度、触发、进程编排、运行时上下文
-  - Spec 索引：[basement_runtime_index.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_index.md)
+  - Spec 索引：[basement_runtime_index.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_index.md)
 - **manifest**
   - 职责：module/component 清单解析、校验、装配信息生成；清单本身必须迁移到 schema 体系
-  - Spec：[basement_manifest.md](file:///home/zgy/projects/starletto/document/spec/basement_manifest.md)
+  - Spec：[basement_manifest.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_manifest.md)
 - **tools**
   - 职责：star/runner + schema 工具链 + graph/doctor/record/replay/monitor
-  - Spec：[basement_tools.md](file:///home/zgy/projects/starletto/document/spec/basement_tools.md)
+  - Spec：[basement_tools.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_tools.md)
 
 ## 2. 依赖顺序（开发推进顺序）
 

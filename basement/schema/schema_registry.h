@@ -20,6 +20,22 @@ public:
 
         std::lock_guard<std::mutex> lock(mutex_);
         const auto key = build_key(schema.type_id);
+        const auto key_it = schemas_by_key_.find(key);
+        if (key_it != schemas_by_key_.end()) {
+            return;
+        }
+
+        const auto name_it = schemas_by_name_.find(schema.type_id.name);
+        if (name_it != schemas_by_name_.end() && name_it->second != key) {
+            throw star::excep::RuntimeError(
+                "SchemaRegistry register_schema failed, duplicate schema name with different type id: ",
+                schema.type_id.name,
+                ", existing_key=",
+                name_it->second,
+                ", new_key=",
+                key);
+        }
+
         schemas_by_key_[key] = schema;
         schemas_by_name_[schema.type_id.name] = key;
     }

@@ -348,9 +348,13 @@ class NativeComponentHost final {
             return;
         }
         for (const auto& channel : record_channels) {
-            context_->message_bus().enable_record_channel(channel);
+            if (auto* recordable = context_->recordable_bus()) {
+                recordable->enable_record_channel(channel);
+            }
         }
-        context_->message_bus().enable_recorder("/tmp/starletto_record.bin");
+        if (auto* recordable = context_->recordable_bus()) {
+            recordable->enable_recorder("/tmp/starletto_record.bin");
+        }
         logI << "Recorder enabled, file=/tmp/starletto_record.bin, channels=" << record_channels.size();
     }
 

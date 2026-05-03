@@ -1,114 +1,19 @@
-#ifndef ___HOME_ZGY_PROJECTS_STARLETTO_BASEMENT_SCHEMA_BUILTIN_RUNTIME_PROCESS_PLAN_S_H__
-#define ___HOME_ZGY_PROJECTS_STARLETTO_BASEMENT_SCHEMA_BUILTIN_RUNTIME_PROCESS_PLAN_S_H__
+#ifndef __RUNTIME_PROCESS_PLAN__
+#define __RUNTIME_PROCESS_PLAN__
 
-#include "basement/schema/binary_codec.h"
-#include "basement/schema/schema_ast.h"
+#include "basement/schema/schema_codec_helpers.h"
 #include "basement/schema/schema_registry.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/common/fixed_layout_codec.h"
 
-#include <concepts>
 #include <cstring>
-#include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
-#include <string>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace star::generated::runtime::process_plan {
 
-template <typename _ValueType>
-concept SchemaStructType = requires(const star::schema::SchemaValue& value, const _ValueType& item) {
-    { _ValueType::from_value(value) } -> std::same_as<_ValueType>;
-    { item.to_value() } -> std::same_as<star::schema::SchemaValue>;
-};
-
-template <typename _ValueType>
-struct IsStdVector : std::false_type {
-};
-
-template <typename _ItemType, typename _Allocator>
-struct IsStdVector<std::vector<_ItemType, _Allocator>> : std::true_type {
-    using Item = _ItemType;
-};
-
-template <typename _ValueType>
-struct IsStdMap : std::false_type {
-};
-
-template <typename _MappedType, typename _Compare, typename _Allocator>
-struct IsStdMap<std::map<std::string, _MappedType, _Compare, _Allocator>> : std::true_type {
-    using Item = _MappedType;
-};
-
-template <typename _ValueType>
-auto schema_read(const star::schema::SchemaValue& value) -> _ValueType {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        using _Item = typename IsStdVector<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& arr = value.as_array();
-        out.reserve(arr.size());
-        for (const auto& item : arr) {
-            out.emplace_back(schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        using _Item = typename IsStdMap<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& obj = value.as_object();
-        for (const auto& [key, item] : obj) {
-            out.emplace(key, schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (std::is_same_v<_ValueType, std::string>) {
-        return value.as<std::string>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, bool>) {
-        return value.as<bool>();
-    } else if constexpr (std::is_same_v<_ValueType, int64_t>) {
-        return value.as<int64_t>();
-    } else if constexpr (std::is_same_v<_ValueType, double>) {
-        return value.as<double>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return value.as_object();
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return _ValueType::from_value(value);
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_read type");
-    }
-}
-
-template <typename _ValueType>
-auto schema_write(const _ValueType& value) -> star::schema::SchemaValue {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        auto out = star::schema::SchemaArray{};
-        out.reserve(value.size());
-        for (const auto& item : value) {
-            out.emplace_back(schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        auto out = star::schema::SchemaObject{};
-        for (const auto& [key, item] : value) {
-            out.emplace(key, schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, std::string> || std::is_same_v<_ValueType, bool> ||
-                  std::is_same_v<_ValueType, int64_t> || std::is_same_v<_ValueType, double>) {
-        return star::schema::schema_value_from(value);
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return star::schema::SchemaValue(value);
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return value.to_value();
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_write type");
-    }
-}
+using star::schema::schema_read;
+using star::schema::schema_write;
 
 inline auto _schema_type_id() -> star::schema::SchemaTypeId {
     auto out = star::schema::SchemaTypeId{};
@@ -127,6 +32,7 @@ inline auto _build_fields_TaskSchedulePlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -137,6 +43,7 @@ inline auto _build_fields_TaskSchedulePlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -152,6 +59,7 @@ inline auto _build_fields_ChoreographyPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -162,6 +70,7 @@ inline auto _build_fields_ChoreographyPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "TaskSchedulePlan";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         field.children = _build_fields_TaskSchedulePlan();
         out.emplace_back(std::move(field));
@@ -173,6 +82,7 @@ inline auto _build_fields_ChoreographyPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -188,6 +98,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -198,6 +109,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         out.emplace_back(std::move(field));
     }
@@ -208,6 +120,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         out.emplace_back(std::move(field));
     }
@@ -218,6 +131,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         out.emplace_back(std::move(field));
     }
@@ -228,6 +142,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         out.emplace_back(std::move(field));
     }
@@ -238,6 +153,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -248,6 +164,7 @@ inline auto _build_fields_ProcessGroupPlan() -> std::vector<star::schema::FieldD
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "ChoreographyPlan";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_ChoreographyPlan();
         out.emplace_back(std::move(field));
@@ -264,6 +181,7 @@ inline auto _build_fields_ProcessPlan() -> std::vector<star::schema::FieldDescri
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "ProcessGroupPlan";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = true;
         field.children = _build_fields_ProcessGroupPlan();
         out.emplace_back(std::move(field));
@@ -280,6 +198,8 @@ inline auto _schema_descriptor() -> star::schema::SchemaDescriptor {
     out.fields = _build_fields_ProcessPlan();
     return out;
 }
+
+struct TaskSchedulePlanBuilder;
 
 struct TaskSchedulePlan {
     static constexpr uint32_t kFieldId_name = 1;
@@ -319,35 +239,107 @@ struct TaskSchedulePlan {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> TaskSchedulePlan;
 };
 
 struct TaskSchedulePlanView {
-    TaskSchedulePlan value{};
+    static constexpr size_t kFieldCount = 2;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> TaskSchedulePlanView {
-        return TaskSchedulePlanView{TaskSchedulePlan::from_value(value)};
-    }
+    TaskSchedulePlanView() = default;
+    explicit TaskSchedulePlanView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit TaskSchedulePlanView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_name = 0;
+    static constexpr size_t kSlotIndex_priority = 1;
 
     auto Has_name() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto name() const -> const std::string& {
-        return value.name;
+    auto name() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_priority() const -> bool {
-        return value.has_priority();
+        return not view_.is_null(1);
     }
 
-    auto priority() const -> const int64_t& {
-        if (not value.priority.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: priority");
-        }
-        return *value.priority;
+    auto priority() const -> int64_t {
+        auto v = view_.get_int64(1);
+        return v.has_value() ? *v : int64_t{0};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct TaskSchedulePlanBuilder {
+    static constexpr size_t kFieldCount = 2;
+
+    TaskSchedulePlanBuilder() : writer_(2) {}
+
+    void set_name(std::string_view value) { writer_.set_string(0, value); }
+    void set_priority(int64_t value) { writer_.set_int64(1, value); }
+
+    void clear_priority() { writer_.set_null(1); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto TaskSchedulePlan::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = TaskSchedulePlanBuilder();
+    builder.set_name(name);
+    if (priority.has_value()) {
+        builder.set_priority(*priority);
+    } else {
+        builder.clear_priority();
+    }
+    return builder.Serialize();
+}
+
+inline auto TaskSchedulePlan::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = TaskSchedulePlanBuilder();
+    builder.set_name(name);
+    if (priority.has_value()) {
+        builder.set_priority(*priority);
+    } else {
+        builder.clear_priority();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto TaskSchedulePlan::from_fixed_layout(std::span<const uint8_t> data) -> TaskSchedulePlan {
+    auto view = TaskSchedulePlanView(data.data(), data.size());
+    auto out = TaskSchedulePlan();
+    out.name = view.name();
+    if (view.Has_priority()) { out.priority = view.priority(); }
+    return out;
+}
+
+struct ChoreographyPlanBuilder;
 
 struct ChoreographyPlan {
     static constexpr uint32_t kFieldId_pool_threads = 1;
@@ -407,49 +399,139 @@ struct ChoreographyPlan {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> ChoreographyPlan;
 };
 
 struct ChoreographyPlanView {
-    ChoreographyPlan value{};
+    static constexpr size_t kFieldCount = 3;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> ChoreographyPlanView {
-        return ChoreographyPlanView{ChoreographyPlan::from_value(value)};
-    }
+    ChoreographyPlanView() = default;
+    explicit ChoreographyPlanView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit ChoreographyPlanView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_pool_threads = 0;
+    static constexpr size_t kSlotIndex_tasks = 1;
+    static constexpr size_t kSlotIndex_cpu_affinity = 2;
 
     auto Has_pool_threads() const -> bool {
-        return value.has_pool_threads();
+        return not view_.is_null(0);
     }
 
-    auto pool_threads() const -> const int64_t& {
-        if (not value.pool_threads.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: pool_threads");
-        }
-        return *value.pool_threads;
+    auto pool_threads() const -> int64_t {
+        auto v = view_.get_int64(0);
+        return v.has_value() ? *v : int64_t{0};
     }
 
     auto Has_tasks() const -> bool {
-        return value.has_tasks();
+        return not view_.is_null(1);
     }
 
-    auto tasks() const -> const std::vector<TaskSchedulePlan>& {
-        if (not value.tasks.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: tasks");
-        }
-        return *value.tasks;
+    auto tasks_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_array_bytes(1);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_cpu_affinity() const -> bool {
-        return value.has_cpu_affinity();
+        return not view_.is_null(2);
     }
 
-    auto cpu_affinity() const -> const std::string& {
-        if (not value.cpu_affinity.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: cpu_affinity");
-        }
-        return *value.cpu_affinity;
+    auto cpu_affinity() const -> std::string_view {
+        auto v = view_.get_string(2);
+        return v.has_value() ? *v : std::string_view{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct ChoreographyPlanBuilder {
+    static constexpr size_t kFieldCount = 3;
+
+    ChoreographyPlanBuilder() : writer_(3) {}
+
+    void set_pool_threads(int64_t value) { writer_.set_int64(0, value); }
+    void set_tasks_bytes(std::span<const uint8_t> value) { writer_.set_array(1, value); }
+    void set_cpu_affinity(std::string_view value) { writer_.set_string(2, value); }
+
+    void clear_pool_threads() { writer_.set_null(0); }
+    void clear_tasks() { writer_.set_null(1); }
+    void clear_cpu_affinity() { writer_.set_null(2); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto ChoreographyPlan::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = ChoreographyPlanBuilder();
+    if (pool_threads.has_value()) {
+        builder.set_pool_threads(*pool_threads);
+    } else {
+        builder.clear_pool_threads();
+    }
+    if (tasks.has_value()) {
+        { auto bytes = star::transport::encode_object_array(*tasks); builder.set_tasks_bytes(bytes); }
+    } else {
+        builder.clear_tasks();
+    }
+    if (cpu_affinity.has_value()) {
+        builder.set_cpu_affinity(*cpu_affinity);
+    } else {
+        builder.clear_cpu_affinity();
+    }
+    return builder.Serialize();
+}
+
+inline auto ChoreographyPlan::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = ChoreographyPlanBuilder();
+    if (pool_threads.has_value()) {
+        builder.set_pool_threads(*pool_threads);
+    } else {
+        builder.clear_pool_threads();
+    }
+    if (tasks.has_value()) {
+        { auto bytes = star::transport::encode_object_array(*tasks); builder.set_tasks_bytes(bytes); }
+    } else {
+        builder.clear_tasks();
+    }
+    if (cpu_affinity.has_value()) {
+        builder.set_cpu_affinity(*cpu_affinity);
+    } else {
+        builder.clear_cpu_affinity();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto ChoreographyPlan::from_fixed_layout(std::span<const uint8_t> data) -> ChoreographyPlan {
+    auto view = ChoreographyPlanView(data.data(), data.size());
+    auto out = ChoreographyPlan();
+    if (view.Has_pool_threads()) { out.pool_threads = view.pool_threads(); }
+    if (view.Has_tasks()) { auto bytes = view.tasks_bytes(); out.tasks = star::transport::decode_object_array<TaskSchedulePlan>(bytes); }
+    if (view.Has_cpu_affinity()) { out.cpu_affinity = view.cpu_affinity(); }
+    return out;
+}
+
+struct ProcessGroupPlanBuilder;
 
 struct ProcessGroupPlan {
     static constexpr uint32_t kFieldId_name = 1;
@@ -559,90 +641,222 @@ struct ProcessGroupPlan {
         }
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> ProcessGroupPlan;
 };
 
 struct ProcessGroupPlanView {
-    ProcessGroupPlan value{};
+    static constexpr size_t kFieldCount = 7;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> ProcessGroupPlanView {
-        return ProcessGroupPlanView{ProcessGroupPlan::from_value(value)};
-    }
+    ProcessGroupPlanView() = default;
+    explicit ProcessGroupPlanView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit ProcessGroupPlanView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_name = 0;
+    static constexpr size_t kSlotIndex_component_names = 1;
+    static constexpr size_t kSlotIndex_component_conf_paths = 2;
+    static constexpr size_t kSlotIndex_produced_channels = 3;
+    static constexpr size_t kSlotIndex_consumed_channels = 4;
+    static constexpr size_t kSlotIndex_scheduler_type = 5;
+    static constexpr size_t kSlotIndex_choreography = 6;
 
     auto Has_name() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto name() const -> const std::string& {
-        return value.name;
+    auto name() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_component_names() const -> bool {
-        return value.has_component_names();
+        return not view_.is_null(1);
     }
 
-    auto component_names() const -> const std::vector<std::string>& {
-        if (not value.component_names.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: component_names");
-        }
-        return *value.component_names;
+    auto component_names() const -> std::vector<std::string> {
+        auto v = view_.get_array_bytes(1);
+        return v.has_value() ? star::transport::decode_string_array(*v) : std::vector<std::string>{};
     }
 
     auto Has_component_conf_paths() const -> bool {
-        return value.has_component_conf_paths();
+        return not view_.is_null(2);
     }
 
-    auto component_conf_paths() const -> const std::vector<std::string>& {
-        if (not value.component_conf_paths.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: component_conf_paths");
-        }
-        return *value.component_conf_paths;
+    auto component_conf_paths() const -> std::vector<std::string> {
+        auto v = view_.get_array_bytes(2);
+        return v.has_value() ? star::transport::decode_string_array(*v) : std::vector<std::string>{};
     }
 
     auto Has_produced_channels() const -> bool {
-        return value.has_produced_channels();
+        return not view_.is_null(3);
     }
 
-    auto produced_channels() const -> const std::vector<std::string>& {
-        if (not value.produced_channels.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: produced_channels");
-        }
-        return *value.produced_channels;
+    auto produced_channels() const -> std::vector<std::string> {
+        auto v = view_.get_array_bytes(3);
+        return v.has_value() ? star::transport::decode_string_array(*v) : std::vector<std::string>{};
     }
 
     auto Has_consumed_channels() const -> bool {
-        return value.has_consumed_channels();
+        return not view_.is_null(4);
     }
 
-    auto consumed_channels() const -> const std::vector<std::string>& {
-        if (not value.consumed_channels.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: consumed_channels");
-        }
-        return *value.consumed_channels;
+    auto consumed_channels() const -> std::vector<std::string> {
+        auto v = view_.get_array_bytes(4);
+        return v.has_value() ? star::transport::decode_string_array(*v) : std::vector<std::string>{};
     }
 
     auto Has_scheduler_type() const -> bool {
-        return value.has_scheduler_type();
+        return not view_.is_null(5);
     }
 
-    auto scheduler_type() const -> const std::string& {
-        if (not value.scheduler_type.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: scheduler_type");
-        }
-        return *value.scheduler_type;
+    auto scheduler_type() const -> std::string_view {
+        auto v = view_.get_string(5);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_choreography() const -> bool {
-        return value.has_choreography();
+        return not view_.is_null(6);
     }
 
-    auto choreography() const -> const ChoreographyPlan& {
-        if (not value.choreography.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: choreography");
-        }
-        return *value.choreography;
+    auto choreography_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(6);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct ProcessGroupPlanBuilder {
+    static constexpr size_t kFieldCount = 7;
+
+    ProcessGroupPlanBuilder() : writer_(7) {}
+
+    void set_name(std::string_view value) { writer_.set_string(0, value); }
+    void set_component_names(const std::vector<std::string>& value) { auto bytes = star::transport::encode_string_array(value); writer_.set_array(1, bytes); }
+    void set_component_conf_paths(const std::vector<std::string>& value) { auto bytes = star::transport::encode_string_array(value); writer_.set_array(2, bytes); }
+    void set_produced_channels(const std::vector<std::string>& value) { auto bytes = star::transport::encode_string_array(value); writer_.set_array(3, bytes); }
+    void set_consumed_channels(const std::vector<std::string>& value) { auto bytes = star::transport::encode_string_array(value); writer_.set_array(4, bytes); }
+    void set_scheduler_type(std::string_view value) { writer_.set_string(5, value); }
+    void set_choreography_bytes(std::span<const uint8_t> value) { writer_.set_object(6, value); }
+
+    void clear_component_names() { writer_.set_null(1); }
+    void clear_component_conf_paths() { writer_.set_null(2); }
+    void clear_produced_channels() { writer_.set_null(3); }
+    void clear_consumed_channels() { writer_.set_null(4); }
+    void clear_scheduler_type() { writer_.set_null(5); }
+    void clear_choreography() { writer_.set_null(6); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto ProcessGroupPlan::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = ProcessGroupPlanBuilder();
+    builder.set_name(name);
+    if (component_names.has_value()) {
+        builder.set_component_names(*component_names);
+    } else {
+        builder.clear_component_names();
+    }
+    if (component_conf_paths.has_value()) {
+        builder.set_component_conf_paths(*component_conf_paths);
+    } else {
+        builder.clear_component_conf_paths();
+    }
+    if (produced_channels.has_value()) {
+        builder.set_produced_channels(*produced_channels);
+    } else {
+        builder.clear_produced_channels();
+    }
+    if (consumed_channels.has_value()) {
+        builder.set_consumed_channels(*consumed_channels);
+    } else {
+        builder.clear_consumed_channels();
+    }
+    if (scheduler_type.has_value()) {
+        builder.set_scheduler_type(*scheduler_type);
+    } else {
+        builder.clear_scheduler_type();
+    }
+    if (choreography.has_value()) {
+        { auto bytes = choreography->encode_fixed_layout(); builder.set_choreography_bytes(bytes); }
+    } else {
+        builder.clear_choreography();
+    }
+    return builder.Serialize();
+}
+
+inline auto ProcessGroupPlan::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = ProcessGroupPlanBuilder();
+    builder.set_name(name);
+    if (component_names.has_value()) {
+        builder.set_component_names(*component_names);
+    } else {
+        builder.clear_component_names();
+    }
+    if (component_conf_paths.has_value()) {
+        builder.set_component_conf_paths(*component_conf_paths);
+    } else {
+        builder.clear_component_conf_paths();
+    }
+    if (produced_channels.has_value()) {
+        builder.set_produced_channels(*produced_channels);
+    } else {
+        builder.clear_produced_channels();
+    }
+    if (consumed_channels.has_value()) {
+        builder.set_consumed_channels(*consumed_channels);
+    } else {
+        builder.clear_consumed_channels();
+    }
+    if (scheduler_type.has_value()) {
+        builder.set_scheduler_type(*scheduler_type);
+    } else {
+        builder.clear_scheduler_type();
+    }
+    if (choreography.has_value()) {
+        { auto bytes = choreography->encode_fixed_layout(); builder.set_choreography_bytes(bytes); }
+    } else {
+        builder.clear_choreography();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto ProcessGroupPlan::from_fixed_layout(std::span<const uint8_t> data) -> ProcessGroupPlan {
+    auto view = ProcessGroupPlanView(data.data(), data.size());
+    auto out = ProcessGroupPlan();
+    out.name = view.name();
+    if (view.Has_component_names()) { out.component_names = view.component_names(); }
+    if (view.Has_component_conf_paths()) { out.component_conf_paths = view.component_conf_paths(); }
+    if (view.Has_produced_channels()) { out.produced_channels = view.produced_channels(); }
+    if (view.Has_consumed_channels()) { out.consumed_channels = view.consumed_channels(); }
+    if (view.Has_scheduler_type()) { out.scheduler_type = view.scheduler_type(); }
+    if (view.Has_choreography()) { auto bytes = view.choreography_bytes(); out.choreography = ChoreographyPlan::from_fixed_layout(bytes); }
+    return out;
+}
+
+struct ProcessPlanBuilder;
 
 struct ProcessPlan {
     static constexpr uint32_t kFieldId_groups = 1;
@@ -706,71 +920,98 @@ struct ProcessPlan {
     void set_unknown_fields(star::schema::UnknownFieldSet unknown_fields) {
         unknown_fields_ = std::move(unknown_fields);
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> ProcessPlan;
 };
 
 struct ProcessPlanView {
-    ProcessPlan value{};
+    static constexpr size_t kFieldCount = 1;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> ProcessPlanView {
-        return ProcessPlanView{ProcessPlan::from_value(value)};
-    }
+    ProcessPlanView() = default;
+    explicit ProcessPlanView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit ProcessPlanView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
 
     static auto FromBinary(std::span<const uint8_t> bytes) -> ProcessPlanView {
-        return ProcessPlanView{ProcessPlan::from_binary(bytes)};
+        return ProcessPlanView(bytes);
     }
 
-    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {
-        return value.unknown_fields();
-    }
+    static constexpr size_t kSlotIndex_groups = 0;
 
     auto Has_groups() const -> bool {
-        return value.has_groups();
+        return not view_.is_null(0);
     }
 
-    auto groups() const -> const std::vector<ProcessGroupPlan>& {
-        if (not value.groups.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: groups");
-        }
-        return *value.groups;
+    auto groups_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_array_bytes(0);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
 
 struct ProcessPlanBuilder {
-    ProcessPlan value{};
-    star::schema::UnknownFieldSet unknown_fields{};
+    static constexpr size_t kFieldCount = 1;
 
-    static auto FromValue(const ProcessPlan& value) -> ProcessPlanBuilder {
-        return ProcessPlanBuilder{value, value.unknown_fields()};
-    }
+    ProcessPlanBuilder() : writer_(1) {}
 
-    void set_unknown_fields(star::schema::UnknownFieldSet value_in) {
-        unknown_fields = std::move(value_in);
-    }
+    void set_groups_bytes(std::span<const uint8_t> value) { writer_.set_array(0, value); }
+
+    void clear_groups() { writer_.set_null(0); }
 
     auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
-        if (buf == nullptr) {
-            return 0;
-        }
-        auto tmp = value;
-        tmp.set_unknown_fields(unknown_fields);
-        const auto bytes = tmp.encode_binary();
-        if (bytes.size() > cap) {
-            return 0;
-        }
-        if (not bytes.empty()) {
-            std::memcpy(buf, bytes.data(), bytes.size());
-        }
-        return bytes.size();
+        return writer_.serialize_into(buf, cap);
     }
 
     auto EncodeTo(std::span<uint8_t> out) const -> size_t {
         return EncodeTo(out.data(), out.size());
     }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
 };
+
+inline auto ProcessPlan::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = ProcessPlanBuilder();
+    if (groups.has_value()) {
+        { auto bytes = star::transport::encode_object_array(*groups); builder.set_groups_bytes(bytes); }
+    } else {
+        builder.clear_groups();
+    }
+    return builder.Serialize();
+}
+
+inline auto ProcessPlan::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = ProcessPlanBuilder();
+    if (groups.has_value()) {
+        { auto bytes = star::transport::encode_object_array(*groups); builder.set_groups_bytes(bytes); }
+    } else {
+        builder.clear_groups();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto ProcessPlan::from_fixed_layout(std::span<const uint8_t> data) -> ProcessPlan {
+    auto view = ProcessPlanView(data.data(), data.size());
+    auto out = ProcessPlan();
+    if (view.Has_groups()) { auto bytes = view.groups_bytes(); out.groups = star::transport::decode_object_array<ProcessGroupPlan>(bytes); }
+    return out;
+}
 
 using ProcessPlanSchema = ProcessPlan;
 
 }  // namespace star::generated::runtime::process_plan
 
-#endif // ___HOME_ZGY_PROJECTS_STARLETTO_BASEMENT_SCHEMA_BUILTIN_RUNTIME_PROCESS_PLAN_S_H__
+#endif // __RUNTIME_PROCESS_PLAN__

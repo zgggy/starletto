@@ -8,26 +8,12 @@
 #include <string>
 #include <string_view>
 
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/common/fixed_layout_codec.h"
+#include "basement/schema/type_id.h"
 
 namespace star::transport {
 
-struct ShmTextView {
-    std::shared_ptr<void> mapping;
-    const char* data{nullptr};
-    size_t size{0};
-    std::string channel_name;
-    star::schema::SchemaTypeId schema_type_id;
-
-    auto text() const -> std::string_view {
-        if (data == nullptr || size == 0) {
-            return {};
-        }
-        return std::string_view(data, size);
-    }
-};
-
-struct ShmBinaryView {
+struct ShmSlotView {
     std::shared_ptr<void> mapping;
     const uint8_t* data{nullptr};
     size_t size{0};
@@ -39,6 +25,20 @@ struct ShmBinaryView {
             return {};
         }
         return std::span<const uint8_t>(data, size);
+    }
+
+    auto as_fixed_layout() const -> FixedLayoutView {
+        if (data == nullptr || size == 0) {
+            return FixedLayoutView{};
+        }
+        return FixedLayoutView(data, size);
+    }
+
+    auto text() const -> std::string_view {
+        if (data == nullptr || size == 0) {
+            return {};
+        }
+        return std::string_view(reinterpret_cast<const char*>(data), size);
     }
 };
 

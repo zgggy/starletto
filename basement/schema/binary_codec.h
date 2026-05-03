@@ -90,34 +90,11 @@ private:
         }
     }
 
-    static void encode_field(const std::string& path, const FieldDescriptor& field, const star::schema::SchemaValue& value, std::vector<uint8_t>* out) {
-        if (field.id == 0) {
-            throw star::excep::RuntimeError("BinaryCodec encode failed, missing field id: ", path);
-        }
-        if (field.repeated) {
-            const auto* arr = value.get_array_ptr();
-            if (arr == nullptr) {
-                throw star::excep::RuntimeError("BinaryCodec encode failed, repeated field is not array: ", path);
-            }
-            for (const auto& item : *arr) {
-                auto item_field = field;
-                item_field.repeated = false;
-                encode_field(path, item_field, item, out);
-            }
-            return;
-        }
+    static void encode_single_field(const std::string& path, const FieldDescriptor& field, const star::schema::SchemaValue& value, std::vector<uint8_t>* out) {
         if (field.has_value_kind) {
             encode_map(path, field, value, out);
             return;
         }
-        if (is_conf_value_field(field)) {
-            write_tag(field.id, WireType::BYTES, out);
-            const auto text = star::schema::dump_schema_text(value);
-            write_varint(text.size(), out);
-            out->insert(out->end(), text.begin(), text.end());
-            return;
-        }
-
         switch (field.kind) {
         case FieldKind::BOOL:
             write_tag(field.id, WireType::VARINT, out);
@@ -143,12 +120,27 @@ private:
             out->insert(out->end(), s.begin(), s.end());
             return;
         }
-        case FieldKind::ARRAY:
-            throw star::excep::RuntimeError("BinaryCodec encode failed, ARRAY field kind should use repeated path: ", path);
         case FieldKind::OBJECT:
             encode_nested_object(path, field, value, out);
             return;
         }
+    }
+
+    static void encode_field(const std::string& path, const FieldDescriptor& field, const star::schema::SchemaValue& value, std::vector<uint8_t>* out) {
+        if (field.id == 0) {
+            throw star::excep::RuntimeError("BinaryCodec encode failed, missing field id: ", path);
+        }
+        if (field.repeated) {
+            const auto* arr = value.get_array_ptr();
+            if (arr == nullptr) {
+                throw star::excep::RuntimeError("BinaryCodec encode failed, repeated field is not array: ", path);
+            }
+            for (const auto& item : *arr) {
+                encode_single_field(path, field, item, out);
+            }
+            return;
+        }
+        encode_single_field(path, field, value, out);
     }
 
     static void encode_nested_object(
@@ -245,9 +237,7 @@ private:
         const auto path = scope + "." + field.name;
         if (field.repeated) {
             auto& slot = ensure_array_slot(out, field.name);
-            auto item_field = field;
-            item_field.repeated = false;
-            slot.emplace_back(decode_single_value(path, item_field, wire_type, cur));
+            slot.emplace_back(decode_single_value(path, field, wire_type, cur));
             return;
         }
         if (field.has_value_kind) {
@@ -260,11 +250,6 @@ private:
 
     static auto decode_single_value(const std::string& path, const FieldDescriptor& field, uint8_t wire_type, Cursor* cur)
         -> star::schema::SchemaValue {
-        if (is_conf_value_field(field)) {
-            expect_wire_type(path, wire_type, WireType::BYTES);
-            const auto data = read_bytes(cur);
-            return star::schema::parse_schema_text(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
-        }
         switch (field.kind) {
         case FieldKind::BOOL:
             expect_wire_type(path, wire_type, WireType::VARINT);
@@ -285,8 +270,6 @@ private:
             const auto data = read_bytes(cur);
             return star::schema::SchemaValue(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
         }
-        case FieldKind::ARRAY:
-            throw star::excep::RuntimeError("BinaryCodec decode failed, ARRAY field kind should use repeated path: ", path);
         case FieldKind::OBJECT:
             expect_wire_type(path, wire_type, WireType::BYTES);
             if (field.children.empty()) {
@@ -410,10 +393,6 @@ private:
             throw star::excep::RuntimeError("BinaryCodec encode failed, expect string: ", path);
         }
         return std::get<std::string>(*scalar);
-    }
-
-    static auto is_conf_value_field(const FieldDescriptor& field) -> bool {
-        return field.type_name == "star::schema::SchemaValue";
     }
 
     static void write_tag(uint32_t field_id, WireType wire_type, std::vector<uint8_t>* out) {

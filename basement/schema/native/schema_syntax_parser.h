@@ -290,9 +290,31 @@ class SchemaSyntaxParser {
         if (token.empty()) {
             throw star::excep::RuntimeError("NativeSchemaLoader parse failed, empty default value");
         }
-        const auto wrapper = std::string("value = ") + token;
-        auto root = star::schema::parse_schema_text(wrapper);
-        return root.as_object().at("value");
+        if (token == "true") {
+            return star::schema::SchemaValue(true);
+        }
+        if (token == "false") {
+            return star::schema::SchemaValue(false);
+        }
+        if (token == "null") {
+            return star::schema::SchemaValue(nullptr);
+        }
+        try {
+            if (token.find_first_of(".eE") == std::string::npos) {
+                size_t parsed = 0;
+                const auto value = static_cast<int64_t>(std::stoll(token, &parsed));
+                if (parsed == token.size()) {
+                    return star::schema::SchemaValue(value);
+                }
+            }
+            size_t parsed = 0;
+            const auto value = std::stod(token, &parsed);
+            if (parsed == token.size()) {
+                return star::schema::SchemaValue(value);
+            }
+        } catch (...) {
+        }
+        throw star::excep::RuntimeError("NativeSchemaLoader parse failed, invalid default token: ", token);
     }
 
     auto parse_field_def() -> FieldDef {

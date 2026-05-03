@@ -8,14 +8,8 @@
 
 #include "basement/runtime/plan/plan_loader.h"
 #include "basement/runtime/process/path_resolver.h"
-#include "basement/schema/native/schema_bootstrap.h"
 
 namespace star::native_runner {
-
-static void register_generated_schemas(star::schema::SchemaRegistry& registry) {
-    star::generated::runtime::component_load_plan::ComponentLoadPlan::register_schema(registry);
-    star::generated::runtime::process_plan::ProcessPlan::register_schema(registry);
-}
 
 inline auto resolve_load_context(const std::filesystem::path& component_conf_path, const star::runtime::plan::PlanLoader& loader) -> star::runtime::plan::LoadContext {
     auto ctx = star::runtime::plan::LoadContext{};
@@ -29,16 +23,17 @@ inline auto resolve_load_context(const std::filesystem::path& component_conf_pat
     ctx.module_conf_path = *module_conf;
     ctx.module_dir = module_conf->parent_path();
 
-    const auto module_conf_data = loader.load_module(module_conf->string());
-    if (not module_conf_data) {
+    const auto module_conf_data = loader.try_load_module(module_conf->string());
+    if (not module_conf_data.value) {
+        logE << "load module.conf failed: path=" << module_conf->string() << ", error=" << module_conf_data.error;
         return ctx;
     }
 
-    if (not module_conf_data->module.name.empty()) {
-        ctx.module_name = module_conf_data->module.name;
+    if (not module_conf_data.value->module.name.empty()) {
+        ctx.module_name = module_conf_data.value->module.name;
     }
 
-    auto config_dir = module_conf->parent_path() / (module_conf_data->layout.has_value() && module_conf_data->layout->config_dir.has_value() ? *module_conf_data->layout->config_dir : ".");
+    auto config_dir = module_conf->parent_path() / (module_conf_data.value->layout.has_value() && module_conf_data.value->layout->config_dir.has_value() ? *module_conf_data.value->layout->config_dir : ".");
     ctx.module_config_dir = std::filesystem::absolute(config_dir);
 
     return ctx;
@@ -46,7 +41,11 @@ inline auto resolve_load_context(const std::filesystem::path& component_conf_pat
 
 static auto build_component_load_plan(const std::filesystem::path& component_conf_path, const star::runtime::plan::PlanLoader& loader) -> std::optional<star::runtime::plan::ComponentLoadPlan> {
     const auto ctx = resolve_load_context(component_conf_path, loader);
-    return loader.load_component_plan(component_conf_path.string(), ctx);
+    const auto result = loader.try_load_component_plan(component_conf_path.string(), ctx);
+    if (not result.value) {
+        logE << "build component load plan failed: path=" << component_conf_path.string() << ", error=" << result.error;
+    }
+    return result.value;
 }
 
 static auto normalize_inputs_to_component_conf_paths(const std::vector<std::string>& raw_paths) -> std::vector<std::string> {

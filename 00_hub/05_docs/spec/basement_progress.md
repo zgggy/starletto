@@ -38,7 +38,7 @@ basement/
 │
 ├── transport/               # ~2100 行 — 消息总线 + 服务总线 + SHM + 录放
 │   ├── api/
-│   │   ├── message_bus.h           # Reader/Writer/AckWriter/QoSPolicy/DropPolicy 接口
+│   │   ├── message_bus.h           # Reader/Writer/DeliveryWriter/ChannelOptions/DropPolicy 接口
 │   │   ├── service_bus.h           # ServiceClient/Server/Request/Response/CorrelationId
 │   │   ├── parameter_store.h       # ParameterStore 抽象接口
 │   │   ├── channel_registry.h      # ChannelDescriptor 注册表
@@ -268,18 +268,18 @@ core ← schema ← transport ← runtime ← manifest
 
 | Spec 文档 | 行数 | 职责 | 核心验收状态 |
 |-----------|------|------|-------------|
-| [basement_index.md](file:///home/zgy/projects/starletto/document/spec/basement_index.md) | 39 | 子模块拆分索引 | ✅ 结构稳定 |
-| [basement_design.md](file:///home/zgy/projects/starletto/document/spec/basement_design.md) | 292 | 总体设计方案 | ✅ 方案落地中 |
-| [basement_core.md](file:///home/zgy/projects/starletto/document/spec/basement_core.md) | 58 | Core 设计 | ✅ RollingFileLogger 已实现并集成 |
-| [basement_schema.md](file:///home/zgy/projects/starletto/document/spec/basement_schema.md) | 463 | Schema IDL + Codegen | ✅ **4/4 验收项全勾** |
-| [basement_transport.md](file:///home/zgy/projects/starletto/document/spec/basement_transport.md) | 875 | Transport 设计 | ✅ **§10-§15 全部验收通过** |
-| [basement_runtime_index.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_index.md) | 120 | Runtime 索引 | ✅ 结构稳定 |
-| [basement_runtime_host.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_host.md) | 245 | Host + auto_configure | ✅ §7-§8 验收通过 |
-| [basement_runtime_scheduler.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_scheduler.md) | 223 | Scheduler 设计 | ✅ choreography + priority 验收通过 |
-| [basement_runtime_trigger.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_trigger.md) | 46 | Trigger 设计 | ✅ TimerTrigger + SyncTrigger 验收通过 |
-| [basement_runtime_process.md](file:///home/zgy/projects/starletto/document/spec/basement_runtime_process.md) | 83 | Process 编排 | 🟡 基础可用，缺监督/健康检查 |
-| [basement_manifest.md](file:///home/zgy/projects/starletletto/document/spec/basement_manifest.md) | 95 | Manifest 设计 | 🟡 过渡阶段，ConfValue→schema 未完成 |
-| [basement_tools.md](file:///home/zgy/projects/starletto/document/spec/basement_tools.md) | 111 | Tools 设计 | ✅ record/replay/schema CLI 全部可用 |
+| [basement_index.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_index.md) | 39 | 子模块拆分索引 | ✅ 结构稳定 |
+| [basement_design.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_design.md) | 292 | 总体设计方案 | ✅ 方案落地中 |
+| [basement_core.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_core.md) | 58 | Core 设计 | ✅ RollingFileLogger 已实现并集成 |
+| [basement_schema.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_schema.md) | 463 | Schema IDL + Codegen | ✅ **4/4 验收项全勾** |
+| [basement_transport.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_transport.md) | 875 | Transport 设计 | ✅ **§10-§15 全部验收通过** |
+| [basement_runtime_index.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_index.md) | 120 | Runtime 索引 | ✅ 结构稳定 |
+| [basement_runtime_host.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_host.md) | 245 | Host + auto_configure | ✅ §7-§8 验收通过 |
+| [basement_runtime_scheduler.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_scheduler.md) | 223 | Scheduler 设计 | ✅ choreography + priority 验收通过 |
+| [basement_runtime_trigger.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_trigger.md) | 46 | Trigger 设计 | ✅ TimerTrigger + SyncTrigger 验收通过 |
+| [basement_runtime_process.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_runtime_process.md) | 83 | Process 编排 | 🟡 基础可用，缺监督/健康检查 |
+| [basement_manifest.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_manifest.md) | 95 | Manifest 设计 | 🟡 过渡阶段，ConfValue→schema 未完成 |
+| [basement_tools.md](file:///home/zgy/projects/starletto/00_hub/05_docs/spec/basement_tools.md) | 111 | Tools 设计 | ✅ record/replay/schema CLI 全部可用 |
 
 ---
 

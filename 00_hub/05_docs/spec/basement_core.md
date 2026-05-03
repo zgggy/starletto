@@ -50,7 +50,7 @@ Core 是 basement 的最底层，不依赖 transport/runtime/manifest/tools。
 // for (bool ok = is_enabled(level); ok; ) LogStream(...)
 #define _STAR_LOG_STREAM(level) \
     for (bool _star_log_ok = star::base::Logger::is_enabled(level); _star_log_ok; ) \
-        star::base::LogStream(star::base::LoggerManager::get().get_logger(), level, __FILE__, __LINE__, __FUNCTION__)
+        star::base::LogStream(star::base::LoggerManager::get().get_logger_shared(), level, __FILE__, __LINE__, __FUNCTION__)
 ```
 
 - 编译器在 `_star_log_ok = false` 时完全消除循环体（含 LogStream 构造/析构）

@@ -24,25 +24,25 @@ struct ChannelStatsSnapshot {
 
 class ChannelStats {
   public:
-    void record_publish(size_t payload_bytes) {
+    void record_write(size_t payload_bytes) {
         const auto now = steady_now_us();
         std::lock_guard<std::mutex> lock(mutex_);
         ++total_messages_;
         sum_payload_ += static_cast<double>(payload_bytes);
         min_payload_ = std::min(min_payload_, static_cast<double>(payload_bytes));
         max_payload_ = std::max(max_payload_, static_cast<double>(payload_bytes));
-        if (last_publish_time_ns_ > 0) {
-            const auto interval = static_cast<double>(now - last_publish_time_ns_) / 1000.0;
+        if (last_write_time_ns_ > 0) {
+            const auto interval = static_cast<double>(now - last_write_time_ns_) / 1000.0;
             sum_interval_ += interval;
             min_interval_ = std::min(min_interval_, interval);
             max_interval_ = std::max(max_interval_, interval);
         }
-        last_publish_time_ns_ = now;
+        last_write_time_ns_ = now;
     }
 
     void record_drop() { ++dropped_; }
 
-    void record_subscribe() { ++total_subscribes_; }
+    void record_read() { ++total_reads_; }
 
     auto snapshot(const std::string& channel_name) const -> ChannelStatsSnapshot {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -74,14 +74,14 @@ class ChannelStats {
     mutable std::mutex mutex_;
     std::atomic<int64_t> total_messages_{0};
     std::atomic<int64_t> dropped_{0};
-    std::atomic<int64_t> total_subscribes_{0};
+    std::atomic<int64_t> total_reads_{0};
     double sum_payload_{0.0};
     double min_payload_{1e18};
     double max_payload_{0.0};
     double sum_interval_{0.0};
     double min_interval_{1e18};
     double max_interval_{0.0};
-    int64_t last_publish_time_ns_{0};
+    int64_t last_write_time_ns_{0};
 };
 
 class ObservabilityRegistry {
@@ -111,7 +111,7 @@ class ObservabilityRegistry {
         auto snapshots = snapshot_all();
         auto lines = std::vector<std::string>{};
         lines.reserve(snapshots.size() + 1);
-        lines.emplace_back("[Observability] topic | msgs | drops | avg_payload | avg_interval_us");
+        lines.emplace_back("[Observability] channel | msgs | drops | avg_payload | avg_interval_us");
         for (const auto& s : snapshots) {
             lines.emplace_back("[Observability] " + s.channel_name + " | " + std::to_string(s.total_messages) + " | " + std::to_string(s.dropped_messages) + " | " +
                                std::to_string(static_cast<int64_t>(s.avg_payload_bytes)) + " | " + std::to_string(static_cast<int64_t>(s.avg_interval_us)));

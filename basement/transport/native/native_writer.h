@@ -4,6 +4,7 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -13,12 +14,54 @@ class NativeWriter final : public star::transport::Writer {
   public:
     NativeWriter(std::shared_ptr<NativeMessageBus> bus, std::string channel_name) : bus_(std::move(bus)), channel_name_(std::move(channel_name)) {}
 
-    void write(const star::transport::MessageView& message) override {
+    auto write(const star::transport::MessageView& message) -> star::transport::WriteResult override {
         auto bus = bus_.lock();
         if (not bus) {
-            return;
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::BUS_EXPIRED;
+            return out;
         }
-        bus->publish_internal(channel_name_, message);
+        try {
+            bus->write_internal(channel_name_, message, nullptr);
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::OK;
+            out.inproc_ok = true;
+            return out;
+        } catch (const std::exception& e) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            out.error_message = e.what();
+            return out;
+        } catch (...) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            return out;
+        }
+    }
+
+    auto write_serialized(const star::transport::SerializedMessage& message) -> star::transport::WriteResult override {
+        auto bus = bus_.lock();
+        if (not bus) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::BUS_EXPIRED;
+            return out;
+        }
+        try {
+            bus->write_internal(channel_name_, message.view, &message.serializer);
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::OK;
+            out.inproc_ok = true;
+            return out;
+        } catch (const std::exception& e) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            out.error_message = e.what();
+            return out;
+        } catch (...) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            return out;
+        }
     }
 
   private:
@@ -26,25 +69,91 @@ class NativeWriter final : public star::transport::Writer {
     std::string channel_name_;
 };
 
-class InprocAckWriter final : public star::transport::AckWriter {
+class InprocSyncWriter final : public star::transport::DeliveryWriter {
   public:
-    InprocAckWriter(std::shared_ptr<NativeMessageBus> bus, std::string channel_name, int64_t ack_timeout_ms)
-        : bus_(std::move(bus)), channel_name_(std::move(channel_name)), ack_timeout_ms_(ack_timeout_ms) {}
+    InprocSyncWriter(std::shared_ptr<NativeMessageBus> bus, std::string channel_name) : bus_(std::move(bus)), channel_name_(std::move(channel_name)) {}
 
-    void write(const star::transport::MessageView& message) override {
-        auto bus = bus_.lock();
-        if (not bus) {
-            return;
+    ~InprocSyncWriter() {
+        std::vector<std::future<void>> pending;
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex_);
+            pending = std::move(pending_acks_);
         }
-        bus->publish_internal(channel_name_, message);
+        for (auto& f : pending) {
+            if (f.valid()) {
+                f.wait();
+            }
+        }
     }
 
-    auto write_with_ack(const star::transport::MessageView& message, int64_t timeout_ms) -> std::future<star::transport::AckResult> override {
-        auto promise = std::make_shared<std::promise<star::transport::AckResult>>();
-        auto future = promise->get_future();
-        auto timeout = timeout_ms > 0 ? timeout_ms : ack_timeout_ms_;
+    auto write(const star::transport::MessageView& message) -> star::transport::WriteResult override {
+        auto bus = bus_.lock();
+        if (not bus) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::BUS_EXPIRED;
+            return out;
+        }
+        try {
+            bus->write_internal(channel_name_, message, nullptr);
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::OK;
+            out.inproc_ok = true;
+            return out;
+        } catch (const std::exception& e) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            out.error_message = e.what();
+            return out;
+        } catch (...) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            return out;
+        }
+    }
 
-        std::thread([this, promise, message, timeout]() {
+    auto write_serialized(const star::transport::SerializedMessage& message) -> star::transport::WriteResult override {
+        auto bus = bus_.lock();
+        if (not bus) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::BUS_EXPIRED;
+            return out;
+        }
+        try {
+            bus->write_internal(channel_name_, message.view, &message.serializer);
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::OK;
+            out.inproc_ok = true;
+            return out;
+        } catch (const std::exception& e) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            out.error_message = e.what();
+            return out;
+        } catch (...) {
+            auto out = star::transport::WriteResult{};
+            out.status = star::transport::WriteStatus::EXCEPTION;
+            return out;
+        }
+    }
+
+    auto write_with_delivery(const star::transport::MessageView& message, int64_t timeout_ms) -> std::future<star::transport::DeliveryResult> override {
+        return write_impl(message, nullptr, timeout_ms);
+    }
+
+    auto write_serialized_with_delivery(const star::transport::SerializedMessage& message, int64_t timeout_ms)
+        -> std::future<star::transport::DeliveryResult> override {
+        return write_impl(message.view, &message.serializer, timeout_ms);
+    }
+
+  private:
+    auto write_impl(const star::transport::MessageView& message, const star::transport::MessageSerializer* serializer, int64_t timeout_ms)
+        -> std::future<star::transport::DeliveryResult> {
+        static_cast<void>(timeout_ms);
+        auto promise = std::make_shared<std::promise<star::transport::DeliveryResult>>();
+        auto future = promise->get_future();
+
+        auto serializer_copy = serializer ? std::make_shared<star::transport::MessageSerializer>(*serializer) : nullptr;
+        auto fut = std::async(std::launch::async, [this, promise, message, serializer_copy]() {
             try {
                 auto begin = std::chrono::steady_clock::now();
                 auto bus = bus_.lock();
@@ -52,32 +161,29 @@ class InprocAckWriter final : public star::transport::AckWriter {
                     promise->set_value({false, "bus expired", 0});
                     return;
                 }
-                bus->publish_internal(channel_name_, message);
-
-                if (timeout > 0) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
-                    promise->set_value({true, "ok (fire-and-forget)", 0});
-                } else {
-                    const auto latency_us = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count());
-                    promise->set_value({true, "ok", latency_us});
-                }
+                bus->write_internal(channel_name_, message, serializer_copy ? serializer_copy.get() : nullptr);
+                const auto latency_us = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count());
+                promise->set_value({true, "inproc delivery complete", latency_us});
             } catch (const std::exception& e) {
                 promise->set_value({false, e.what(), 0});
             } catch (...) {
-                promise->set_value({false, "unknown error", 0});
+                promise->set_value({false, {}, 0});
             }
-        }).detach();
+        });
+
+        {
+            std::lock_guard<std::mutex> lock(pending_mutex_);
+            pending_acks_.emplace_back(std::move(fut));
+        }
 
         return future;
     }
 
-    void set_timeout_callback(star::transport::AckWriter::TimeoutCallback cb) override { timeout_callback_ = std::move(cb); }
-
   private:
     std::weak_ptr<NativeMessageBus> bus_;
     std::string channel_name_;
-    int64_t ack_timeout_ms_{0};
-    star::transport::AckWriter::TimeoutCallback timeout_callback_;
+    std::mutex pending_mutex_;
+    std::vector<std::future<void>> pending_acks_;
 };
 
 #endif  // __NATIVE_WRITER_H__

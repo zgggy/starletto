@@ -1,114 +1,19 @@
-#ifndef ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_PLANNING_MOTION_S_H__
-#define ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_PLANNING_MOTION_S_H__
+#ifndef __PLANNING_MOTION__
+#define __PLANNING_MOTION__
 
-#include "basement/schema/binary_codec.h"
-#include "basement/schema/schema_ast.h"
+#include "basement/schema/schema_codec_helpers.h"
 #include "basement/schema/schema_registry.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/common/fixed_layout_codec.h"
 
-#include <concepts>
 #include <cstring>
-#include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
-#include <string>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace star::setting::parameter::planning {
 
-template <typename _ValueType>
-concept SchemaStructType = requires(const star::schema::SchemaValue& value, const _ValueType& item) {
-    { _ValueType::from_value(value) } -> std::same_as<_ValueType>;
-    { item.to_value() } -> std::same_as<star::schema::SchemaValue>;
-};
-
-template <typename _ValueType>
-struct IsStdVector : std::false_type {
-};
-
-template <typename _ItemType, typename _Allocator>
-struct IsStdVector<std::vector<_ItemType, _Allocator>> : std::true_type {
-    using Item = _ItemType;
-};
-
-template <typename _ValueType>
-struct IsStdMap : std::false_type {
-};
-
-template <typename _MappedType, typename _Compare, typename _Allocator>
-struct IsStdMap<std::map<std::string, _MappedType, _Compare, _Allocator>> : std::true_type {
-    using Item = _MappedType;
-};
-
-template <typename _ValueType>
-auto schema_read(const star::schema::SchemaValue& value) -> _ValueType {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        using _Item = typename IsStdVector<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& arr = value.as_array();
-        out.reserve(arr.size());
-        for (const auto& item : arr) {
-            out.emplace_back(schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        using _Item = typename IsStdMap<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& obj = value.as_object();
-        for (const auto& [key, item] : obj) {
-            out.emplace(key, schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (std::is_same_v<_ValueType, std::string>) {
-        return value.as<std::string>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, bool>) {
-        return value.as<bool>();
-    } else if constexpr (std::is_same_v<_ValueType, int64_t>) {
-        return value.as<int64_t>();
-    } else if constexpr (std::is_same_v<_ValueType, double>) {
-        return value.as<double>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return value.as_object();
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return _ValueType::from_value(value);
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_read type");
-    }
-}
-
-template <typename _ValueType>
-auto schema_write(const _ValueType& value) -> star::schema::SchemaValue {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        auto out = star::schema::SchemaArray{};
-        out.reserve(value.size());
-        for (const auto& item : value) {
-            out.emplace_back(schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        auto out = star::schema::SchemaObject{};
-        for (const auto& [key, item] : value) {
-            out.emplace(key, schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, std::string> || std::is_same_v<_ValueType, bool> ||
-                  std::is_same_v<_ValueType, int64_t> || std::is_same_v<_ValueType, double>) {
-        return star::schema::schema_value_from(value);
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return star::schema::SchemaValue(value);
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return value.to_value();
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_write type");
-    }
-}
+using star::schema::schema_read;
+using star::schema::schema_write;
 
 inline auto _schema_type_id() -> star::schema::SchemaTypeId {
     auto out = star::schema::SchemaTypeId{};
@@ -127,6 +32,7 @@ inline auto _build_fields_Processor() -> std::vector<star::schema::FieldDescript
         field.kind = star::schema::FieldKind::INT64;
         field.type_name = "int";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -137,6 +43,7 @@ inline auto _build_fields_Processor() -> std::vector<star::schema::FieldDescript
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -152,6 +59,7 @@ inline auto _build_fields_Methods() -> std::vector<star::schema::FieldDescriptor
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -162,6 +70,7 @@ inline auto _build_fields_Methods() -> std::vector<star::schema::FieldDescriptor
         field.kind = star::schema::FieldKind::BOOL;
         field.type_name = "bool";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -177,6 +86,7 @@ inline auto _build_fields_MotionParameter() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "Processor";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_Processor();
         out.emplace_back(std::move(field));
@@ -188,6 +98,7 @@ inline auto _build_fields_MotionParameter() -> std::vector<star::schema::FieldDe
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "Methods";
         field.optional = true;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_Methods();
         out.emplace_back(std::move(field));
@@ -204,6 +115,8 @@ inline auto _schema_descriptor() -> star::schema::SchemaDescriptor {
     out.fields = _build_fields_MotionParameter();
     return out;
 }
+
+struct ProcessorBuilder;
 
 struct Processor {
     static constexpr uint32_t kFieldId_expected_cycle_time = 1;
@@ -237,32 +150,97 @@ struct Processor {
         obj.emplace("log_level", schema_write(log_level));
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> Processor;
 };
 
 struct ProcessorView {
-    Processor value{};
+    static constexpr size_t kFieldCount = 2;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> ProcessorView {
-        return ProcessorView{Processor::from_value(value)};
-    }
+    ProcessorView() = default;
+    explicit ProcessorView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit ProcessorView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_expected_cycle_time = 0;
+    static constexpr size_t kSlotIndex_log_level = 1;
 
     auto Has_expected_cycle_time() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto expected_cycle_time() const -> const int64_t& {
-        return value.expected_cycle_time;
+    auto expected_cycle_time() const -> int64_t {
+        auto v = view_.get_int64(0);
+        return v.has_value() ? *v : int64_t{0};
     }
 
     auto Has_log_level() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto log_level() const -> const std::string& {
-        return value.log_level;
+    auto log_level() const -> std::string_view {
+        auto v = view_.get_string(1);
+        return v.has_value() ? *v : std::string_view{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct ProcessorBuilder {
+    static constexpr size_t kFieldCount = 2;
+
+    ProcessorBuilder() : writer_(2) {}
+
+    void set_expected_cycle_time(int64_t value) { writer_.set_int64(0, value); }
+    void set_log_level(std::string_view value) { writer_.set_string(1, value); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto Processor::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = ProcessorBuilder();
+    builder.set_expected_cycle_time(expected_cycle_time);
+    builder.set_log_level(log_level);
+    return builder.Serialize();
+}
+
+inline auto Processor::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = ProcessorBuilder();
+    builder.set_expected_cycle_time(expected_cycle_time);
+    builder.set_log_level(log_level);
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto Processor::from_fixed_layout(std::span<const uint8_t> data) -> Processor {
+    auto view = ProcessorView(data.data(), data.size());
+    auto out = Processor();
+    out.expected_cycle_time = view.expected_cycle_time();
+    out.log_level = view.log_level();
+    return out;
+}
+
+struct MethodsBuilder;
 
 struct Methods {
     static constexpr uint32_t kFieldId_trajectory_method = 1;
@@ -296,32 +274,97 @@ struct Methods {
         obj.emplace("enable_fallback", schema_write(enable_fallback));
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> Methods;
 };
 
 struct MethodsView {
-    Methods value{};
+    static constexpr size_t kFieldCount = 2;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> MethodsView {
-        return MethodsView{Methods::from_value(value)};
-    }
+    MethodsView() = default;
+    explicit MethodsView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit MethodsView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_trajectory_method = 0;
+    static constexpr size_t kSlotIndex_enable_fallback = 1;
 
     auto Has_trajectory_method() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto trajectory_method() const -> const std::string& {
-        return value.trajectory_method;
+    auto trajectory_method() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_enable_fallback() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto enable_fallback() const -> const bool& {
-        return value.enable_fallback;
+    auto enable_fallback() const -> bool {
+        auto v = view_.get_bool(1);
+        return v.has_value() ? *v : false;
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct MethodsBuilder {
+    static constexpr size_t kFieldCount = 2;
+
+    MethodsBuilder() : writer_(2) {}
+
+    void set_trajectory_method(std::string_view value) { writer_.set_string(0, value); }
+    void set_enable_fallback(bool value) { writer_.set_bool(1, value); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto Methods::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = MethodsBuilder();
+    builder.set_trajectory_method(trajectory_method);
+    builder.set_enable_fallback(enable_fallback);
+    return builder.Serialize();
+}
+
+inline auto Methods::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = MethodsBuilder();
+    builder.set_trajectory_method(trajectory_method);
+    builder.set_enable_fallback(enable_fallback);
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto Methods::from_fixed_layout(std::span<const uint8_t> data) -> Methods {
+    auto view = MethodsView(data.data(), data.size());
+    auto out = Methods();
+    out.trajectory_method = view.trajectory_method();
+    out.enable_fallback = view.enable_fallback();
+    return out;
+}
+
+struct MotionParameterBuilder;
 
 struct MotionParameter {
     static constexpr uint32_t kFieldId_processor = 1;
@@ -393,79 +436,112 @@ struct MotionParameter {
     void set_unknown_fields(star::schema::UnknownFieldSet unknown_fields) {
         unknown_fields_ = std::move(unknown_fields);
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> MotionParameter;
 };
 
 struct MotionParameterView {
-    MotionParameter value{};
+    static constexpr size_t kFieldCount = 2;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> MotionParameterView {
-        return MotionParameterView{MotionParameter::from_value(value)};
-    }
+    MotionParameterView() = default;
+    explicit MotionParameterView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit MotionParameterView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
 
     static auto FromBinary(std::span<const uint8_t> bytes) -> MotionParameterView {
-        return MotionParameterView{MotionParameter::from_binary(bytes)};
+        return MotionParameterView(bytes);
     }
 
-    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {
-        return value.unknown_fields();
-    }
+    static constexpr size_t kSlotIndex_processor = 0;
+    static constexpr size_t kSlotIndex_methods = 1;
 
     auto Has_processor() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto processor() const -> const Processor& {
-        return value.processor;
+    auto processor_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(0);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
     auto Has_methods() const -> bool {
-        return value.has_methods();
+        return not view_.is_null(1);
     }
 
-    auto methods() const -> const Methods& {
-        if (not value.methods.has_value()) {
-            throw star::excep::RuntimeError("schema generated view access failed, missing field: methods");
-        }
-        return *value.methods;
+    auto methods_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(1);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
 
 struct MotionParameterBuilder {
-    MotionParameter value{};
-    star::schema::UnknownFieldSet unknown_fields{};
+    static constexpr size_t kFieldCount = 2;
 
-    static auto FromValue(const MotionParameter& value) -> MotionParameterBuilder {
-        return MotionParameterBuilder{value, value.unknown_fields()};
-    }
+    MotionParameterBuilder() : writer_(2) {}
 
-    void set_unknown_fields(star::schema::UnknownFieldSet value_in) {
-        unknown_fields = std::move(value_in);
-    }
+    void set_processor_bytes(std::span<const uint8_t> value) { writer_.set_object(0, value); }
+    void set_methods_bytes(std::span<const uint8_t> value) { writer_.set_object(1, value); }
+
+    void clear_methods() { writer_.set_null(1); }
 
     auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
-        if (buf == nullptr) {
-            return 0;
-        }
-        auto tmp = value;
-        tmp.set_unknown_fields(unknown_fields);
-        const auto bytes = tmp.encode_binary();
-        if (bytes.size() > cap) {
-            return 0;
-        }
-        if (not bytes.empty()) {
-            std::memcpy(buf, bytes.data(), bytes.size());
-        }
-        return bytes.size();
+        return writer_.serialize_into(buf, cap);
     }
 
     auto EncodeTo(std::span<uint8_t> out) const -> size_t {
         return EncodeTo(out.data(), out.size());
     }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
 };
+
+inline auto MotionParameter::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = MotionParameterBuilder();
+    { auto bytes = processor.encode_fixed_layout(); builder.set_processor_bytes(bytes); }
+    if (methods.has_value()) {
+        { auto bytes = methods->encode_fixed_layout(); builder.set_methods_bytes(bytes); }
+    } else {
+        builder.clear_methods();
+    }
+    return builder.Serialize();
+}
+
+inline auto MotionParameter::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = MotionParameterBuilder();
+    { auto bytes = processor.encode_fixed_layout(); builder.set_processor_bytes(bytes); }
+    if (methods.has_value()) {
+        { auto bytes = methods->encode_fixed_layout(); builder.set_methods_bytes(bytes); }
+    } else {
+        builder.clear_methods();
+    }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto MotionParameter::from_fixed_layout(std::span<const uint8_t> data) -> MotionParameter {
+    auto view = MotionParameterView(data.data(), data.size());
+    auto out = MotionParameter();
+    { auto bytes = view.processor_bytes(); out.processor = Processor::from_fixed_layout(bytes); }
+    if (view.Has_methods()) { auto bytes = view.methods_bytes(); out.methods = Methods::from_fixed_layout(bytes); }
+    return out;
+}
 
 using MotionParameterSchema = MotionParameter;
 
 }  // namespace star::setting::parameter::planning
 
-#endif // ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_PLANNING_MOTION_S_H__
+#endif // __PLANNING_MOTION__

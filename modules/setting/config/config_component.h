@@ -38,7 +38,7 @@ class ConfigComponent : public star::runtime::Component {
     }
 
     auto process_once() -> bool override {
-        publish_snapshot();
+        write_snapshot();
         return static_cast<bool>(snapshot_);
     }
 
@@ -180,7 +180,8 @@ class ConfigComponent : public star::runtime::Component {
         auto value = out.to_value();
         const auto schema = context()->schema_registry().find_by_name(default_snapshot_schema_type_id().name);
         if (schema) {
-            star::schema::SchemaValidator::validate(*schema, &value);
+            star::schema::SchemaValidator::apply_defaults(*schema, &value);
+            star::schema::SchemaValidator::validate(*schema, value);
         }
         return out;
     }
@@ -193,7 +194,8 @@ class ConfigComponent : public star::runtime::Component {
         if (not schema) {
             return;
         }
-        star::schema::SchemaValidator::validate(*schema, value);
+        star::schema::SchemaValidator::apply_defaults(*schema, value);
+        star::schema::SchemaValidator::validate(*schema, *value);
         const auto bytes = star::schema::BinaryCodec::encode(*schema, *value);
         *value = star::schema::BinaryCodec::decode(*schema, std::span<const uint8_t>(bytes.data(), bytes.size()));
     }
@@ -218,15 +220,19 @@ class ConfigComponent : public star::runtime::Component {
         return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     }
 
-    void publish_snapshot() {
+    void write_snapshot() {
         if (not writer_ || not snapshot_) {
             return;
         }
-        star::transport::MessageView view;
-        view.data = star::base::TypedConstPtr::from(snapshot_);
+        auto view = star::transport::MessageView{};
+        view.payload = star::base::TypedConstPtr::from(snapshot_);
         view.schema_type_id = default_snapshot_schema_type_id();
-        view.encode_binary = [snapshot = snapshot_]() { return snapshot->encode_binary(); };
-        writer_->write(view);
+        auto serializer = star::transport::MessageSerializer{};
+        serializer.encode_binary = [snapshot = snapshot_]() { return snapshot->encode_binary(); };
+        const auto r = writer_->write_serialized(star::transport::SerializedMessage{view, serializer});
+        if (!r.ok()) {
+            throw star::excep::RuntimeError("ConfigComponent write_snapshot failed: status=", star::transport::write_status_string(r.status), ", err=", r.error_message);
+        }
     }
 
     std::shared_ptr<const star::generated::setting::config::snapshot::ConfigSnapshot> snapshot_;

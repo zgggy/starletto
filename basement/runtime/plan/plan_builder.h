@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
+#include "basement/core/exception.h"
 #include "basement/schema/builtin/manifest/component.s.h"
 #include "basement/schema/builtin/manifest/module.s.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
@@ -34,6 +36,25 @@ struct LoadContext {
     std::filesystem::path module_config_dir;
     std::string module_name;
 };
+
+inline auto resolve_port_type_name(
+    const std::string& scope,
+    const std::string& port_name,
+    const star::generated::manifest::component::Port& port) -> std::optional<std::string> {
+    const auto type = port.type.has_value() && !port.type->empty() ? port.type : std::optional<std::string>{};
+    const auto msg_type = port.msg_type.has_value() && !port.msg_type->empty() ? port.msg_type : std::optional<std::string>{};
+    if (type.has_value() && msg_type.has_value() && *type != *msg_type) {
+        throw star::excep::RuntimeError(
+            "Port type conflict: scope=", scope,
+            ", name=", port_name,
+            ", type=", *type,
+            ", msg_type=", *msg_type);
+    }
+    if (msg_type.has_value()) {
+        return msg_type;
+    }
+    return type;
+}
 
 inline auto build_component_load_plan(const ComponentConf& conf, const LoadContext& ctx) -> ComponentLoadPlan {
     auto plan = ComponentLoadPlan{};
@@ -102,10 +123,8 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             auto item = PortPlan{};
             item.name = name;
             item.channel = port.channel;
-            if (port.type.has_value()) {
-                item.type_name = *port.type;
-            } else if (port.msg_type.has_value()) {
-                item.type_name = *port.msg_type;
+            if (const auto type_name = resolve_port_type_name("readers", name, port)) {
+                item.type_name = *type_name;
             }
             if (port.pending_queue_size.has_value()) {
                 item.qos_depth = *port.pending_queue_size;
@@ -128,10 +147,8 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             auto item = PortPlan{};
             item.name = name;
             item.channel = port.channel;
-            if (port.msg_type.has_value()) {
-                item.type_name = *port.msg_type;
-            } else if (port.type.has_value()) {
-                item.type_name = *port.type;
+            if (const auto type_name = resolve_port_type_name("writers", name, port)) {
+                item.type_name = *type_name;
             }
             if (port.record.has_value()) {
                 item.record = *port.record;
@@ -157,10 +174,8 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             auto item = star::generated::runtime::component_load_plan::ServicePortPlan{};
             item.name = name;
             item.channel = port.channel;
-            if (port.type.has_value()) {
-                item.request_type_name = *port.type;
-            } else if (port.msg_type.has_value()) {
-                item.request_type_name = *port.msg_type;
+            if (const auto type_name = resolve_port_type_name("commands", name, port)) {
+                item.request_type_name = *type_name;
             }
             if (port.ack_type.has_value()) {
                 item.response_type_name = *port.ack_type;
@@ -168,6 +183,49 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             services.emplace_back(std::move(item));
         }
         plan.services = std::move(services);
+    }
+
+    if (plan.module_name.empty()) {
+        throw star::excep::RuntimeError("build_component_load_plan failed, empty module_name: component=", plan.component_name);
+    }
+    if (plan.component_name.empty()) {
+        throw star::excep::RuntimeError("build_component_load_plan failed, empty component_name");
+    }
+    if (plan.component_class.empty()) {
+        throw star::excep::RuntimeError("build_component_load_plan failed, empty component_class: component=", plan.component_name);
+    }
+    if (plan.trigger.has_value() && plan.trigger->cycle_ms.has_value() && plan.trigger->cycle_ms.value_or(0) < 0) {
+        throw star::excep::RuntimeError("build_component_load_plan failed, negative trigger.cycle_ms: component=", plan.component_name);
+    }
+    for (const auto& port : plan.inputs.value_or(std::vector<PortPlan>{})) {
+        if (port.name.empty()) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, empty input port name: component=", plan.component_name);
+        }
+        if (!port.channel.has_value() || port.channel->empty()) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, empty input channel: component=", plan.component_name, ", port=", port.name);
+        }
+        if (port.qos_depth.has_value() && port.qos_depth.value_or(0) < 0) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, negative input qos_depth: component=", plan.component_name, ", port=", port.name);
+        }
+    }
+    for (const auto& port : plan.outputs.value_or(std::vector<PortPlan>{})) {
+        if (port.name.empty()) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, empty output port name: component=", plan.component_name);
+        }
+        if (!port.channel.has_value() || port.channel->empty()) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, empty output channel: component=", plan.component_name, ", port=", port.name);
+        }
+        if (port.qos_depth.has_value() && port.qos_depth.value_or(0) < 0) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, negative output qos_depth: component=", plan.component_name, ", port=", port.name);
+        }
+    }
+    for (const auto& svc : plan.services.value_or(std::vector<star::generated::runtime::component_load_plan::ServicePortPlan>{})) {
+        if (svc.name.empty()) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, empty service port name: component=", plan.component_name);
+        }
+        if (!svc.channel.has_value() || svc.channel->empty()) {
+            throw star::excep::RuntimeError("build_component_load_plan failed, empty service channel: component=", plan.component_name, ", port=", svc.name);
+        }
     }
 
     return plan;

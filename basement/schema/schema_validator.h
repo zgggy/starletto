@@ -10,11 +10,22 @@ namespace star::schema {
 
 class SchemaValidator {
 public:
-    static void validate(const SchemaDescriptor& schema, star::schema::SchemaValue* value) {
+    static void validate(const SchemaDescriptor& schema, const star::schema::SchemaValue& value) {
+        validate_object_fields(schema.root_name, schema.fields, schema.allow_unknown_fields, value);
+    }
+
+    static void validate(const SchemaDescriptor& schema, const star::schema::SchemaValue* value) {
         if (value == nullptr) {
             throw star::excep::RuntimeError("SchemaValidator validate failed, value is null");
         }
-        validate_object_fields(schema.root_name, schema.fields, schema.allow_unknown_fields, value);
+        validate(schema, *value);
+    }
+
+    static void apply_defaults(const SchemaDescriptor& schema, star::schema::SchemaValue* value) {
+        if (value == nullptr) {
+            throw star::excep::RuntimeError("SchemaValidator apply_defaults failed, value is null");
+        }
+        apply_object_defaults(schema.root_name, schema.fields, value);
     }
 
 private:
@@ -22,21 +33,18 @@ private:
         const std::string& path,
         const std::vector<FieldDescriptor>& fields,
         bool allow_unknown_fields,
-        star::schema::SchemaValue* value) {
-        auto* obj = ensure_object(path, value);
+        const star::schema::SchemaValue& value) {
+        const auto* obj = ensure_object(path, value);
         for (const auto& field : fields) {
             auto it = obj->find(field.name);
             if (it == obj->end()) {
-                if (field.has_default) {
-                    obj->emplace(field.name, field.default_value);
-                    it = obj->find(field.name);
-                } else if (field.optional) {
+                if (field.optional || (field.has_default && !field.explicit_required)) {
                     continue;
                 } else {
                     throw star::excep::RuntimeError("SchemaValidator missing required field: ", join_path(path, field.name));
                 }
             }
-            validate_field(join_path(path, field.name), field, &it->second);
+            validate_field(join_path(path, field.name), field, it->second);
         }
         if (allow_unknown_fields) {
             return;
@@ -48,32 +56,63 @@ private:
         }
     }
 
-    static void validate_field(const std::string& path, const FieldDescriptor& field, star::schema::SchemaValue* value) {
+    static void apply_object_defaults(const std::string& path, const std::vector<FieldDescriptor>& fields, star::schema::SchemaValue* value) {
+        auto* obj = ensure_object(path, value);
+        for (const auto& field : fields) {
+            auto it = obj->find(field.name);
+            if (it == obj->end()) {
+                if (field.has_default && !field.explicit_required) {
+                    obj->emplace(field.name, field.default_value);
+                    it = obj->find(field.name);
+                } else {
+                    continue;
+                }
+            }
+            apply_field_defaults(join_path(path, field.name), field, &it->second);
+        }
+    }
+
+    static void apply_field_defaults(const std::string& path, const FieldDescriptor& field, star::schema::SchemaValue* value) {
+        if (value == nullptr) {
+            throw star::excep::RuntimeError("SchemaValidator apply_defaults failed, value is null at: ", path);
+        }
         if (field.repeated) {
             auto* arr = ensure_array(path, value);
             for (size_t i = 0; i < arr->size(); ++i) {
                 auto item_field = field;
                 item_field.repeated = false;
-                validate_field(path + "[" + std::to_string(i) + "]", item_field, &(*arr)[i]);
+                apply_field_defaults(path + "[" + std::to_string(i) + "]", item_field, &(*arr)[i]);
+            }
+            return;
+        }
+        if (field.kind == FieldKind::OBJECT && !field.has_value_kind) {
+            apply_object_defaults(path, field.children, value);
+        }
+    }
+
+    static void validate_field(const std::string& path, const FieldDescriptor& field, const star::schema::SchemaValue& value) {
+        if (field.repeated) {
+            const auto* arr = ensure_array(path, value);
+            for (size_t i = 0; i < arr->size(); ++i) {
+                auto item_field = field;
+                item_field.repeated = false;
+                validate_field(path + "[" + std::to_string(i) + "]", item_field, (*arr)[i]);
             }
             return;
         }
 
         switch (field.kind) {
         case FieldKind::BOOL:
-            ensure_bool(path, *value);
+            ensure_bool(path, value);
             return;
         case FieldKind::INT64:
-            ensure_int64(path, *value);
+            ensure_int64(path, value);
             return;
         case FieldKind::FLOAT64:
-            ensure_float64(path, *value);
+            ensure_float64(path, value);
             return;
         case FieldKind::STRING:
-            ensure_string(path, *value);
-            return;
-        case FieldKind::ARRAY:
-            ensure_array(path, value);
+            ensure_string(path, value);
             return;
         case FieldKind::OBJECT:
             if (field.has_value_kind) {
@@ -85,14 +124,14 @@ private:
         }
     }
 
-    static void validate_object_values(const std::string& path, const FieldDescriptor& field, star::schema::SchemaValue* value) {
-        auto* obj = ensure_object(path, value);
+    static void validate_object_values(const std::string& path, const FieldDescriptor& field, const star::schema::SchemaValue& value) {
+        const auto* obj = ensure_object(path, value);
         auto value_field = FieldDescriptor{};
         value_field.kind = field.value_kind;
         value_field.type_name = field.value_type_name;
         value_field.children = field.value_children;
         for (auto& [key, child] : *obj) {
-            validate_field(join_path(path, key), value_field, &child);
+            validate_field(join_path(path, key), value_field, child);
         }
     }
 
@@ -112,11 +151,25 @@ private:
         return &value->as_object();
     }
 
+    static auto ensure_object(const std::string& path, const star::schema::SchemaValue& value) -> const star::schema::SchemaObject* {
+        if (not value.is_object()) {
+            throw star::excep::RuntimeError("SchemaValidator type mismatch, expect object at: ", path);
+        }
+        return &value.as_object();
+    }
+
     static auto ensure_array(const std::string& path, star::schema::SchemaValue* value) -> star::schema::SchemaArray* {
         if (value == nullptr || not value->is_array()) {
             throw star::excep::RuntimeError("SchemaValidator type mismatch, expect array at: ", path);
         }
         return &value->as_array();
+    }
+
+    static auto ensure_array(const std::string& path, const star::schema::SchemaValue& value) -> const star::schema::SchemaArray* {
+        if (not value.is_array()) {
+            throw star::excep::RuntimeError("SchemaValidator type mismatch, expect array at: ", path);
+        }
+        return &value.as_array();
     }
 
     static void ensure_bool(const std::string& path, const star::schema::SchemaValue& value) {

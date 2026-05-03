@@ -1,114 +1,19 @@
-#ifndef ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_CONFIG_SENSOR_S_H__
-#define ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_CONFIG_SENSOR_S_H__
+#ifndef __SENSOR_SENSOR__
+#define __SENSOR_SENSOR__
 
-#include "basement/schema/binary_codec.h"
-#include "basement/schema/schema_ast.h"
+#include "basement/schema/schema_codec_helpers.h"
 #include "basement/schema/schema_registry.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/common/fixed_layout_codec.h"
 
-#include <concepts>
 #include <cstring>
-#include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
-#include <string>
-#include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace star::setting::config::sensor {
 
-template <typename _ValueType>
-concept SchemaStructType = requires(const star::schema::SchemaValue& value, const _ValueType& item) {
-    { _ValueType::from_value(value) } -> std::same_as<_ValueType>;
-    { item.to_value() } -> std::same_as<star::schema::SchemaValue>;
-};
-
-template <typename _ValueType>
-struct IsStdVector : std::false_type {
-};
-
-template <typename _ItemType, typename _Allocator>
-struct IsStdVector<std::vector<_ItemType, _Allocator>> : std::true_type {
-    using Item = _ItemType;
-};
-
-template <typename _ValueType>
-struct IsStdMap : std::false_type {
-};
-
-template <typename _MappedType, typename _Compare, typename _Allocator>
-struct IsStdMap<std::map<std::string, _MappedType, _Compare, _Allocator>> : std::true_type {
-    using Item = _MappedType;
-};
-
-template <typename _ValueType>
-auto schema_read(const star::schema::SchemaValue& value) -> _ValueType {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        using _Item = typename IsStdVector<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& arr = value.as_array();
-        out.reserve(arr.size());
-        for (const auto& item : arr) {
-            out.emplace_back(schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        using _Item = typename IsStdMap<_ValueType>::Item;
-        auto out = _ValueType{};
-        const auto& obj = value.as_object();
-        for (const auto& [key, item] : obj) {
-            out.emplace(key, schema_read<_Item>(item));
-        }
-        return out;
-    } else if constexpr (std::is_same_v<_ValueType, std::string>) {
-        return value.as<std::string>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, bool>) {
-        return value.as<bool>();
-    } else if constexpr (std::is_same_v<_ValueType, int64_t>) {
-        return value.as<int64_t>();
-    } else if constexpr (std::is_same_v<_ValueType, double>) {
-        return value.as<double>();
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return value.as_object();
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return _ValueType::from_value(value);
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_read type");
-    }
-}
-
-template <typename _ValueType>
-auto schema_write(const _ValueType& value) -> star::schema::SchemaValue {
-    if constexpr (IsStdVector<_ValueType>::value) {
-        auto out = star::schema::SchemaArray{};
-        out.reserve(value.size());
-        for (const auto& item : value) {
-            out.emplace_back(schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (IsStdMap<_ValueType>::value) {
-        auto out = star::schema::SchemaObject{};
-        for (const auto& [key, item] : value) {
-            out.emplace(key, schema_write(item));
-        }
-        return star::schema::SchemaValue(std::move(out));
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaValue>) {
-        return value;
-    } else if constexpr (std::is_same_v<_ValueType, std::string> || std::is_same_v<_ValueType, bool> ||
-                  std::is_same_v<_ValueType, int64_t> || std::is_same_v<_ValueType, double>) {
-        return star::schema::schema_value_from(value);
-    } else if constexpr (std::is_same_v<_ValueType, star::schema::SchemaObject>) {
-        return star::schema::SchemaValue(value);
-    } else if constexpr (SchemaStructType<_ValueType>) {
-        return value.to_value();
-    } else {
-        static_assert(std::is_same_v<_ValueType, void>, "unsupported schema_write type");
-    }
-}
+using star::schema::schema_read;
+using star::schema::schema_write;
 
 inline auto _schema_type_id() -> star::schema::SchemaTypeId {
     auto out = star::schema::SchemaTypeId{};
@@ -127,6 +32,7 @@ inline auto _build_fields_Sensor() -> std::vector<star::schema::FieldDescriptor>
         field.kind = star::schema::FieldKind::STRING;
         field.type_name = "string";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -137,6 +43,7 @@ inline auto _build_fields_Sensor() -> std::vector<star::schema::FieldDescriptor>
         field.kind = star::schema::FieldKind::BOOL;
         field.type_name = "bool";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         out.emplace_back(std::move(field));
     }
@@ -152,6 +59,7 @@ inline auto _build_fields_SensorConfig() -> std::vector<star::schema::FieldDescr
         field.kind = star::schema::FieldKind::OBJECT;
         field.type_name = "Sensor";
         field.optional = false;
+        field.explicit_required = false;
         field.repeated = false;
         field.children = _build_fields_Sensor();
         out.emplace_back(std::move(field));
@@ -168,6 +76,8 @@ inline auto _schema_descriptor() -> star::schema::SchemaDescriptor {
     out.fields = _build_fields_SensorConfig();
     return out;
 }
+
+struct SensorBuilder;
 
 struct Sensor {
     static constexpr uint32_t kFieldId_primary_lidar = 1;
@@ -201,32 +111,97 @@ struct Sensor {
         obj.emplace("enable_camera_fusion", schema_write(enable_camera_fusion));
         return star::schema::SchemaValue(std::move(obj));
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> Sensor;
 };
 
 struct SensorView {
-    Sensor value{};
+    static constexpr size_t kFieldCount = 2;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> SensorView {
-        return SensorView{Sensor::from_value(value)};
-    }
+    SensorView() = default;
+    explicit SensorView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit SensorView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
+
+    static constexpr size_t kSlotIndex_primary_lidar = 0;
+    static constexpr size_t kSlotIndex_enable_camera_fusion = 1;
 
     auto Has_primary_lidar() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto primary_lidar() const -> const std::string& {
-        return value.primary_lidar;
+    auto primary_lidar() const -> std::string_view {
+        auto v = view_.get_string(0);
+        return v.has_value() ? *v : std::string_view{};
     }
 
     auto Has_enable_camera_fusion() const -> bool {
-        return true;
+        return not view_.is_null(1);
     }
 
-    auto enable_camera_fusion() const -> const bool& {
-        return value.enable_camera_fusion;
+    auto enable_camera_fusion() const -> bool {
+        auto v = view_.get_bool(1);
+        return v.has_value() ? *v : false;
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
+
+struct SensorBuilder {
+    static constexpr size_t kFieldCount = 2;
+
+    SensorBuilder() : writer_(2) {}
+
+    void set_primary_lidar(std::string_view value) { writer_.set_string(0, value); }
+    void set_enable_camera_fusion(bool value) { writer_.set_bool(1, value); }
+
+    auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
+        return writer_.serialize_into(buf, cap);
+    }
+
+    auto EncodeTo(std::span<uint8_t> out) const -> size_t {
+        return EncodeTo(out.data(), out.size());
+    }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
+};
+
+inline auto Sensor::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = SensorBuilder();
+    builder.set_primary_lidar(primary_lidar);
+    builder.set_enable_camera_fusion(enable_camera_fusion);
+    return builder.Serialize();
+}
+
+inline auto Sensor::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = SensorBuilder();
+    builder.set_primary_lidar(primary_lidar);
+    builder.set_enable_camera_fusion(enable_camera_fusion);
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto Sensor::from_fixed_layout(std::span<const uint8_t> data) -> Sensor {
+    auto view = SensorView(data.data(), data.size());
+    auto out = Sensor();
+    out.primary_lidar = view.primary_lidar();
+    out.enable_camera_fusion = view.enable_camera_fusion();
+    return out;
+}
+
+struct SensorConfigBuilder;
 
 struct SensorConfig {
     static constexpr uint32_t kFieldId_sensor = 1;
@@ -284,68 +259,88 @@ struct SensorConfig {
     void set_unknown_fields(star::schema::UnknownFieldSet unknown_fields) {
         unknown_fields_ = std::move(unknown_fields);
     }
+
+    auto encode_fixed_layout() const -> std::vector<uint8_t>;
+
+    auto encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t;
+
+    static auto from_fixed_layout(std::span<const uint8_t> data) -> SensorConfig;
 };
 
 struct SensorConfigView {
-    SensorConfig value{};
+    static constexpr size_t kFieldCount = 1;
 
-    static auto FromValue(const star::schema::SchemaValue& value) -> SensorConfigView {
-        return SensorConfigView{SensorConfig::from_value(value)};
-    }
+    SensorConfigView() = default;
+    explicit SensorConfigView(const uint8_t* data, size_t size) : view_(data, size) {}
+    explicit SensorConfigView(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {}
+
+    auto valid() const -> bool { return view_.valid(); }
 
     static auto FromBinary(std::span<const uint8_t> bytes) -> SensorConfigView {
-        return SensorConfigView{SensorConfig::from_binary(bytes)};
+        return SensorConfigView(bytes);
     }
 
-    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {
-        return value.unknown_fields();
-    }
+    static constexpr size_t kSlotIndex_sensor = 0;
 
     auto Has_sensor() const -> bool {
-        return true;
+        return not view_.is_null(0);
     }
 
-    auto sensor() const -> const Sensor& {
-        return value.sensor;
+    auto sensor_bytes() const -> std::span<const uint8_t> {
+        auto v = view_.get_object_bytes(0);
+        return v.has_value() ? *v : std::span<const uint8_t>{};
     }
 
+    auto raw_view() const -> const star::transport::FixedLayoutView& { return view_; }
+
+  private:
+    star::transport::FixedLayoutView view_;
 };
 
 struct SensorConfigBuilder {
-    SensorConfig value{};
-    star::schema::UnknownFieldSet unknown_fields{};
+    static constexpr size_t kFieldCount = 1;
 
-    static auto FromValue(const SensorConfig& value) -> SensorConfigBuilder {
-        return SensorConfigBuilder{value, value.unknown_fields()};
-    }
+    SensorConfigBuilder() : writer_(1) {}
 
-    void set_unknown_fields(star::schema::UnknownFieldSet value_in) {
-        unknown_fields = std::move(value_in);
-    }
+    void set_sensor_bytes(std::span<const uint8_t> value) { writer_.set_object(0, value); }
 
     auto EncodeTo(uint8_t* buf, size_t cap) const -> size_t {
-        if (buf == nullptr) {
-            return 0;
-        }
-        auto tmp = value;
-        tmp.set_unknown_fields(unknown_fields);
-        const auto bytes = tmp.encode_binary();
-        if (bytes.size() > cap) {
-            return 0;
-        }
-        if (not bytes.empty()) {
-            std::memcpy(buf, bytes.data(), bytes.size());
-        }
-        return bytes.size();
+        return writer_.serialize_into(buf, cap);
     }
 
     auto EncodeTo(std::span<uint8_t> out) const -> size_t {
         return EncodeTo(out.data(), out.size());
     }
+
+    auto Serialize() const -> std::vector<uint8_t> {
+        return writer_.serialize();
+    }
+
+  private:
+    star::transport::FixedLayoutWriter writer_;
 };
+
+inline auto SensorConfig::encode_fixed_layout() const -> std::vector<uint8_t> {
+    auto builder = SensorConfigBuilder();
+    { auto bytes = sensor.encode_fixed_layout(); builder.set_sensor_bytes(bytes); }
+    return builder.Serialize();
+}
+
+inline auto SensorConfig::encode_fixed_layout_into(uint8_t* buf, size_t cap) const -> size_t {
+    auto builder = SensorConfigBuilder();
+    { auto bytes = sensor.encode_fixed_layout(); builder.set_sensor_bytes(bytes); }
+    return builder.EncodeTo(buf, cap);
+}
+
+inline auto SensorConfig::from_fixed_layout(std::span<const uint8_t> data) -> SensorConfig {
+    auto view = SensorConfigView(data.data(), data.size());
+    auto out = SensorConfig();
+    { auto bytes = view.sensor_bytes(); out.sensor = Sensor::from_fixed_layout(bytes); }
+    return out;
+}
 
 using SensorConfigSchema = SensorConfig;
 
 }  // namespace star::setting::config::sensor
 
-#endif // ___HOME_ZGY_PROJECTS_STARLETTO_MODULES_SETTING_SCHEMA_CONFIG_SENSOR_S_H__
+#endif // __SENSOR_SENSOR__

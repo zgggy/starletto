@@ -19,14 +19,15 @@
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/common/channel_stats.h"
+#include "basement/transport/common/qos_manager.h"
 #include "basement/transport/record/message_recorder.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/transport/shm/shm_views.h"
 
 namespace star::transport {
 
-class NativeMessageBus final : public MessageBus, public std::enable_shared_from_this<NativeMessageBus> {
+class NativeMessageBus final : public MessageBus, public RecordableBus, public std::enable_shared_from_this<NativeMessageBus> {
     friend class NativeWriter;
-    friend class InprocAckWriter;
+    friend class InprocSyncWriter;
     friend class NativeReader;
 
   public:
@@ -61,14 +62,14 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
     }
 
     auto create_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<Writer> override;
-    auto create_ack_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<AckWriter> override;
+    auto create_delivery_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<DeliveryWriter> override;
     auto create_reader(const ChannelDescriptor& descriptor, Reader::Callback callback) -> std::shared_ptr<Reader> override;
 
     auto dump_stats_lines() const -> std::vector<std::string> override {
         auto out = std::vector<std::string>{};
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [channel_name, channel] : channels_) {
-            if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
+            if (channel.stats.write_count == 0 && channel.stats.deliver_count == 0) {
                 continue;
             }
             out.emplace_back(format_stats_line("native", channel_name, channel.stats));
@@ -82,7 +83,7 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         if (it == channels_.end()) {
             return std::nullopt;
         }
-        if (it->second.stats.publish_count == 0 && it->second.stats.deliver_count == 0) {
+        if (it->second.stats.write_count == 0 && it->second.stats.deliver_count == 0) {
             return std::nullopt;
         }
         return make_stats_snapshot(channel_name, it->second.stats);
@@ -92,7 +93,7 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         auto out = std::vector<ChannelStatsSnapshot>{};
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& [channel_name, channel] : channels_) {
-            if (channel.stats.publish_count == 0 && channel.stats.deliver_count == 0) {
+            if (channel.stats.write_count == 0 && channel.stats.deliver_count == 0) {
                 continue;
             }
             out.push_back(make_stats_snapshot(channel_name, channel.stats));
@@ -105,14 +106,14 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         if (recorder_) {
             return;
         }
-        recorder_ = std::make_unique<MessageRecorder>(file_path);
+        recorder_ = std::make_shared<MessageRecorder>(file_path);
         recorder_->open();
         for (const auto& channel : record_channels_) {
             recorder_->add_channel(channel);
         }
     }
 
-    void disable_recorder() {
+    void disable_recorder() override {
         std::lock_guard<std::mutex> lock(mutex_);
         recorder_.reset();
     }
@@ -123,6 +124,11 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         if (recorder_) {
             recorder_->add_channel(channel);
         }
+    }
+
+    void disable_record_channel(const std::string& channel) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        record_channels_.erase(channel);
     }
 
     auto reader_history_size(const std::string& channel_name) const -> size_t {
@@ -138,7 +144,7 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         return total;
     }
 
-    auto peek_latest(const std::string& channel_name) const -> std::optional<MessageView> {
+    auto peek_latest(const std::string& channel_name) const -> std::optional<MessageView> override {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = channels_.find(channel_name);
         if (it == channels_.end()) {
@@ -173,8 +179,11 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         ChannelStats stats;
     };
 
-    void publish_internal(const std::string& channel_name, const MessageView& message) {
+    void write_internal(const std::string& channel_name, const MessageView& message, const MessageSerializer* serializer) {
         std::vector<std::pair<uint64_t, Reader::Callback>> reader_callbacks;
+        std::shared_ptr<MessageRecorder> recorder;
+        bool should_record = false;
+        std::string record_type_name;
         const auto dispatch_begin = std::chrono::steady_clock::now();
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -183,7 +192,7 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
                 return;
             }
             if (not it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty() and it->second.descriptor.schema_type_id != message.schema_type_id) {
-                throw star::excep::RuntimeError("NativeMessageBus publish failed, schema mismatch for channel: ", channel_name, ", existing=", it->second.descriptor.schema_type_id.name,
+                throw star::excep::RuntimeError("NativeMessageBus write failed, schema mismatch for channel: ", channel_name, ", existing=", it->second.descriptor.schema_type_id.name,
                                                 ", message=", message.schema_type_id.name);
             }
             const auto& options = it->second.descriptor.options;
@@ -191,42 +200,32 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
             for (const auto& [reader_id, cb] : it->second.readers) {
                 if (options.depth > 0) {
                     auto& history = it->second.reader_history[reader_id];
-                    if (options.drop_policy == DropPolicy::KEEP_LAST) {
-                        history.push_back(message);
-                        while (history.size() > options.depth) {
-                            history.pop_front();
-                            it->second.stats.record_drop(1);
-                        }
-                    } else {
-                        if (history.size() >= options.depth) {
-                            it->second.stats.record_drop(1);
-                        } else {
-                            history.push_back(message);
-                        }
+                    auto result = apply_qos(history, message, options, it->second.stats);
+                    if (not result.should_deliver) {
+                        continue;
                     }
-                    it->second.stats.update_queue_depth(history.size());
                 }
                 reader_callbacks.emplace_back(reader_id, cb);
             }
-            auto payload_size = estimate_payload_size(message);
-            it->second.stats.record_publish(payload_size);
+            auto payload_size = estimate_payload_size(message, serializer);
+            it->second.stats.record_write(payload_size);
             it->second.stats.record_deliver(reader_callbacks.size());
+
+            recorder = recorder_;
+            should_record = recorder != nullptr && (record_channels_.empty() || record_channels_.count(channel_name) > 0);
+            record_type_name = it->second.descriptor.type_name;
         }
 
         for (const auto& [_, cb] : reader_callbacks) {
             cb(message);
         }
-        if (recorder_ and should_record_channel_(channel_name)) {
-            auto now_ns = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-            std::string type_name;
-            {
-                auto it = channels_.find(channel_name);
-                if (it != channels_.end()) {
-                    type_name = it->second.descriptor.type_name;
-                }
-            }
-            auto payload = message.encode_binary ? message.encode_binary() : std::vector<uint8_t>{};
-            recorder_->record(channel_name, type_name, now_ns, payload);
+
+        if (should_record) {
+            const auto now_ns = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                                                         .count());
+            auto payload = encode_payload(serializer);
+            recorder->record(channel_name, record_type_name, now_ns, payload);
         }
         const auto latency_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - dispatch_begin).count());
         {
@@ -248,14 +247,23 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
         it->second.reader_history.erase(id);
     }
 
-    static auto estimate_payload_size(const MessageView& message) -> uint64_t {
-        if (message.encode_binary) {
-            return message.encode_binary().size();
+    static auto estimate_payload_size(const MessageView& message, const MessageSerializer* serializer) -> uint64_t {
+        if (serializer != nullptr) {
+            if (serializer->payload_size_hint > 0) {
+                return serializer->payload_size_hint;
+            }
         }
-        if (const auto conf = message.data.as<star::schema::SchemaValue>()) {
-            return star::schema::dump_schema_text(*conf).size();
+        if (const auto slot = message.payload.as<star::transport::ShmSlotView>()) {
+            return slot->size;
         }
         return 0;
+    }
+
+    static auto encode_payload(const MessageSerializer* serializer) -> std::vector<uint8_t> {
+        if (serializer == nullptr || !serializer->encode_binary) {
+            return {};
+        }
+        return serializer->encode_binary();
     }
 
     void maybe_register_writer(const std::string& channel) {
@@ -283,16 +291,9 @@ class NativeMessageBus final : public MessageBus, public std::enable_shared_from
     mutable std::mutex mutex_;
     std::shared_ptr<ChannelRegistry> channel_registry_;
     std::unordered_map<std::string, ChannelState> channels_;
-    std::atomic<uint64_t> next_sub_id_{1};
-    std::unique_ptr<MessageRecorder> recorder_;
+    std::atomic<uint64_t> next_reader_id_{1};
+    std::shared_ptr<MessageRecorder> recorder_;
     std::unordered_set<std::string> record_channels_;
-
-    auto should_record_channel_(const std::string& channel) const -> bool {
-        if (record_channels_.empty()) {
-            return true;
-        }
-        return record_channels_.count(channel) > 0;
-    }
 };
 
 #include "basement/transport/native/native_reader.h"
@@ -304,10 +305,10 @@ inline auto NativeMessageBus::create_writer(const ChannelDescriptor& descriptor)
     return std::make_shared<NativeWriter>(this->shared_from_this(), descriptor.name);
 }
 
-inline auto NativeMessageBus::create_ack_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<AckWriter> {
+inline auto NativeMessageBus::create_delivery_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<DeliveryWriter> {
     declare_channel(descriptor);
     maybe_register_writer(descriptor.name);
-    return std::make_shared<InprocAckWriter>(this->shared_from_this(), descriptor.name, descriptor.options.ack_timeout_ms);
+    return std::make_shared<InprocSyncWriter>(this->shared_from_this(), descriptor.name);
 }
 
 inline auto NativeMessageBus::create_reader(const ChannelDescriptor& descriptor, Reader::Callback callback) -> std::shared_ptr<Reader> {
@@ -317,7 +318,7 @@ inline auto NativeMessageBus::create_reader(const ChannelDescriptor& descriptor,
     declare_channel(descriptor);
     maybe_register_reader(descriptor.name);
 
-    const auto id = next_sub_id_.fetch_add(1, std::memory_order_relaxed);
+    const auto id = next_reader_id_.fetch_add(1, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto& channel = channels_[descriptor.name];

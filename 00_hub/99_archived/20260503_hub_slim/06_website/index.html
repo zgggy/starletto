@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="neondrive - 高性能自动驾驶系统框架 starletto">
-    <title>neondrive - starletto</title>
+    <meta name="description" content="starletto - 高性能自动驾驶系统框架">
+    <title>starletto</title>
     <link rel="stylesheet" href="css/style.css">
     <link rel="icon" type="image/svg+xml" href="images/favicon.svg">
 </head>
@@ -44,71 +44,17 @@
                 <a href="#documentation" class="read-more">查阅更多 ↓</a>
             </div>
 
-            <!-- Center Column: Stats -->
+            <!-- Center Column: Content -->
             <div class="section-center">
-                <h2 class="section-title">统计数据</h2>
-                <div class="stats-list">
-                    <div class="stat-item">
-                        <span class="stat-label">GitHub 星标</span>
-                        <span class="stat-value">12,543</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">GitHub 订阅</span>
-                        <span class="stat-value">3,241</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">完成度</span>
-                        <span class="stat-value">85%</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">模块数量</span>
-                        <span class="stat-value">24</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">贡献者</span>
-                        <span class="stat-value">156</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">支持车型</span>
-                        <span class="stat-value">18</span>
-                    </div>
-                </div>
-
-                <div class="feature-highlights">
-                    <h3 class="feature-title">核心特性</h3>
-                    <div class="feature-list">
-                        <div class="feature-item">
-                            <div class="feature-icon">⚡</div>
-                            <div class="feature-text">高性能 C++ 架构</div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-icon">🔄</div>
-                            <div class="feature-text">零拷贝数据传输</div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-icon">🧩</div>
-                            <div class="feature-text">模块化设计</div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-icon">🤖</div>
-                            <div class="feature-text">AI 驱动决策</div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
             <!-- Right Column: Simulation Only -->
             <div class="section-right">
                 <div class="section-right-top">
-                    <canvas class="simulation-canvas" id="simulationCanvas" width="600" height="200"></canvas>
+                    <canvas class="simulation-canvas" id="simulationCanvas" width="400" height="200"></canvas>
                 </div>
                 <div class="section-right-bottom">
-                    <h3 class="section-right-bottom-title">路径规划</h3>
-                    <p class="section-right-bottom-text">
-                        基于动态规划的路径生成算法，
-                        考虑障碍物和道路边界，
-                        生成平滑、安全的行驶路径。
-                    </p>
+                    <canvas class="simulation-canvas" id="clusteringCanvas" width="400" height="200"></canvas>
                 </div>
             </div>
         </section>
@@ -406,7 +352,7 @@
     <footer class="footer">
         <div class="footer-content">
             <div class="footer-left">
-                <span class="footer-logo" id="company-logo">NEONDRIVE</span>
+                <span class="footer-logo" id="company-logo">STARLETTO</span>
                 <span class="footer-separator">|</span>
                 <span class="footer-logo">STARLETTO</span>
             </div>
@@ -435,7 +381,12 @@
     </div>
 
     <!-- JavaScript -->
+    <script src="js/resource_loader.js"></script>
+    <script src="js/performance_monitor.js"></script>
+    <script src="js/renderer.js"></script>
+    <script src="js/cache_manager.js"></script>
+    <script src="js/modal_content.js"></script>
     <script src="js/main.js"></script>
-    <script src="js/path_planner.js"></script>
 </body>
+
 </html>
