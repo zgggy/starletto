@@ -37,18 +37,23 @@ class SyncTrigger final : public Trigger {
     }
 
     void on_message(const std::string& channel) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (required_channels_.find(channel) == required_channels_.end()) {
-            return;
-        }
-        arrived_.insert(channel);
-        if (arrived_.size() >= required_channels_.size()) {
-            ++frame_id_;
-            const auto fid = frame_id_;
-            arrived_.clear();
-            if (callback_) {
-                callback_(fid);
+        auto fired_frame_id = int64_t{0};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (required_channels_.find(channel) == required_channels_.end()) {
+                return;
             }
+            arrived_.insert(channel);
+            if (arrived_.size() < required_channels_.size()) {
+                return;
+            }
+            ++frame_id_;
+            fired_frame_id = frame_id_;
+            arrived_.clear();
+        }
+        // 回调必须在锁外派发：回调若重入 on_message()/frame_id() 会与本锁互斥而死锁
+        if (callback_) {
+            callback_(fired_frame_id);
         }
     }
 

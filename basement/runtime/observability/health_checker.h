@@ -129,8 +129,10 @@ class HealthChecker {
 
         const auto all_stats = bus_->all_channel_stats();
         auto stats_map = build_stats_map(all_stats);
-        for (const auto& rule : channel_rules_) {
-            auto ts = check_channel_rule(rule, stats_map);
+        // 评估组件自己的 channel_rule：ComponentHealthRule 承诺按组件配置通道健康，
+        // 此前却遍历全局 channel_rules_，导致 per-component 规则被静默忽略
+        if (comp_it != component_rules_.end()) {
+            auto ts = check_channel_rule(comp_it->second.channel_rule, stats_map);
             report.channel_statuses.push_back(std::move(ts));
             if (!report.channel_statuses.back().healthy) {
                 report.overall_healthy = false;

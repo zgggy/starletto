@@ -53,7 +53,7 @@ class NativeRuntimeContext final : public RuntimeContext {
     auto logger() -> star::base::Logger& override { return *logger_; }
     auto current_frame() const -> const FrameContext& override { return frame_; }
 
-    void set_current_frame(const FrameContext& frame) { frame_ = frame; }
+    void set_current_frame(const FrameContext& frame) override { frame_ = frame; }
 
   private:
     std::shared_ptr<star::transport::ChannelRegistry> channel_registry_;

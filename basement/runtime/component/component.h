@@ -159,19 +159,8 @@ class Component {
         return std::nullopt;
     }
 
-    template <typename _Msg>
-    auto read_history(const std::string& port_name, size_t max_count = 1) -> std::vector<std::shared_ptr<const _Msg>> {
-        auto channel = resolve_channel(port_name, true);
-        auto out = std::vector<std::shared_ptr<const _Msg>>{};
-        auto latest = context_->message_bus().peek_latest(channel);
-        if (not latest.has_value()) {
-            return out;
-        }
-        if (auto typed = decode_message_shared<_Msg>(*latest)) {
-            out.push_back(typed);
-        }
-        return out;
-    }
+    // 注：原 read_history(port_name, max_count) 已移除——它忽略 max_count 只返回最新一条，
+    // 语义与签名不符；真正的历史读取需要 MessageBus 提供按序号回溯的接口后再实现。
 
     template <typename _Msg>
     void declare_reader(const std::string& name, std::function<void(std::shared_ptr<const _Msg>)> callback) {
@@ -207,22 +196,22 @@ class Component {
             auto future = it->second->write_serialized_with_delivery(serialized, timeout_ms);
             return future.get();
         }
-        write(name, msg);
-        return {true, "fallback (no delivery writer)", 0};
+        const auto result = write(name, msg);
+        return {result.ok(), result.ok() ? "fallback (no delivery writer)" : result.error_message, 0};
     }
 
+    // 错误处理约定：**运行时状况**（transport 失败、编码失败、SHM 降级）以 WriteResult
+    // 状态码返回，由调用方决定重试/降级/丢弃；**编程错误**（端口未声明、类型不符）
+    // 属于装配缺陷，仍走异常。二者不可混用——把状态码再抛成异常会让调用方无法
+    // 用统一方式判断成败，最终又被调度层降级为日志。
     template <typename _Msg>
-    void write(const std::string& name, const _Msg& msg) {
+    auto write(const std::string& name, const _Msg& msg) -> star::transport::WriteResult {
         auto it = writers_.find(name);
         if (it == writers_.end() || not it->second) {
             throw star::excep::RuntimeError("Component write failed, writer not declared: ", name);
         }
         auto msg_ptr = std::make_shared<const _Msg>(msg);
-        const auto result = it->second->write_serialized(make_serialized_message(msg_ptr));
-        if (!result.ok()) {
-            throw star::excep::RuntimeError("Component write failed: name=", name, ", status=", star::transport::write_status_string(result.status),
-                                            ", err=", result.error_message);
-        }
+        return it->second->write_serialized(make_serialized_message(msg_ptr));
     }
 
     template <typename _Msg>
@@ -231,8 +220,8 @@ class Component {
     }
 
     template <typename _Msg>
-    void write_channel(const std::string& name, const _Msg& msg) {
-        write(name, msg);
+    auto write_channel(const std::string& name, const _Msg& msg) -> star::transport::WriteResult {
+        return write(name, msg);
     }
 
     template <typename _Req, typename _Res>
@@ -356,7 +345,12 @@ class Component {
         try {
             const auto& bytes = *it->second.payload_binary;
             return _Target::from_binary(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()));
+        } catch (const std::exception& ex) {
+            // 解码失败必须可见：否则与「无消息」不可区分，线上无从定位损坏数据
+            logE << "decode_snapshot_entry failed: key=" << key << ", schema=" << expected_schema << ", error=" << ex.what();
+            return std::nullopt;
         } catch (...) {
+            logE << "decode_snapshot_entry failed: key=" << key << ", schema=" << expected_schema << ", error=unknown";
             return std::nullopt;
         }
     }
@@ -377,9 +371,18 @@ class Component {
         if constexpr (has_from_binary<_Msg>::value) {
             if (const auto slot = msg.payload.as<star::transport::ShmSlotView>()) {
                 if (slot->size > 0) {
+                    // 槽位可能在投递后、解码前被写方覆写（4 槽环形缓冲），复核代际
+                    if (not slot->stable()) {
+                        logE << "decode_message skipped: channel=" << msg.schema_type_id.name << ", source=shm_slot, reason=slot overwritten before decode";
+                        return nullptr;
+                    }
                     try {
                         return std::make_shared<_Msg>(_Msg::from_binary(slot->bytes()));
+                    } catch (const std::exception& ex) {
+                        logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=shm_slot, size=" << slot->size << ", error=" << ex.what();
+                        return nullptr;
                     } catch (...) {
+                        logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=shm_slot, size=" << slot->size << ", error=unknown";
                         return nullptr;
                     }
                 }
@@ -388,7 +391,11 @@ class Component {
                 if (binary->size > 0) {
                     try {
                         return std::make_shared<_Msg>(_Msg::from_binary(binary->bytes()));
+                    } catch (const std::exception& ex) {
+                        logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=binary, size=" << binary->size << ", error=" << ex.what();
+                        return nullptr;
                     } catch (...) {
+                        logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=binary, size=" << binary->size << ", error=unknown";
                         return nullptr;
                     }
                 }

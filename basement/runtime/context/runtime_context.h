@@ -8,7 +8,7 @@ class Logger;
 }
 namespace star::runtime {
 class Scheduler;
-class FrameContext;
+struct FrameContext;
 }  // namespace star::runtime
 namespace star::schema {
 class SchemaRegistry;

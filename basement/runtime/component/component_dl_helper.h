@@ -15,6 +15,8 @@
 
 namespace star::runtime {
 
+class ComponentRegistry;
+
 struct DlHandle {
     void* handle{nullptr};
 
@@ -72,7 +74,11 @@ class ComponentDlHelper {
         return lib;
     }
 
-    void load_dynamic_library(const star::runtime::plan::ComponentLoadPlan& plan, std::unordered_map<std::string, DlHandle>& handles, void (*register_fn)(void*)) {
+    // 插件入口约定：extern "C" void star_register_components(ComponentRegistry* registry)
+    using RegisterComponentsFn = void (*)(star::runtime::ComponentRegistry*);
+
+    void load_dynamic_library(const star::runtime::plan::ComponentLoadPlan& plan, std::unordered_map<std::string, DlHandle>& handles,
+                              star::runtime::ComponentRegistry* registry) {
         const auto library_key = resolve_library_key(plan);
         auto it = handles.find(library_key);
         if (it == handles.end()) {
@@ -91,8 +97,13 @@ class ComponentDlHelper {
             throw star::excep::RuntimeError("NativeComponentHost dlsym failed: library=", library_key, ", symbol=star_register_components", ", component_class=", plan.component_class,
                                             ", err=", (err ? err : "unknown"));
         }
-        auto fn = reinterpret_cast<void (*)(void*)>(sym);
-        fn(reinterpret_cast<void*>(register_fn));
+        if (registry == nullptr) {
+            throw star::excep::RuntimeError("NativeComponentHost register failed, registry is null: library=", library_key, ", component_class=", plan.component_class);
+        }
+        // 必须把真实的 registry 交给插件：早先把 register_fn 这个函数指针当成了 registry，
+        // 插件拿到垃圾地址后对其中的 mutex 加锁，触发「mutex lock failed: Invalid argument」
+        auto fn = reinterpret_cast<RegisterComponentsFn>(sym);
+        fn(registry);
     }
 
   private:

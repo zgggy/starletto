@@ -423,10 +423,7 @@ class NativeComponentHost final {
         if (plan.component_library.value_or("").empty()) {
             return;
         }
-        dl_helper_.load_dynamic_library(plan, dynamic_library_handles_, [](void* reg) {
-            auto* r = static_cast<star::runtime::ComponentRegistry*>(reg);
-            (void)r;
-        });
+        dl_helper_.load_dynamic_library(plan, dynamic_library_handles_, registry_.get());
     }
 
     RuntimeContextPtr context_;

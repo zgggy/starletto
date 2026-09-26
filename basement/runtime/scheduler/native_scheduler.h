@@ -19,6 +19,7 @@
 #include "basement/core/exception.h"
 #include "basement/core/logger/logger.h"
 #include "basement/runtime/context/frame_context.h"
+#include "basement/runtime/context/runtime_context.h"
 #include "basement/runtime/scheduler/scheduler.h"
 
 namespace star::runtime {
@@ -86,6 +87,7 @@ void apply_affinity_to_thread(std::thread& t, const std::vector<int>& cpu_affini
     if (cpu_affinity_ids.empty()) {
         return;
     }
+#if defined(__linux__)
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     for (const auto cpu_id : cpu_affinity_ids) {
@@ -95,6 +97,11 @@ void apply_affinity_to_thread(std::thread& t, const std::vector<int>& cpu_affini
     if (rc != 0) {
         logW << "NativeScheduler apply_affinity failed: rc=" << rc << ", cpu_affinity=" << (cpu_affinity_str.has_value() ? *cpu_affinity_str : "");
     }
+#else
+    // 非 Linux 平台无对等的 CPU 亲和性 API；此处仅影响调度性能，不影响正确性
+    (void)t;
+    logW << "NativeScheduler cpu_affinity ignored on this platform: " << (cpu_affinity_str.has_value() ? *cpu_affinity_str : "");
+#endif
 }
 
 }  // namespace
@@ -109,7 +116,7 @@ class NativeScheduler final : public Scheduler {
         }
     }
 
-    void set_context(RuntimeContext* ctx) { context_ = ctx; }
+    void set_context(RuntimeContext* ctx) override { context_ = ctx; }
 
     void configure(const SchedulerConfig& config) override {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -199,6 +206,18 @@ class NativeScheduler final : public Scheduler {
         dump_stats_unlocked();
     }
 
+    auto total_invocation_count(const std::string& task_name) const -> uint64_t {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = tasks_.find(task_name);
+        return it == tasks_.end() ? 0 : it->second.stats.total_invocations;
+    }
+
+    auto failed_invocation_count(const std::string& task_name) const -> uint64_t {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = tasks_.find(task_name);
+        return it == tasks_.end() ? 0 : it->second.stats.failed_invocations;
+    }
+
     void stop() override {
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -250,6 +269,7 @@ class NativeScheduler final : public Scheduler {
     struct TaskStats {
         std::string task_name;
         uint64_t total_invocations{0};
+        uint64_t failed_invocations{0};
         double total_wall_time_us{0.0};
         double last_wall_time_us{0.0};
         double avg_wall_time_us() const { return total_invocations > 0 ? total_wall_time_us / static_cast<double>(total_invocations) : 0.0; }
@@ -299,11 +319,14 @@ class NativeScheduler final : public Scheduler {
             if (context_) {
                 context_->set_current_frame(item.frame);
             }
+            auto failed = false;
             try {
                 desc.callback(item.frame.frame_id);
             } catch (const std::exception& e) {
+                failed = true;
                 logE << "NativeScheduler task failed: " << desc.name << ", err: " << e.what();
             } catch (...) {
+                failed = true;
                 logE << "NativeScheduler task failed: " << desc.name << ", err: unknown exception";
             }
             const auto t1 = std::chrono::steady_clock::now();
@@ -312,6 +335,10 @@ class NativeScheduler final : public Scheduler {
                 std::lock_guard<std::mutex> lock(mutex_);
                 auto& stats = tasks_[item.task_name].stats;
                 stats.total_invocations += 1;
+                if (failed) {
+                    // 逃逸到调度层的异常计入统计，使故障可观测而非只留在日志里
+                    stats.failed_invocations += 1;
+                }
                 stats.total_wall_time_us += elapsed_us;
                 stats.last_wall_time_us += elapsed_us;
             }
@@ -365,12 +392,12 @@ class NativeScheduler final : public Scheduler {
 
     void dump_stats_unlocked() {
         for (const auto& [name, task] : tasks_) {
-            logI << "[SchedulerStats] task=" << task.stats.task_name << ", invocations=" << task.stats.total_invocations << ", avg_time_us=" << task.stats.avg_wall_time_us()
-                 << ", last_time_us=" << task.stats.last_wall_time_us;
+            logI << "[SchedulerStats] task=" << task.stats.task_name << ", invocations=" << task.stats.total_invocations << ", failed=" << task.stats.failed_invocations
+                 << ", avg_time_us=" << task.stats.avg_wall_time_us() << ", last_time_us=" << task.stats.last_wall_time_us;
         }
     }
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     SchedulerConfig config_{};
     bool running_{false};
     bool stop_requested_{false};
