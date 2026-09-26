@@ -185,20 +185,20 @@ function esc(s: string) {
 
 // ── hero / stats ──────────────────────────────────────
 
-function renderBadges() {
+function renderBadgesHtml() {
   let html = ''
   for (const b of BADGES) {
     html = html + '<div class="badge ' + b[0] + '" title="' + b[2] + '"><i></i><b>' + b[1] + '</b></div>'
   }
-  $id('badges').innerHTML = html
+  return html
 }
 
-function renderStats() {
+function renderStatsHtml() {
   let html = ''
   for (const s of STATS) {
     html = html + '<div class="stat"><div class="num" data-n="' + s[0] + '">0</div><div class="lbl">' + s[1] + ' · ' + s[2] + '</div></div>'
   }
-  $id('stats').innerHTML = html
+  return html
 }
 
 function animateStats() {
@@ -248,7 +248,7 @@ function layerRect(b: BoxDef) {
   return s
 }
 
-function renderLayers() {
+function renderLayersSvg() {
   let svg = '<svg viewBox="0 0 1180 692" xmlns="http://www.w3.org/2000/svg">'
   svg = svg + '<defs>'
   svg = svg + '<marker id="arrowhead" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7" fill="none" stroke="#22d3ee" stroke-width="1.2"/></marker>'
@@ -269,7 +269,7 @@ function renderLayers() {
   }
   svg = svg + '</svg>'
 
-  $id('layers-svg').innerHTML = svg
+  return svg
 }
 
 // ── 02 data flow ──────────────────────────────────────
@@ -285,7 +285,7 @@ MARKERS.inproc = '#22d3ee'
 MARKERS.shm = '#34d399'
 MARKERS.rec = '#a78bfa'
 
-function renderFlow() {
+function renderFlowSvg() {
   let svg = '<svg viewBox="0 0 1200 400" xmlns="http://www.w3.org/2000/svg">'
   svg = svg + '<defs>'
   for (const kind in MARKERS) {
@@ -332,10 +332,10 @@ function renderFlow() {
   }
   svg = svg + '</svg>'
 
-  $id('flow-svg').innerHTML = svg
+  return svg
 }
 
-function renderFlowControls() {
+function renderFlowControlsHtml() {
   const modes: string[][] = [
     ['all', 'ALL PATHS'],
     ['inproc', 'INPROC · 同组'],
@@ -349,7 +349,7 @@ function renderFlowControls() {
     }
     html = html + '<button class="fbtn' + act + '" data-mode="' + modes[i][0] + '">' + modes[i][1] + '</button>'
   }
-  $id('flow-controls').innerHTML = html
+  return html
 }
 
 function bindFlowControls() {
@@ -404,7 +404,7 @@ function initPackets() {
 
 // ── 03 pipeline ───────────────────────────────────────
 
-function renderPipeline() {
+function renderPipelineHtml() {
   let html = ''
   for (let i = 0; i < GATES.length; i++) {
     const g = GATES[i]
@@ -413,22 +413,22 @@ function renderPipeline() {
     html = html + '<div class="tip"><b>PASS · ' + esc(g.name) + '</b>' + esc(g.desc) + '</div>'
     html = html + '</div>'
   }
-  $id('pipeline').innerHTML = html
+  return html
 }
 
 // ── 04 decisions ──────────────────────────────────────
 
-function renderDecisions() {
+function renderDecisionsHtml() {
   let html = '<div class="dec-row"><div class="h">DECISION</div><div class="h">CHOICE</div><div class="h">RATIONALE</div></div>'
   for (const d of DECISIONS) {
     html = html + '<div class="dec-row"><div class="d1">' + d.topic + '</div><div class="d2">' + esc(d.choice) + '</div><div class="d3">' + esc(d.why) + '</div></div>'
   }
-  $id('decisions').innerHTML = html
+  return html
 }
 
 // ── 05 terminal ───────────────────────────────────────
 
-function renderTerm() {
+function renderTermHtml() {
   const L: string[] = []
   L.push('<span class="pr">$</span> star check')
   L.push('<span class="dm">[I] --- CI Guard: Step 1/6 Build ---</span>')
@@ -447,24 +447,22 @@ function renderTerm() {
   for (const l of L) {
     html = html + l + '\n'
   }
-  $id('term-body').innerHTML = html
+  return html
 }
 
 // ── layer hover / info panel ──────────────────────────
 
 let lockedLayer = ''
 
-function showLayerInfo(id: string) {
+function layerInfoHtml(id: string) {
   let info: LayerInfo | null = null
   for (const l of LAYERS) {
     if (l.id === id) {
       info = l
     }
   }
-  const host = $id('layer-info')
   if (info === null) {
-    host.innerHTML = '<div class="ip-tag">// INFO</div><div class="ip-title">悬停查看层级</div><div class="ip-desc">左侧为整改后的实际分层，依赖严格单向。悬停高亮依赖边，点击锁定详情。</div>'
-    return
+    return '<div class="ip-tag">// INFO</div><div class="ip-title">悬停查看层级</div><div class="ip-desc">左侧为整改后的实际分层，依赖严格单向。悬停高亮依赖边，点击锁定详情。</div>'
   }
   let html = '<div class="ip-tag">// ' + info.id.toUpperCase() + '</div>'
   html = html + '<div class="ip-title">' + info.title + '</div>'
@@ -477,7 +475,11 @@ function showLayerInfo(id: string) {
     }
     html = html + '</ul>'
   }
-  host.innerHTML = html
+  return html
+}
+
+function showLayerInfo(id: string) {
+  $id('layer-info').innerHTML = layerInfoHtml(id)
 }
 
 // 层 → 高亮的依赖边（与 renderLayers 中 data-dep 对应）
@@ -573,15 +575,37 @@ function initReveal() {
 
 // ── boot ──────────────────────────────────────────────
 
+// 全部容器内容的纯函数出口：构建期（Node）烘焙进 HTML，浏览器期重复渲染为幂等
+function renderAll() {
+  const out = {}
+  out.badges = renderBadgesHtml()
+  out.stats = renderStatsHtml()
+  out['layers-svg'] = renderLayersSvg()
+  out['layer-info'] = layerInfoHtml('')
+  out['flow-controls'] = renderFlowControlsHtml()
+  out['flow-svg'] = renderFlowSvg()
+  out.pipeline = renderPipelineHtml()
+  out.decisions = renderDecisionsHtml()
+  out['term-body'] = renderTermHtml()
+  return out
+}
+
+globalThis.__STARLETTO = { renderAll: renderAll }
+
 function boot() {
-  renderBadges()
-  renderStats()
-  renderLayers()
-  renderFlow()
-  renderFlowControls()
-  renderPipeline()
-  renderDecisions()
-  renderTerm()
+  // 内容已在构建期烘焙；此处重渲染（幂等）后绑定交互
+  const baked = renderAll()
+  for (const key in baked) {
+    const host = $id(key)
+    if (host !== null) {
+      host.innerHTML = baked[key]
+    }
+  }
+  // 渐显动画仅在 JS 可用时启用：无 JS 环境下内容保持完整可见
+  const sections = document.querySelectorAll('section')
+  for (let i = 0; i < sections.length; i++) {
+    sections[i].classList.add('reveal')
+  }
   bindLayers()
   bindFlowControls()
   initPackets()
@@ -597,8 +621,10 @@ function boot() {
   io2.observe($id('stats'))
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', boot)
-} else {
-  boot()
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot)
+  } else {
+    boot()
+  }
 }

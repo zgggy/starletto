@@ -256,28 +256,28 @@ footer a:hover { color: var(--cyan); }
     <div class="tagline">NATIVE-FIRST AUTONOMOUS DRIVING RUNTIME // 自研运行时底座</div>
     <h1><span class="path">STARLETTO</span>://ARCHITECTURE<span class="cursor"></span></h1>
     <div class="sub">C++20 · Meson/Ninja · 自研 Schema/Transport/Runtime —— <b>主线不依赖 ROS2</b>，跨进程 shm 零拷贝，单进程指针直传</div>
-    <div class="badges" id="badges"></div>
+    <div class="badges" id="badges"><!--@badges--></div>
   </header>
 
-  <div class="stats reveal" id="stats"></div>
+  <div class="stats" id="stats"><!--@stats--></div>
 
-  <section class="reveal" id="sec-layers">
+  <section id="sec-layers">
     <div class="sec-head"><span class="no">// 01</span><h2>分层架构 LAYERS</h2><span class="line"></span></div>
     <p class="sec-desc">依赖严格单向：<b>runtime → transport → schema → core</b>；<b>libraries</b> 只准依赖 core（当前整层未接线，等待路线图模块）；<b>apps</b> 纯插件装配、不含组件实现。悬停查看层级详情，点击锁定。</p>
     <div class="panel"><span class="ck1"></span>
       <div class="layers-grid">
-        <div class="layers-svg" id="layers-svg"></div>
-        <div class="info-panel" id="layer-info"></div>
+        <div class="layers-svg" id="layers-svg"><!--@layers-svg--></div>
+        <div class="info-panel" id="layer-info"><!--@layer-info--></div>
       </div>
     </div>
   </section>
 
-  <section class="reveal" id="sec-flow">
+  <section id="sec-flow">
     <div class="sec-head"><span class="no">// 02</span><h2>数据流 DATA FLOW</h2><span class="line"></span></div>
     <p class="sec-desc"><b>star run</b> 真实拓扑：4 组件、4 通道（取自 <b>star graph --components</b>）。同 process_group 走 <b>inproc</b> 指针直传（零序列化）；跨组走 <b>shm</b> 4 槽环形 loan/view 零拷贝，读侧 seqlock 复核防撕裂，失败自动降级。切换模式观察两条路径。</p>
-    <div class="flow-controls" id="flow-controls"></div>
+    <div class="flow-controls" id="flow-controls"><!--@flow-controls--></div>
     <div class="panel"><span class="ck1"></span>
-      <div class="flow-svg" id="flow-svg"></div>
+      <div class="flow-svg" id="flow-svg"><!--@flow-svg--></div>
       <div class="legend">
         <span><i></i>inproc · 同组指针直传</span>
         <span><i class="g"></i>shm · 跨组零拷贝（loan/view + seqlock）</span>
@@ -286,24 +286,24 @@ footer a:hover { color: var(--cyan); }
     </div>
   </section>
 
-  <section class="reveal" id="sec-pipeline">
+  <section id="sec-pipeline">
     <div class="sec-head"><span class="no">// 03</span><h2>构建与门禁 PIPELINE</h2><span class="line"></span></div>
     <p class="sec-desc">codegen 迁 <b>custom_target</b>：<b>.schema → .s.h</b> 是显式构建依赖、输出 build 目录、生成物不入库——改 schema 即自动重生成，结构性消除源/生成物漂移。每笔提交都要过 <b>star check</b> 的 10 项门禁，当前 <b>10/10 PASS</b>。</p>
-    <div class="pipeline" id="pipeline"></div>
+    <div class="pipeline" id="pipeline"><!--@pipeline--></div>
     <div class="pipe-note">5 类编译告警已提为 <code>-Werror</code>（return-type / header-guard / mismatched-tags / inconsistent-missing-override / suggest-override）——每一类都造成过真实缺陷。当前编译 <code>0 错误 0 警告</code>。</div>
   </section>
 
-  <section class="reveal" id="sec-decisions">
+  <section id="sec-decisions">
     <div class="sec-head"><span class="no">// 04</span><h2>设计决策 DECISIONS</h2><span class="line"></span></div>
     <p class="sec-desc">四条硬约束是系统宪法：<b>Native-only</b> · <b>单进程指针传递</b> · <b>跨进程零拷贝</b> · <b>Schema 统一性</b>。下表是落地这些约束的关键取舍，登记于 design_change.md。</p>
-    <div class="dec-table" id="decisions"></div>
+    <div class="dec-table" id="decisions"><!--@decisions--></div>
   </section>
 
-  <section class="reveal" id="sec-term">
+  <section id="sec-term">
     <div class="sec-head"><span class="no">// 05</span><h2>验证现场 VERIFY</h2><span class="line"></span></div>
     <div class="term">
       <div class="tbar"><i></i><i></i><i></i><span>zsh — starletto</span></div>
-      <pre id="term-body"></pre>
+      <pre id="term-body"><!--@term-body--></pre>
     </div>
   </section>
 </div>
@@ -311,7 +311,7 @@ footer a:hover { color: var(--cyan); }
 <footer>
   <div class="wrap frow">
     <span>STARLETTO // ARCHITECTURE — 生成于 tools/arch_site（TS → 单文件 HTML）</span>
-    <span><a href="https://github.com">00_hub/03_dev/01_design/arch.md</a> · <a href="https://github.com">arch_review_20260926.md</a></span>
+    <span><a href="arch.md">arch.md</a> · <a href="arch_review_20260926.md">arch_review_20260926.md</a></span>
   </div>
 </footer>
 

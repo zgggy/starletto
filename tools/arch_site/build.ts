@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 const ROOT = new URL('.', import.meta.url).pathname
-const OUT = join(ROOT, '..', '..', '00_hub', '03_dev', '01_design', 'architecture.html')
+const OUT = join(ROOT, '..', '..', '00_hub', 'docs', 'architecture.html')
 
 function isIdentChar(c: string): boolean {
   return /[A-Za-z0-9_$]/.test(c)
@@ -259,7 +259,7 @@ function checkSyntax(js: string): void {
 
 function main(): void {
   const ts = readFileSync(join(ROOT, 'main.ts'), 'utf8')
-  const tpl = readFileSync(join(ROOT, 'template.html'), 'utf8')
+  let tpl = readFileSync(join(ROOT, 'template.html'), 'utf8')
 
   const js = stripTypes(ts)
 
@@ -267,6 +267,18 @@ function main(): void {
     throw new Error('剥离产物含有 </script>，会截断内联脚本')
   }
   checkSyntax(js)
+
+  // 静态烘焙：在 Node 中执行剥离产物的纯渲染出口，把内容写死进 HTML——
+  // 查看/预览环境不执行脚本时页面依然完整（修复「只见标题」白屏）
+  const renderAll = new Function(js + '\n;return globalThis.__STARLETTO.renderAll;')()
+  const baked = renderAll()
+  for (const key in baked) {
+    const marker = '<!--@' + key + '-->'
+    if (tpl.includes(marker) === false) {
+      throw new Error('模板缺少占位符: ' + marker)
+    }
+    tpl = tpl.replace(marker, baked[key])
+  }
 
   const html = tpl.replace('{{SCRIPT}}', '\n' + js.trim() + '\n')
   writeFileSync(OUT, html)

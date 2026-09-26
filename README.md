@@ -9,7 +9,7 @@ Starletto 是一个自动驾驶开放平台，核心是一套 **Native-first** �
 ## 项目组成
 
 ```
-00_hub/      设计文档、spec、发布记录与工作计划
+00_hub/docs/ 项目文档（spec / 架构 / 评审 / 发布记录）
 basement/    运行时底座（自底向上）
              ├── core      日志 / 异常 / 时钟 / 类型擦除指针
              ├── schema    .schema IDL + codegen + 二进制 codec + 兼容检查
