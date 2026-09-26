@@ -18,6 +18,7 @@ struct ChannelStats {
     uint64_t payload_bytes_total{0};
     uint64_t payload_bytes_last{0};
     uint64_t latency_total_us{0};
+    uint64_t latency_count{0};
     uint64_t latency_max_us{0};
     uint64_t max_queue_depth{0};
     std::vector<uint64_t> latency_samples;
@@ -39,6 +40,7 @@ struct ChannelStats {
 
     void record_latency(uint64_t latency_us) {
         latency_total_us += latency_us;
+        latency_count += 1;
         latency_max_us = std::max(latency_max_us, latency_us);
         if (latency_samples.size() < kMaxLatencySamples) {
             latency_samples.push_back(latency_us);
@@ -85,7 +87,9 @@ inline auto compute_hz(const ChannelStats& stats) -> double {
 }
 
 inline auto compute_avg_latency_us(const ChannelStats& stats) -> uint64_t {
-    const auto divisor = stats.write_count > 0 ? stats.write_count : 1;
+    // 按实际延迟采样数求平均：write_count 与 record_latency 调用次数并不必然相等
+    // （例如按 reader 分别计延迟），用 write_count 会让平均值静默失真
+    const auto divisor = stats.latency_count > 0 ? stats.latency_count : 1;
     return stats.latency_total_us / divisor;
 }
 

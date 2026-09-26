@@ -2,10 +2,8 @@
 #define __SHM_CHANNEL_H__
 
 #include <fcntl.h>
-#include <linux/futex.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -16,6 +14,7 @@
 
 #include "basement/core/exception.h"
 #include "basement/core/fd_guard.h"
+#include "basement/core/futex_compat.h"
 
 namespace star::transport {
 
@@ -40,13 +39,13 @@ static void spin_lock(std::atomic<uint32_t>* lock) {
                 return;
             }
         }
-        ::syscall(SYS_futex, reinterpret_cast<uint32_t*>(lock), FUTEX_WAIT, 1, nullptr, nullptr, 0);
+        star::base::futex_wait(lock, 1, -1);
     }
 }
 
 static void spin_unlock(std::atomic<uint32_t>* lock) {
     lock->store(0, std::memory_order_release);
-    ::syscall(SYS_futex, reinterpret_cast<uint32_t*>(lock), FUTEX_WAKE, 1, nullptr, nullptr, 0);
+    star::base::futex_wake(lock, 1);
 }
 
 struct ShmHeader {
@@ -313,21 +312,21 @@ class ShmChannel {
         return static_cast<const uint8_t*>(mapping_.get()) + sizeof(ShmHeader) + static_cast<size_t>(slot) * slot_size_;
     }
 
+    // 供读侧做 seqlock 复核：槽位会被 seq % slot_count 覆写，视图必须带代际信息
+    auto seq_addr() const -> const std::atomic<uint64_t>* { return header_ != nullptr ? &header_->seq : nullptr; }
+
     static auto now_steady_ns() -> uint64_t { return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
 
   private:
     static int futex_wait(std::atomic<uint32_t>* addr, uint32_t expected, int64_t timeout_ms) {
-        auto ts = ::timespec{};
-        ts.tv_sec = timeout_ms / 1000;
-        ts.tv_nsec = static_cast<long>((timeout_ms % 1000) * 1000000);
-        return static_cast<int>(::syscall(SYS_futex, reinterpret_cast<uint32_t*>(addr), FUTEX_WAIT, expected, &ts, nullptr, 0));
+        return star::base::futex_wait(addr, expected, timeout_ms);
     }
 
     static void wake_waiters(ShmHeader* header) {
         if (header == nullptr) {
             return;
         }
-        ::syscall(SYS_futex, reinterpret_cast<uint32_t*>(&header->notify_seq), FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
+        star::base::futex_wake(&header->notify_seq, INT_MAX);
     }
 
     static auto resolve_slot_count() -> uint32_t { return kShmSlotCount; }

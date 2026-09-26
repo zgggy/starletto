@@ -66,6 +66,9 @@ inline auto decode_service_envelope(const MessageView& message) -> ServiceEnvelo
         if (slot->size < kServiceEnvelopeHeaderSize) {
             throw star::excep::RuntimeError("ShmServiceBus decode failed, envelope too small");
         }
+        if (not slot->stable()) {
+            throw star::excep::RuntimeError("ShmServiceBus decode failed, slot overwritten before decode");
+        }
         std::memcpy(&envelope.correlation_id.value, slot->data, sizeof(envelope.correlation_id.value));
         auto payload_view = std::make_shared<ShmSlotView>();
         payload_view->mapping = slot->mapping;
@@ -73,6 +76,10 @@ inline auto decode_service_envelope(const MessageView& message) -> ServiceEnvelo
         payload_view->size = slot->size - kServiceEnvelopeHeaderSize;
         payload_view->channel_name = slot->channel_name;
         payload_view->schema_type_id = slot->schema_type_id;
+        // 派生视图指向同一槽位，必须继承代际信息，否则丢掉复核能力
+        payload_view->seq_addr = slot->seq_addr;
+        payload_view->observed_seq = slot->observed_seq;
+        payload_view->slot_count = slot->slot_count;
         envelope.body.payload = star::base::TypedConstPtr::from(std::move(payload_view));
         envelope.body.correlation_id = envelope.correlation_id;
         return envelope;

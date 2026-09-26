@@ -116,6 +116,10 @@ class MessageRecorder final {
         if (not fp_) {
             return;
         }
+        // 过滤在内部完成：调用方忘了查 should_record() 也不会录进无关通道
+        if (not record_channels_.empty() && record_channels_.count(channel_name) == 0) {
+            return;
+        }
         auto entry = RecordEntry{};
         entry.timestamp_ns = timestamp_ns;
         entry.channel_name = channel_name;

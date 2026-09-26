@@ -62,7 +62,9 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
     class ShmReader final : public Reader {
       public:
         ShmReader(std::shared_ptr<ShmMessageBus> bus, std::string channel_name, uint64_t id, std::shared_ptr<ShmChannel> channel)
-            : bus_(std::move(bus)), channel_name_(std::move(channel_name)), id_(id), channel_(std::move(channel)) {
+            : bus_(std::move(bus)), channel_name_(std::move(channel_name)), id_(id), channel_(std::move(channel)), baseline_seq_(channel_ ? channel_->current_seq() : 0) {
+            // 基线必须在启动轮询线程之前捕获：若放到 poll_loop 里取，
+            // 订阅建立后、线程跑起来前发布的消息会被误判为「已见过」而丢失
             poll_thread_ = std::thread([this]() { poll_loop(); });
         }
 
@@ -98,7 +100,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                 return;
             }
             const auto wait_ms = resolve_wait_ms();
-            uint64_t last_seq = channel_->current_seq();
+            uint64_t last_seq = baseline_seq_;
             while (not stop_.load(std::memory_order_relaxed)) {
                 const auto r = channel_->read(&last_seq);
                 if (r.has_value()) {
@@ -108,7 +110,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                             bus->record_drop(channel_name_, r->dropped);
                         }
                         bus->record_latency(channel_name_, r->write_ns);
-                        bus->deliver_to_reader(channel_name_, id_, r->slot, r->size);
+                        bus->deliver_to_reader(channel_name_, id_, r->slot, r->size, r->seq);
                     }
                     continue;
                 }
@@ -133,6 +135,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         std::string channel_name_;
         uint64_t id_{0};
         std::shared_ptr<ShmChannel> channel_;
+        uint64_t baseline_seq_{0};
         std::atomic<bool> stop_{false};
         std::thread poll_thread_;
     };
@@ -375,7 +378,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
     }
 
-    void deliver_to_reader(const std::string& channel_name, uint64_t reader_id, uint32_t slot, uint32_t size) {
+    void deliver_to_reader(const std::string& channel_name, uint64_t reader_id, uint32_t slot, uint32_t size, uint64_t seq) {
         Reader::Callback cb;
         MessageView msg;
         bool should_deliver = false;
@@ -392,7 +395,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             cb = cb_it->second;
 
             const auto& options = it->second.descriptor.options;
-            build_shm_message_view(channel_name, slot, size, it, msg);
+            build_shm_message_view(channel_name, slot, size, seq, it, msg);
             if (options.depth > 0) {
                 auto& history = it->second.reader_history[reader_id];
                 auto result = apply_qos(history, msg, options, it->second.stats);
@@ -408,7 +411,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
     }
 
-    void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
+    void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint64_t seq, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
         msg.schema_type_id = it->second.descriptor.schema_type_id;
         msg.correlation_id = CorrelationId{};
         auto channel = it->second.channel;
@@ -421,6 +424,11 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         view->size = size;
         view->channel_name = channel_name;
         view->schema_type_id = it->second.descriptor.schema_type_id;
+        // 代际信息取自 read() 返回的 seq，而非此刻的 current_seq()：
+        // 只有前者才与 slot/size 同源，读侧据此复核该槽是否已被覆写
+        view->seq_addr = channel->seq_addr();
+        view->observed_seq = seq;
+        view->slot_count = channel->slot_count();
         msg.payload = star::base::TypedConstPtr::from(std::move(view));
     }
 
