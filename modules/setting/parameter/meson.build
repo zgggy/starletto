@@ -22,6 +22,7 @@ shared_library(
     'parameter',
     files('register.cc'),
     dependencies: [parameter_dep],
+    name_suffix: 'so',
     install: true,
     install_dir: 'modules/setting/parameter',
 )

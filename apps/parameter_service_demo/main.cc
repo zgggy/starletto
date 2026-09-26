@@ -5,7 +5,7 @@
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/transport/api/service_bus.h"
 #include "basement/transport/shm/shm_views.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 #include "modules/setting/parameter/parameter_component.h"
 #include "modules/setting/schema/schema_bootstrap.h"
 
@@ -191,7 +191,7 @@ auto encode_parameter_value(
     const std::string& schema_name,
     const star::schema::SchemaValue& value) -> std::optional<std::string> {
     if (schema_name == "planning.motion") {
-        const auto typed = star::setting::parameter::planning::MotionParameter::from_value(value);
+        const auto typed = star::setting::planning::MotionParameter::from_value(value);
         const auto bytes = typed.encode_binary();
         return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     }
@@ -211,7 +211,7 @@ auto decode_parameter_value_to_text(
     const std::string& schema_name,
     const std::string& payload_binary) -> std::string {
     if (schema_name == "planning.motion") {
-        const auto typed = star::setting::parameter::planning::MotionParameter::from_binary(
+        const auto typed = star::setting::planning::MotionParameter::from_binary(
             std::span<const uint8_t>(
                 reinterpret_cast<const uint8_t*>(payload_binary.data()),
                 payload_binary.size()));
@@ -366,7 +366,7 @@ void run_demo(ServiceHarness& harness, const std::string& format) {
     if (not get_before.payload_binary.has_value()) {
         throw star::excep::RuntimeError("typed get response missing payload_binary");
     }
-    auto motion_before = star::setting::parameter::planning::MotionParameter::from_binary(
+    auto motion_before = star::setting::planning::MotionParameter::from_binary(
         std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(get_before.payload_binary->data()),
             get_before.payload_binary->size()));
@@ -374,7 +374,7 @@ void run_demo(ServiceHarness& harness, const std::string& format) {
     auto updated_motion = motion_before;
     updated_motion.processor.expected_cycle_time = 200;
     if (not updated_motion.methods.has_value()) {
-        updated_motion.methods = star::setting::parameter::planning::Methods{};
+        updated_motion.methods = star::setting::planning::Methods{};
     }
     updated_motion.methods->trajectory_method = "piecewise_jerk";
     updated_motion.methods->enable_fallback = false;
@@ -399,7 +399,7 @@ void run_demo(ServiceHarness& harness, const std::string& format) {
     if (not get_after.payload_binary.has_value()) {
         throw star::excep::RuntimeError("typed get-after response missing payload_binary");
     }
-    const auto motion_after = star::setting::parameter::planning::MotionParameter::from_binary(
+    const auto motion_after = star::setting::planning::MotionParameter::from_binary(
         std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(get_after.payload_binary->data()),
             get_after.payload_binary->size()));

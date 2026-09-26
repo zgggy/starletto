@@ -1,5 +1,6 @@
 native_runner_sources = files(
     'main.cc',
+    'app.cc',
 )
 
 executable(

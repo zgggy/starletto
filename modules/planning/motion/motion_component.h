@@ -45,7 +45,7 @@ class MotionComponent : public star::runtime::Component {
             if (snap && not logged_parameter_snapshot_) {
                 logged_parameter_snapshot_ = true;
                 should_log = true;
-                const auto param = decode_snapshot_entry<star::generated::setting::parameter::snapshot::ParameterSnapshot, star::setting::parameter::planning::MotionParameter>(snap, "planning.motion",
+                const auto param = decode_snapshot_entry<star::generated::setting::parameter::snapshot::ParameterSnapshot, star::setting::planning::MotionParameter>(snap, "planning.motion",
                                                                                                                                                                                 "planning.motion");
                 if (param.has_value()) {
                     expected_cycle_time = param->processor.expected_cycle_time;

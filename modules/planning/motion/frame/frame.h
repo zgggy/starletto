@@ -1,6 +1,16 @@
 #ifndef __FRAME_H__
 #define __FRAME_H__
 
+/**
+ * 注意：本文件是规划数据模型的**骨架**，未接入任何构建目标，当前无法编译。
+ *
+ * 三个成员（prediction / localization / chassis）引用的是尚未实现的
+ * localization / perception 模块的传感器输入类型；项目硬约束为 Native-only，
+ * 上述 *_msgs 类型不应进入主树，待这些模块落地时应改为 schema 生成类型。
+ *
+ * 同目录的 *_context.h 亦无外部引用。整组在 motion 组件真正使用前保持骨架状态。
+ */
+
 #include <cstddef>
 #include <memory>
 

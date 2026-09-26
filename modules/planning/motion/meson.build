@@ -17,6 +17,7 @@ shared_library(
     'motion',
     files('register.cc'),
     dependencies: [motion_dep],
+    name_suffix: 'so',
     install: true,
     install_dir: 'modules/planning/motion',
 )

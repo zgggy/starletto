@@ -17,7 +17,7 @@
 #include "basement/schema/schema_registry.h"
 #include "basement/schema/schema_validator.h"
 #include "basement/transport/api/message_bus.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 #include "modules/setting/schema/config_snapshot.s.h"
 
 namespace star::setting {
@@ -231,7 +231,8 @@ class ConfigComponent : public star::runtime::Component {
         serializer.encode_binary = [snapshot = snapshot_]() { return snapshot->encode_binary(); };
         const auto r = writer_->write_serialized(star::transport::SerializedMessage{view, serializer});
         if (!r.ok()) {
-            throw star::excep::RuntimeError("ConfigComponent write_snapshot failed: status=", star::transport::write_status_string(r.status), ", err=", r.error_message);
+            // 运行时状况：transport 失败可恢复，记录后继续（下一帧重试）
+            logW << "ConfigComponent write_snapshot skipped: status=" << star::transport::write_status_string(r.status) << ", err=" << r.error_message;
         }
     }
 

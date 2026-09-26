@@ -21,6 +21,7 @@ shared_library(
     'config',
     files('register.cc'),
     dependencies: [config_dep],
+    name_suffix: 'so',
     install: true,
     install_dir: 'modules/setting/config',
 )

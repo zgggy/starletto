@@ -12,7 +12,7 @@
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/api/service_bus.h"
 #include "basement/transport/shm/shm_views.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 #include "modules/setting/parameter/parameter_store_service.h"
 #include "modules/setting/schema/planning/motion.s.h"
 #include "modules/setting/schema/parameter_snapshot.s.h"
@@ -317,9 +317,9 @@ private:
             return;
         }
         if (key == "planning.motion") {
-            const auto typed = star::setting::parameter::planning::MotionParameter::from_value(*value);
+            const auto typed = star::setting::planning::MotionParameter::from_value(*value);
             const auto bytes = typed.encode_binary();
-            *value = star::setting::parameter::planning::MotionParameter::from_binary(
+            *value = star::setting::planning::MotionParameter::from_binary(
                 std::span<const uint8_t>(bytes.data(), bytes.size())).to_value();
             return;
         }
@@ -339,7 +339,7 @@ private:
         if (request.payload_binary.has_value()) {
             const auto& payload_binary = *request.payload_binary;
             if (schema_name == "planning.motion") {
-                return star::setting::parameter::planning::MotionParameter::from_binary(
+                return star::setting::planning::MotionParameter::from_binary(
                     std::span<const uint8_t>(
                         reinterpret_cast<const uint8_t*>(payload_binary.data()),
                         payload_binary.size())).to_value();
@@ -395,7 +395,8 @@ private:
         serializer.encode_binary = [msg]() { return msg->encode_binary(); };
         const auto r = writer_->write_serialized(star::transport::SerializedMessage{view, serializer});
         if (!r.ok()) {
-            throw star::excep::RuntimeError("ParameterComponent publish_snapshot failed: status=", star::transport::write_status_string(r.status), ", err=", r.error_message);
+            // 运行时状况：transport 失败可恢复，记录后继续（下一帧重试）
+            logW << "ParameterComponent publish_snapshot skipped: status=" << star::transport::write_status_string(r.status) << ", err=" << r.error_message;
         }
         logI << "ParameterComponent snapshot entries: binary_only=" << binary_only_entries
              << ", debug_text_only=" << debug_text_only_entries;
@@ -417,7 +418,7 @@ private:
     auto encode_schema_known_entry(const std::string& key, const star::schema::SchemaValue& value) const
         -> std::optional<std::string> {
         if (key == "planning.motion") {
-            const auto typed = star::setting::parameter::planning::MotionParameter::from_value(value);
+            const auto typed = star::setting::planning::MotionParameter::from_value(value);
             const auto bytes = typed.encode_binary();
             return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
         }

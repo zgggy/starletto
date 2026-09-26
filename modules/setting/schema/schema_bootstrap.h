@@ -30,7 +30,7 @@ inline auto register_setting_schemas(star::schema::SchemaRegistry& registry) -> 
     }
     star::generated::setting::parameter::snapshot::ParameterSnapshot::register_schema(registry);
     star::generated::setting::config::snapshot::ConfigSnapshot::register_schema(registry);
-    star::setting::parameter::planning::MotionParameter::register_schema(registry);
+    star::setting::planning::MotionParameter::register_schema(registry);
     star::setting::service::parameter::get_request::ParameterGetRequest::register_schema(registry);
     star::setting::service::parameter::get_response::ParameterGetResponse::register_schema(registry);
     star::setting::service::parameter::list_request::ParameterListRequest::register_schema(registry);
