@@ -1,3 +1,6 @@
+#ifndef __ROUTE_SEARCH_H__
+#define __ROUTE_SEARCH_H__
+
 #include <algorithm>
 #include <iostream>
 #include <limits>
@@ -26,3 +29,5 @@ class RouteSearchAlgorithm {
 };
 
 }  // namespace star::methods
+
+#endif  // __ROUTE_SEARCH_H__

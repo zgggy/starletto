@@ -1,5 +1,5 @@
-#ifndef __DIJKSTRA_H__
-#define __DIJKSTRA_H__
+#ifndef __BELLMAN_FORD_H__
+#define __BELLMAN_FORD_H__
 
 #include "basement/core/logger/logger.h"
 #include "route_search.h"
@@ -61,4 +61,4 @@ class BellmanFord : public RouteSearchAlgorithm {
 
 }  // namespace star::methods
 
-#endif  // __DIJKSTRA_H__
+#endif  // __BELLMAN_FORD_H__

@@ -1,6 +1,6 @@
 schema planning.motion
 root MotionParameter
-namespace star.setting.parameter.planning
+namespace star.setting.planning
 version 1
 
 def MotionParameter {

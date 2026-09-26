@@ -5,7 +5,7 @@
  * calculation type adaptor call osqp to calculate the speed
  */
 
-#include "method/algorithm/piecewise_jerk_problem.h"
+#include "method/algorithm/piecewise_jerk/piecewise_jerk_problem.h"
 
 namespace star::method {
 

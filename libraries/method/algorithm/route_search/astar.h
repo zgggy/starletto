@@ -1,5 +1,5 @@
-#ifndef __DIJKSTRA_H__
-#define __DIJKSTRA_H__
+#ifndef __ASTAR_H__
+#define __ASTAR_H__
 
 #include "route_search.h"
 
@@ -61,7 +61,7 @@ class AStar : public RouteSearchAlgorithm {
 
 }  // namespace star::methods
 
-#endif  // __DIJKSTRA_H__
+#endif  // __ASTAR_H__
 
 // int main() {
 //     Graph graph;

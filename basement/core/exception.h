@@ -22,14 +22,14 @@ class StarException : public std::exception {
     template <typename... SV>
     StarException(const SV&... args) : message_(str_cat(args...)) {}
 
-    const char* what() const noexcept { return message_.c_str(); }
+    const char* what() const noexcept override { return message_.c_str(); }
 
   private:
     std::string message_;
 };
 
-// This errors are usually related to problems which "probably" require code refactoring
-// to be fixed.
+// Broken internal invariant (e.g. an assertion the code should never reach).
+// Fixing these requires a code change, not a retry.
 class BugError : public StarException {
   public:
     BugError(std::string_view message) : StarException(message) {}
@@ -38,8 +38,8 @@ class BugError : public StarException {
     BugError(const SV&... args) : StarException(args...) {}
 };
 
-// This errors are usually related to problems which "probably" require code refactoring
-// to be fixed.
+// The call itself is invalid: a bad argument combination, a use-before-init, or
+// a mis-ordered lifecycle step. Fixing these requires adjusting the caller's logic.
 class LogicError : public StarException {
   public:
     LogicError(std::string_view message) : StarException(message) {}
@@ -48,8 +48,8 @@ class LogicError : public StarException {
     LogicError(const SV&... args) : StarException(args...) {}
 };
 
-// This errors are usually related to problems that are related to data or conditions
-// that happen only at run-time
+// Data or environment conditions seen only at run-time (missing file, unavailable
+// resource, malformed input). These may recover on a later attempt.
 class RuntimeError : public StarException {
   public:
     RuntimeError(std::string_view message) : StarException(message) {}
@@ -59,12 +59,5 @@ class RuntimeError : public StarException {
 };
 
 }  // namespace star::excep
-
-namespace star::base {
-using StarException = star::excep::StarException;
-using BugError = star::excep::BugError;
-using LogicError = star::excep::LogicError;
-using RuntimeError = star::excep::RuntimeError;
-}  // namespace star::base
 
 #endif  // __EXCEPTION_H__

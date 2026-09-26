@@ -1,5 +1,5 @@
-#ifndef __PIECEWISW_JERK_PATH_PROBLEM__
-#define __PIECEWISW_JERK_PATH_PROBLEM__
+#ifndef __PIECEWISE_JERK_PATH_PROBLEM__
+#define __PIECEWISE_JERK_PATH_PROBLEM__
 
 /**
  * the path problem
@@ -87,4 +87,4 @@ class PiecewiseJerkPathProblem : public star::osqp::PiecewiseJerkProblem {
 
 }  // namespace star::osqp
 
-#endif  // __PIECEWISW_JERK_PATH_PROBLEM__
+#endif  // __PIECEWISE_JERK_PATH_PROBLEM__

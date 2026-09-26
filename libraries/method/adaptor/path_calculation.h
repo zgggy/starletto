@@ -3,6 +3,9 @@
 
 /**
  * calculation type adaptor call osqp to calculate the path
+ *
+ * 注意：本文件是未实现的骨架（未接入任何构建目标），仅表达意图；
+ * 其中桩函数必须给出返回值，避免形成调用即 UB 的空体非 void 函数。
  */
 
 #include <string>
@@ -15,27 +18,34 @@ namespace star::method {
 class Point {};
 class PathPoint {
   public:
-    Point pose() const {};
+    auto pose() const -> Point { return Point{}; }
 };
 class Path {
   public:
-    auto xy_to_s(const double& x, const double& y) const -> double {}
-    auto s_to_point(const double& s) const -> Point {}
-    auto length() const -> double {}
+    auto xy_to_s(const double& x, const double& y) const -> double {
+        (void)x;
+        (void)y;
+        return 0.0;
+    }
+    auto s_to_point(const double& s) const -> Point {
+        (void)s;
+        return Point{};
+    }
+    auto length() const -> double { return 0.0; }
 };
 class Obstacle {};
 class VehicleConfig {
   public:
-    double left_to_center() const {}
-    double right_to_center() const {}
+    auto left_to_center() const -> double { return 0.0; }
+    auto right_to_center() const -> double { return 0.0; }
 };
 class PathBounds : public std::vector<std::tuple<double, double, double>> {
   public:
-    double delta_s() const {}
+    auto delta_s() const -> double { return 0.0; }
 };
 class TrajPoint {
   public:
-    Point pose() const {};
+    auto pose() const -> Point { return Point{}; }
 };
 
 class PathCalculation {
@@ -108,9 +118,21 @@ class PathCalculation {
         return true;
     }
 
-    bool update_path_bounds(const Path& reference_line, std::vector<Obstacle> obstacles, double start_s, double max_s, double vehicle_width, PathBounds* path_bounds) {}
+    bool update_path_bounds(const Path& reference_line, std::vector<Obstacle> obstacles, double start_s, double max_s, double vehicle_width, PathBounds* path_bounds) {
+        (void)reference_line;
+        (void)obstacles;
+        (void)start_s;
+        (void)max_s;
+        (void)vehicle_width;
+        (void)path_bounds;
+        return false;
+    }
 
-    auto cal_l_ref(const PathBounds& path_bounds, double default_weight_l_ref) -> std::tuple<std::vector<double>, std::vector<double>> {}
+    auto cal_l_ref(const PathBounds& path_bounds, double default_weight_l_ref) -> std::tuple<std::vector<double>, std::vector<double>> {
+        (void)path_bounds;
+        (void)default_weight_l_ref;
+        return {};
+    }
 };
 
 }  // namespace star::method
