@@ -3,7 +3,7 @@
 
 #include "basement/schema/binary_codec.h"
 #include "basement/schema/schema_ast.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 
 #include <concepts>
 #include <cstdint>

@@ -232,6 +232,11 @@ public:
             auto val = parse_field_value();
             insert_field(&root, key, std::move(val));
             skip_ws_and_comments();
+            // ';' 作为可选的字段分隔符被消费掉
+            while (not eof() && peek() == ';') {
+                get();
+                skip_ws_and_comments();
+            }
         }
         return SchemaValue(std::move(root));
     }
@@ -363,7 +368,9 @@ private:
         std::string token;
         while (not eof()) {
             const auto c = peek();
-            if (std::isspace(static_cast<unsigned char>(c)) != 0 || c == ',' || c == ']' || c == '}') {
+            // ';' 是字段分隔符（单行花括号风格），不得被吸收进值：
+            // 否则 `component_library = libpid.so;` 会解析出 "libpid.so;"（带分号）
+            if (std::isspace(static_cast<unsigned char>(c)) != 0 || c == ',' || c == ']' || c == '}' || c == ';') {
                 break;
             }
             token.push_back(get());
@@ -454,6 +461,11 @@ private:
             auto val = parse_field_value();
             insert_field(&obj, key, std::move(val));
             skip_ws_and_comments();
+            // ';' 作为可选的字段分隔符被消费掉
+            while (not eof() && peek() == ';') {
+                get();
+                skip_ws_and_comments();
+            }
         }
         return SchemaValue(std::move(obj));
     }

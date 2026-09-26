@@ -1,5 +1,5 @@
-#ifndef __TRANSPORT_FIXED_LAYOUT_CODEC_H__
-#define __TRANSPORT_FIXED_LAYOUT_CODEC_H__
+#ifndef __SCHEMA_FIXED_LAYOUT_CODEC_H__
+#define __SCHEMA_FIXED_LAYOUT_CODEC_H__
 
 #include "basement/core/exception.h"
 
@@ -13,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace star::transport {
+namespace star::schema {
 
 #pragma pack(push, 1)
 struct FixedLayoutHeader {
@@ -695,6 +695,6 @@ auto decode_binary_value_map(std::span<const uint8_t> data) -> std::map<std::str
     return out;
 }
 
-}  // namespace star::transport
+}  // namespace star::schema
 
-#endif  // __TRANSPORT_FIXED_LAYOUT_CODEC_H__
+#endif  // __SCHEMA_FIXED_LAYOUT_CODEC_H__

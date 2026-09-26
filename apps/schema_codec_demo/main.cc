@@ -1,7 +1,7 @@
 #include "basement/schema/binary_codec.h"
 #include "basement/schema/native/native_schema_loader.h"
 #include "basement/schema/schema_validator.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 
 #include <fstream>
 #include <iostream>

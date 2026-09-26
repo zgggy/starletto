@@ -11,7 +11,7 @@
 #include "basement/runtime/plan/plan_builder.h"
 #include "basement/schema/builtin/manifest/component.s.h"
 #include "basement/schema/builtin/manifest/module.s.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 
 namespace star::runtime::plan {
 

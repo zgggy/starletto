@@ -1,7 +1,7 @@
 #ifndef __PARAMETER_STORE_H__
 #define __PARAMETER_STORE_H__
 
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 
 #include <string>
 #include <vector>

@@ -4,19 +4,18 @@ setting_inc = include_directories(
     '../..',
 )
 
-codegen_py = find_program('python3', required: true)
-codegen_script = files('../../basement/schema/schema_codegen.py')
-
-base_dir = meson.current_source_dir()
-
-run_command(
-    codegen_py,
-    [codegen_script, 'gen', '--schema-dir', base_dir / 'schema', '--output-dir', base_dir / 'schema'],
-    check: true,
-)
+# codegen：.schema -> .s.h 由 custom_target 处理
+subdir('schema')
 
 setting_dep = declare_dependency(
     include_directories: setting_inc,
+    sources: [
+        schema_gen_modules_setting_schema,
+        schema_gen_modules_setting_schema_config,
+        schema_gen_modules_setting_schema_control,
+        schema_gen_modules_setting_schema_planning,
+        schema_gen_modules_setting_schema_service,
+    ],
     dependencies: [
         star_core_dep,
         runtime_api_dep,

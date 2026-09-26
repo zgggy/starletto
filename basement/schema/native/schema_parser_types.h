@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 
 namespace star::schema {
 

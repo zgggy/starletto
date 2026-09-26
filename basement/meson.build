@@ -12,11 +12,8 @@ codegen_script = files('schema/schema_codegen.py')
 
 base_dir = meson.current_source_dir()
 
-run_command(
-    codegen_py,
-    [codegen_script, 'gen', '--schema-dir', base_dir / 'schema', '--output-dir', base_dir / 'schema'],
-    check: true,
-)
+# codegen：.schema -> .s.h 由 custom_target 处理（见各 schema 目录的 meson.build）
+subdir('schema')
 
 star_core_dep = declare_dependency(
     include_directories: starletto_inc,
@@ -25,6 +22,10 @@ star_core_dep = declare_dependency(
 schema_dep = declare_dependency(
     include_directories: starletto_inc,
     dependencies: [star_core_dep],
+    sources: [
+        schema_gen_basement_schema_builtin_manifest,
+        schema_gen_basement_schema_builtin_runtime,
+    ],
 )
 
 runtime_api_dep = declare_dependency(

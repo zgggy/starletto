@@ -13,7 +13,7 @@
 #include "basement/schema/native/schema_parser_types.h"
 #include "basement/schema/native/schema_syntax_parser.h"
 #include "basement/schema/schema_ast.h"
-#include "libraries/common/schema/schema_value.h"
+#include "basement/schema/schema_value.h"
 
 namespace star::schema {
 
