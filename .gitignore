@@ -49,4 +49,13 @@ compile_commands.json
 .cache
 .vscode
 .trae
-test*
+
+# tests/ 是受版本管理的测试源码目录，勿用宽泛的 test* 规则忽略
+# （临时测试产物请放到 build/ 下）
+
+# Python bytecode（codegen 工具产物）
+__pycache__/
+*.pyc
+
+# schema codegen 生成物（由 custom_target 生成到 build dir，不入库）
+*.s.h

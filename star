@@ -321,8 +321,8 @@ run_native_runner() {
         ts="$(date +%Y%m%d_%H%M%S)"
         runner_args+=("--log-file=${log_dir}/starletto_${ts}.log")
     fi
-    runner_args+=("${inputs[@]}")
-    exec "$runner" "${runner_args[@]}"
+    runner_args+=("${inputs[@]+"${inputs[@]}"}")
+    exec "$runner" "${runner_args[@]+"${runner_args[@]}"}"
 }
 
 run_dispatch() {
@@ -362,7 +362,7 @@ run_dispatch() {
         install_dir="${PROJECT_ROOT}/${install_dir}"
     fi
 
-    run_native_runner "${native_args[@]}"
+    run_native_runner "${native_args[@]+"${native_args[@]}"}"
 }
 
 invoke_runner() {
@@ -426,7 +426,7 @@ invoke_runner() {
     if [ ${#paths[@]} -eq 0 ] && [ -n "$install_dir" ]; then
         resolved_paths+=("${install_dir}/modules")
     else
-        for p in "${paths[@]}"; do
+        for p in "${paths[@]+"${paths[@]}"}"; do
             local resolved=""
             resolved="$(resolve_native_input "$p" "$root" || true)"
             if [ -n "$resolved" ]; then
@@ -437,7 +437,7 @@ invoke_runner() {
         done
     fi
 
-    exec "$runner" "${mode_args[@]}" "${resolved_paths[@]}"
+    exec "$runner" "${mode_args[@]+"${mode_args[@]}"}" "${resolved_paths[@]+"${resolved_paths[@]}"}"
 }
 
 run_parameter_tool() {
@@ -492,7 +492,7 @@ run_parameter_tool() {
         return 1
     fi
 
-    exec "$tool" "${args[@]}"
+    exec "$tool" "${args[@]+"${args[@]}"}"
 }
 
 run_schema_tool() {
@@ -522,7 +522,7 @@ run_schema_tool() {
         return 1
     fi
 
-    exec python3 "$tool" "${args[@]}"
+    exec python3 "$tool" "${args[@]+"${args[@]}"}"
 }
 
 run_record_replay_tool() {
@@ -627,7 +627,58 @@ run_transport_selftest() {
         return 1
     fi
 
-    exec "$runner" --selftest-transport "${args[@]}"
+    exec "$runner" --selftest-transport "${args[@]+"${args[@]}"}"
+}
+
+# 校验 schema 生成物没有回到源码树。
+# codegen 已由 custom_target 接管（.schema -> .s.h 输出到 build dir），漂移在结构上
+# 不可能再发生；此处防止有人把生成物重新提交进仓库，导致源/生成物再次分叉。
+check_schema_generated_untracked() {
+    local found
+    found=$(find "${PROJECT_ROOT}" -name '*.s.h' -not -path '*/build/*' -not -path '*/.git/*' 2>/dev/null)
+    if [ -n "$found" ]; then
+        log_error "schema 生成物不应位于源码树（应由 custom_target 生成到 build dir）:"
+        printf '%s\n' "$found" | sed 's/^/    /'
+        return 1
+    fi
+    return 0
+}
+
+# schema lint：结构检查（字段 id 重复/非法、字段名重复、root 存在性）
+check_schema_lint() {
+    local tool="${PROJECT_ROOT}/basement/schema/schema_codegen.py"
+    local failed=0
+    local f
+    while IFS= read -r f; do
+        if ! python3 "$tool" lint --schema "$f" >/dev/null 2>&1; then
+            log_error "schema lint 失败: ${f#"${PROJECT_ROOT}"/}"
+            python3 "$tool" lint --schema "$f" 2>&1 | sed 's/^/    /'
+            failed=1
+        fi
+    done < <(find "${PROJECT_ROOT}" -name '*.schema' -not -path '*/build/*' -not -path '*/.git/*' | sort)
+    return $failed
+}
+
+# schema compat：以 git HEAD 为基线，改动不得破坏与已提交版本的兼容性
+# （对应 spec 的演进禁令：改字段 id、类型互换、删字段等）
+check_schema_compat() {
+    local tool="${PROJECT_ROOT}/basement/schema/schema_codegen.py"
+    local failed=0
+    local rel full tmp
+    tmp=$(mktemp -d) || return 1
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        full="${PROJECT_ROOT}/${rel}"
+        [ -f "$full" ] || continue
+        git -C "${PROJECT_ROOT}" show "HEAD:${rel}" > "${tmp}/old.schema" 2>/dev/null || continue
+        if ! python3 "$tool" compat "${tmp}/old.schema" "$full" >/dev/null 2>&1; then
+            log_error "schema 兼容性检查失败: ${rel}"
+            python3 "$tool" compat "${tmp}/old.schema" "$full" 2>&1 | sed 's/^/    /'
+            failed=1
+        fi
+    done < <(git -C "${PROJECT_ROOT}" diff --name-only HEAD -- '*.schema')
+    rm -rf "$tmp"
+    return $failed
 }
 
 run_ci_guard() {
@@ -662,8 +713,11 @@ run_ci_guard() {
                 echo ""
                 echo "验证项:"
                 echo "  1. build      — 编译产物存在且可执行"
-                echo "  2. doctor     — 模块/组件清单诊断通过"
-                echo "  3. list       — 组件列表输出正常"
+                echo "  2. schema     — 生成物未入源码树 + lint + 与 HEAD 的兼容性检查"
+                echo "  3. unit-test  — 单元测试全部通过"
+                echo "  4. selftest   — transport 自检通过"
+                echo "  5. doctor     — 模块/组件清单诊断通过"
+                echo "  6. list       — 组件列表输出正常"
                 echo ""
                 echo "示例:"
                 echo "  star check                    # 全量检查（默认 planning 模块）"
@@ -713,7 +767,7 @@ run_ci_guard() {
     }
 
     if [ "$skip_build" != true ]; then
-        log_info "--- CI Guard: Step 1/4 Build ---"
+        log_info "--- CI Guard: Step 1/8 Build ---"
         if _check_step "build" native_build; then
             :
         else
@@ -724,7 +778,19 @@ run_ci_guard() {
         log_info "--- CI Guard: 跳过构建 ---"
     fi
 
-    log_info "--- CI Guard: Step 2/4 Doctor ---"
+    log_info "--- CI Guard: Step 2/8 Schema ---"
+    _check_step "schema-clean" check_schema_generated_untracked
+    _check_step "schema-lint" check_schema_lint
+    _check_step "schema-compat" check_schema_compat
+
+    log_info "--- CI Guard: Step 3/8 Unit Test ---"
+    _check_step "unit-test" meson test -C "$build_dir"
+
+    log_info "--- CI Guard: Step 4/8 Selftest ---"
+    # 注意：不能调用 run_transport_selftest，它内部用 exec 会替换当前进程
+    _check_step "selftest" "$runner" --selftest-transport
+
+    log_info "--- CI Guard: Step 5/8 Doctor ---"
     if [ ${#targets[@]} -eq 0 ]; then
         for mod_dir in "${PROJECT_ROOT}"/modules/*/; do
             if [ -d "$mod_dir" ] && [ -f "${mod_dir}module.conf" ]; then
@@ -732,16 +798,16 @@ run_ci_guard() {
             fi
         done
     else
-        for t in "${targets[@]}"; do
+        for t in "${targets[@]+"${targets[@]}"}"; do
             _check_step "doctor-$t" "$runner" --doctor "$t"
         done
     fi
 
-    log_info "--- CI Guard: Step 3/3 List ---"
+    log_info "--- CI Guard: Step 6/8 List ---"
     if [ ${#targets[@]} -eq 0 ]; then
         _check_step "list-all" "$runner" --list
     else
-        for t in "${targets[@]}"; do
+        for t in "${targets[@]+"${targets[@]}"}"; do
             _check_step "list-$t" "$runner" --list "$t"
         done
     fi
@@ -790,7 +856,7 @@ case "${1:-}" in
             fi
             args+=("$a")
         done
-        invoke_runner --graph="$graph_format" "${args[@]}"
+        invoke_runner --graph="$graph_format" "${args[@]+"${args[@]}"}"
         ;;
     doctor)
         shift
