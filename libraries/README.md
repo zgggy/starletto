@@ -1,6 +1,6 @@
 # libraries — 算法资产层
 
-按 `00_hub/05_docs/spec/system_vision.md` §3.2 的定义：纯 C++ 算法与数据结构层，
+按 `docs/spec/system_vision.md` §3.2 的定义：纯 C++ 算法与数据结构层，
 **禁止依赖 `transport`/`runtime`**，只依赖 `basement/core` 与必要的数学/几何库。
 
 ## ⚠️ 当前状态：整层未接线
