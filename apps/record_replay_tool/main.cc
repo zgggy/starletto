@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <string>
 
@@ -12,21 +13,46 @@ static void print_usage() {
               << "  star replay <record_file> [speed]    Replay recording to stdout\n";
 }
 
+static auto format_wall_clock(int64_t wall_clock_ns) -> std::string {
+    if (wall_clock_ns <= 0) {
+        return "unknown (v1 recording)";
+    }
+    const auto seconds = static_cast<std::time_t>(wall_clock_ns / 1000000000LL);
+    std::tm tm_buf{};
+    if (::gmtime_r(&seconds, &tm_buf) == nullptr) {
+        return std::to_string(wall_clock_ns);
+    }
+    char buf[32]{};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
+    return std::string(buf);
+}
+
 static auto cmd_info(const std::string& file_path) -> int {
     try {
         star::transport::MessageReplayer replayer(file_path);
         replayer.open();
         std::cout << "Recording: " << file_path << "\n"
+                  << "  format: v" << replayer.file_version() << "\n"
                   << "  messages: " << replayer.message_count() << "\n"
-                  << "  channels: ";
-        const auto channels = replayer.channels();
-        for (size_t i = 0; i < channels.size(); ++i) {
-            if (i > 0) {
-                std::cout << ", ";
+                  << "  wall clock: " << format_wall_clock(replayer.wall_clock_anchor_ns()) << "\n"
+                  << "  channels: " << replayer.channels().size() << "\n";
+
+        for (const auto& summary : replayer.summaries()) {
+            std::cout << "    " << summary.channel_name << "  type=" << summary.type_name
+                      << "  messages=" << summary.message_count;
+            if (summary.versions.empty()) {
+                std::cout << "  schema=<none>";
+            } else {
+                std::cout << "  schema=";
+                for (size_t i = 0; i < summary.versions.size(); ++i) {
+                    if (i > 0) {
+                        std::cout << ",";
+                    }
+                    std::cout << "v" << summary.versions[i] << "/h" << summary.hashes[i];
+                }
             }
-            std::cout << channels[i];
+            std::cout << "  ts=[" << summary.first_timestamp_ns << ".." << summary.last_timestamp_ns << "]\n";
         }
-        std::cout << "\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "[E] info failed: " << e.what() << "\n";
@@ -41,10 +67,16 @@ static auto cmd_replay(const std::string& file_path, double speed) -> int {
         std::cout << "Replaying: " << file_path << ", messages=" << replayer.message_count() << ", speed=" << speed << "\n";
 
         int count{0};
-        replayer.play_all(
-            [&](const std::string& topic, const std::string& type_name, int64_t, const std::vector<uint8_t>& payload) {
+        replayer.play_all_entries(
+            [&](const star::transport::MessageReplayer::RecordEntry& entry) {
                 ++count;
-                std::cout << "  [" << count << "] topic=" << topic << ", type=" << type_name << ", payload_size=" << (int)payload.size() << "\n";
+                std::cout << "  [" << count << "] topic=" << entry.channel_name
+                          << ", type=" << entry.type_name;
+                if (not entry.schema_type_id.empty()) {
+                    std::cout << ", schema=" << entry.schema_type_id.name << " v" << entry.schema_type_id.version
+                              << " h" << entry.schema_type_id.hash;
+                }
+                std::cout << ", payload_size=" << entry.payload.size() << "\n";
             },
             speed);
 

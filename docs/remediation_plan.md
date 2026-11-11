@@ -161,6 +161,7 @@
 | P2-5 | 日志无 pid、同步写、无结构化 | 加 pid/异步队列/JSON；per-module 级别接线 |
 | P2-6 | `IClock` 有抽象零引用，仿真时钟无法驱动 futex | 要么接入 `RuntimeContext` 并贯穿调度/futex/录放，要么删除 |
 | P2-7 ✅ | **本轮复审发现（2026-11-12）**：shm 写路径优先固定布局，读路径固定调用 `from_binary`——生成消息跨进程必然解析失败（固定布局帧以 `0x5354` 开头，TLV 解析读到非法 wire type）。此前没有双进程 + 生成消息的用例，所以一直未暴露 | shm 默认写二进制 TLV（可演进格式）；固定布局帧头升级 v2 并携带 `schema_version`+`schema_hash`，读取方按帧头自动选解码器并校验身份；固定布局明确限定同版本使用。回归：`transport_shm_payload_encoding` 2 用例 + `schema_fixed_layout` 4 用例 + `Component decode_payload selects the decoder from the frame header` |
+| P2-8 ✅ | 录制格式 v1 只有 C++ 类型名，没有 schema 身份；时间戳只有单调时钟，脱离录制机器无法还原墙钟，跨版本回放不可诊断 | 录制格式 v2：头部墙钟/单调双锚点；条目携带 schema name+version+hash；回放前 `validate_against()` 校验本地编译身份；v1 文件仍可读。回归：`record_replay` 9 用例（新增身份/摘要/墙钟/校验/v1 兼容 5 个） |
 
 ---
 

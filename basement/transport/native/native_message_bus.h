@@ -191,6 +191,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
         std::shared_ptr<MessageRecorder> recorder;
         bool should_record = false;
         std::string record_type_name;
+        star::schema::SchemaTypeId record_schema_type_id;
         MessageView delivered;
         const auto dispatch_begin = std::chrono::steady_clock::now();
         {
@@ -231,6 +232,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
             recorder = recorder_;
             should_record = recorder != nullptr && (record_channels_.empty() || record_channels_.count(channel_name) > 0);
             record_type_name = it->second.descriptor.type_name;
+            record_schema_type_id = it->second.descriptor.schema_type_id;
         }
 
         for (const auto& [_, cb] : reader_callbacks) {
@@ -251,7 +253,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
                 std::chrono::steady_clock::now().time_since_epoch())
                                                          .count());
             auto payload = encode_payload(serializer);
-            recorder->record(channel_name, record_type_name, now_ns, payload);
+            recorder->record(channel_name, record_type_name, record_schema_type_id, now_ns, payload);
         }
         const auto latency_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - dispatch_begin).count());
         {
