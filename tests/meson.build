@@ -187,6 +187,16 @@ test(
 )
 
 test(
+    'core_logger',
+    executable(
+        'core_logger_test',
+        files('core/logger_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [star_core_dep, libraries_dep],
+    ),
+)
+
+test(
     'schema_parser',
     executable(
         'schema_parser_test',

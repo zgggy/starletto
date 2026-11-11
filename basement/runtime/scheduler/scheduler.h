@@ -16,6 +16,8 @@ using ProcessGroupPlan = star::generated::runtime::process_plan::ProcessGroupPla
 struct TaskDescriptor {
     std::string name;
     std::string policy;
+    // 任务所属模块：调度线程在调用 callback 前用它设置 per-module 日志级别
+    std::string module_name;
     int64_t period_ms{0};
     int64_t priority{0};
     std::function<bool(int64_t frame_id)> callback;

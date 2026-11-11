@@ -20,7 +20,17 @@ struct RollingPolicy {
 
 class RollingFileLogger final : public Logger {
   public:
-    explicit RollingFileLogger(std::string base_path, RollingPolicy policy = {}) : base_path_(std::move(base_path)), policy_(std::move(policy)) { open_current(); }
+    explicit RollingFileLogger(std::string base_path, RollingPolicy policy = {}, LogFormat format = LogFormat::TEXT)
+        : Logger(format), base_path_(std::move(base_path)), policy_(std::move(policy)) {
+        open_current();
+    }
+
+    void flush() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (current_) {
+            current_->flush();
+        }
+    }
 
     void write(Level /*level*/, const std::string& formatted) override {
         std::lock_guard<std::mutex> lock(mutex_);

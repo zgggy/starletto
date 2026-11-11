@@ -35,6 +35,7 @@ struct LoadContext {
     std::filesystem::path module_dir;
     std::filesystem::path module_config_dir;
     std::string module_name;
+    std::string log_level;
 };
 
 inline auto resolve_port_type_name(
@@ -60,6 +61,9 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
     auto plan = ComponentLoadPlan{};
     plan.module_name = ctx.module_name.empty() ? conf.component.type : ctx.module_name;
     plan.component_name = conf.component.name;
+    if (not ctx.log_level.empty()) {
+        plan.log_level = ctx.log_level;
+    }
     if (conf.component.component_group.has_value()) {
         plan.component_group = *conf.component.component_group;
     }

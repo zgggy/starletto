@@ -40,6 +40,15 @@ class NativeComponentHost final {
     }
 
     void load(const star::runtime::plan::ComponentLoadPlan& plan) {
+        // per-module 日志级别来自 module.conf 的 logging.level（经 plan 传下来）
+        if (plan.log_level.has_value() and not plan.log_level->empty()) {
+            auto level = star::base::Level::INFO;
+            if (star::base::parse_level(*plan.log_level, &level)) {
+                star::base::LoggerManager::get().set_module_level(plan.module_name, level);
+            } else {
+                logW << "invalid module log level: module=" << plan.module_name << ", value=" << *plan.log_level;
+            }
+        }
         maybe_load_dynamic_library(plan);
         auto component = registry_->create(plan.component_class);
         if (not component) {
@@ -221,6 +230,7 @@ class NativeComponentHost final {
             star::runtime::TaskDescriptor desc;
             desc.name = task_name;
             desc.policy = p.scheduler_type.value_or("");
+            desc.module_name = p.module_name;
             desc.period_ms = is_timer_trigger ? p.trigger->cycle_ms.value_or(0) : 0;
             desc.priority = p.priority.value_or(0);
             desc.callback = [this, idx = i](int64_t frame_id) {

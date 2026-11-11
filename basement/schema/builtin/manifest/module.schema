@@ -23,4 +23,9 @@ root ModuleConf {
     2 layout : LayoutInfo ?
     3 components : string[] ?
     4 dependency : DependencyInfo ?
+    5 logging : LoggingInfo ?
+}
+
+def LoggingInfo {
+    1 level : string ?
 }

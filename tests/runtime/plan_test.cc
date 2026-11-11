@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "basement/runtime/component/component.h"
+#include "basement/schema/schema_value.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/plan/plan_builder.h"
 #include "basement/transport/rpc/rpc.h"
@@ -102,3 +103,26 @@ TEST_CASE("a service declared in the plan is callable over ordinary channels") {
 }
 
 }  // namespace
+
+// P2-5：module.conf 的 logging.level 必须能解析并进入 plan，供 host 设置 per-module 级别
+TEST_CASE("module.conf logging level is parsed into the plan") {
+    using star::generated::manifest::module::ModuleConf;
+
+    const auto value = star::schema::SchemaParser{"module { name = planning } logging { level = DEBUG }"}.parse();
+    const auto conf = ModuleConf::from_value(value);
+    REQUIRE(conf.logging.has_value());
+    REQUIRE(conf.logging->level.has_value());
+    REQUIRE_EQ(*conf.logging->level, std::string("DEBUG"));
+
+    auto ctx = star::runtime::plan::LoadContext{};
+    ctx.module_name = "planning";
+    ctx.log_level = "DEBUG";
+
+    auto component_conf = star::generated::manifest::component::ComponentConf{};
+    component_conf.component.name = "motion";
+    component_conf.component.type = "planning";
+    component_conf.component.component_class = "star::planning::Motion";
+    const auto plan = star::runtime::plan::build_component_load_plan(component_conf, ctx);
+    REQUIRE(plan.log_level.has_value());
+    REQUIRE_EQ(*plan.log_level, std::string("DEBUG"));
+}

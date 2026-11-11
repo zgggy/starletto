@@ -176,6 +176,35 @@ auto response = client.call_serialized(make_typed_request(request));
 `<service>/request`、`<service>/response` 在 `star monitor` 里和普通 topic 一样可见。
 
 
+### 2.2.1 日志与排查
+
+日志默认文本格式，带 `pid=` 与 `tid=`，多进程下能直接区分来源进程/线程：
+
+```
+2026-11-12T01:07:49.310525 INFO  [pid=29825 tid=0x20b2f0f40] app.cc:67 run loaded component: parameter
+```
+
+需要机器可读时用 JSON（单行、消息已转义）：
+
+```bash
+STAR_LOG_FORMAT=json star run modules/setting/module.conf
+```
+
+| 环境变量 | 作用 | 默认 |
+|---|---|---|
+| `STAR_LOG_LEVEL` | 全局级别 `DEBUG/INFO/WARN/ERROR` | `INFO` |
+| `STAR_LOG_FORMAT` | `text` 或 `json` | `text` |
+| `STAR_LOG_ASYNC` | `1` 异步写、`0` 同步写 | 文件日志 `1`，stdout `0` |
+| `STAR_LOG_FILE` | 写滚动文件而不是 stdout | 无 |
+
+模块级级别写在 `module.conf`，只影响该模块（调度线程进入任务时切换，查表不进热路径）：
+
+```conf
+logging {
+    level = DEBUG
+}
+```
+
 ### 2.3 `register.cc` —— 插件入口（永远照抄）
 
 ```cpp

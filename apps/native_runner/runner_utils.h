@@ -32,6 +32,9 @@ inline auto resolve_load_context(const std::filesystem::path& component_conf_pat
     if (not module_conf_data.value->module.name.empty()) {
         ctx.module_name = module_conf_data.value->module.name;
     }
+    if (module_conf_data.value->logging.has_value() && module_conf_data.value->logging->level.has_value()) {
+        ctx.log_level = *module_conf_data.value->logging->level;
+    }
 
     auto config_dir = module_conf->parent_path() / (module_conf_data.value->layout.has_value() && module_conf_data.value->layout->config_dir.has_value() ? *module_conf_data.value->layout->config_dir : ".");
     ctx.module_config_dir = std::filesystem::absolute(config_dir);

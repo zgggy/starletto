@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "basement/core/logger/file_logger.h"
+#include "basement/core/logger/async_logger.h"
 #include "basement/core/logger/logger.h"
 #include "basement/core/logger/rolling_file_logger.h"
 #include "basement/runtime/context/frame_context.h"
@@ -87,13 +88,41 @@ class RuntimeFactory {
         auto parameter_store = std::make_shared<NativeParameterStore>();
         auto scheduler = std::make_shared<star::runtime::NativeScheduler>();
         auto schema_registry = std::make_shared<star::schema::SchemaRegistry>();
-        if (const auto* file = std::getenv("STAR_LOG_FILE"); file != nullptr && std::string(file).size() > 0) {
+        auto log_level = star::base::Level::INFO;
+        if (const auto* value = std::getenv("STAR_LOG_LEVEL"); value != nullptr) {
+            auto parsed = star::base::Level::INFO;
+            if (star::base::parse_level(value, &parsed)) {
+                log_level = parsed;
+            }
+        }
+        auto log_format = star::base::LogFormat::TEXT;
+        if (const auto* value = std::getenv("STAR_LOG_FORMAT"); value != nullptr && std::string(value) == "json") {
+            log_format = star::base::LogFormat::JSON;
+        }
+        const auto* file = std::getenv("STAR_LOG_FILE");
+        const bool has_file = file != nullptr && std::string(file).size() > 0;
+        auto inner = std::shared_ptr<star::base::Logger>{};
+        if (has_file) {
             auto policy = star::base::RollingPolicy{};
             policy.max_file_size = 10 * 1024 * 1024;
             policy.max_backup_files = 5;
-            star::base::LoggerManager::get().set_logger(std::make_shared<star::base::RollingFileLogger>(std::string(file), policy));
+            inner = std::make_shared<star::base::RollingFileLogger>(std::string(file), policy, log_format);
         } else {
-            star::base::LoggerManager::get().set_logger(std::make_shared<star::base::StdoutLogger>());
+            inner = std::make_shared<star::base::StdoutLogger>(log_format);
+        }
+        inner->set_level(log_level);
+        // 文件日志默认异步（I/O 不阻塞业务线程）；stdout 默认同步，
+        // 崩溃时队列里的最后几条日志不能丢——排查恰恰需要它们
+        auto async = has_file;
+        if (const auto* value = std::getenv("STAR_LOG_ASYNC"); value != nullptr) {
+            async = std::string(value) != "0";
+        }
+        if (async) {
+            auto logger = std::make_shared<star::base::AsyncLogger>(inner);
+            logger->set_level(log_level);
+            star::base::LoggerManager::get().set_logger(logger);
+        } else {
+            star::base::LoggerManager::get().set_logger(inner);
         }
         auto logger = star::base::LoggerManager::get().get_logger_shared();
         auto ctx = std::make_shared<NativeRuntimeContext>(std::move(channel_registry), std::move(message_bus), std::move(parameter_store), std::move(scheduler),

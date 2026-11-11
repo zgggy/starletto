@@ -21,6 +21,7 @@ root ComponentLoadPlan {
     17 inputs : PortPlan[] ?
     18 outputs : PortPlan[] ?
     19 services : ServicePortPlan[] ?
+    20 log_level : string ?
 }
 
 def TriggerPlan {

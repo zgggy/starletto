@@ -14,7 +14,8 @@ namespace star::base {
 
 class FileLogger final : public Logger {
   public:
-    explicit FileLogger(std::string path, bool append = true, bool flush_each_line = true) : path_(std::move(path)), flush_each_line_(flush_each_line) {
+    explicit FileLogger(std::string path, bool append = true, bool flush_each_line = true, LogFormat format = LogFormat::TEXT)
+        : Logger(format), path_(std::move(path)), flush_each_line_(flush_each_line) {
         std::error_code ec;
         const auto p = std::filesystem::path(path_);
         if (p.has_parent_path()) {
@@ -23,6 +24,13 @@ class FileLogger final : public Logger {
         file_.open(path_, append ? std::ios::app : std::ios::trunc);
         if (not file_.is_open()) {
             throw star::excep::RuntimeError("FileLogger open failed: path=", path_);
+        }
+    }
+
+    void flush() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (file_.is_open()) {
+            file_.flush();
         }
     }
 

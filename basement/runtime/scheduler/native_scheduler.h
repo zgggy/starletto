@@ -319,6 +319,9 @@ class NativeScheduler final : public Scheduler {
             if (context_) {
                 context_->set_current_frame(item.frame);
             }
+            // 进入任务前切模块：日志级别按 module.conf 的 logging.level 过滤，
+            // 查表只发生一次，不进入每条日志的热路径
+            auto module_scope = star::base::ModuleLogScope{desc.module_name.empty() ? nullptr : desc.module_name.c_str()};
             auto failed = false;
             try {
                 desc.callback(item.frame.frame_id);
