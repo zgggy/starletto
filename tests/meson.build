@@ -77,6 +77,16 @@ test(
 )
 
 test(
+    'runtime_stats_publisher',
+    executable(
+        'runtime_stats_publisher_test',
+        files('runtime/stats_publisher_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep, libraries_dep],
+    ),
+)
+
+test(
     'runtime_health_checker',
     executable(
         'runtime_health_checker_test',

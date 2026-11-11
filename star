@@ -30,7 +30,7 @@ show_help() {
     echo "  star schema <命令>                  schema 工具（fmt/gen/compat/lint）"
     echo "  star record info <文件>             查看录制文件信息（消息数/topics/时间范围）"
     echo "  star replay <文件> [speed]          回放录制文件（支持速率控制）"
-    echo "  star monitor [目标...]              实时查看 transport topic 统计（频率/延迟/丢帧/QoS）"
+    echo "  star monitor [--monitor-ms=<ms>] [--once]  实时查看各 worker 的通道统计（频率/延迟/丢帧/QoS）"
     echo "  star check [参数...] [目标...]      CI Guard: 构建后自动化验证（build + doctor + smoke）"
     echo "  star test [参数...]                 运行单元测试（Meson test）"
     echo "  star help                           显示帮助信息"

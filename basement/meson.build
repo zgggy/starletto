@@ -24,6 +24,7 @@ schema_dep = declare_dependency(
     dependencies: [star_core_dep],
     sources: [
         schema_gen_basement_schema_builtin_manifest,
+        schema_gen_basement_schema_builtin_observability,
         schema_gen_basement_schema_builtin_runtime,
     ],
 )

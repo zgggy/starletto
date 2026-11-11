@@ -17,6 +17,7 @@
 #include "basement/runtime/component/component_dl_helper.h"
 #include "basement/runtime/component/component_registry.h"
 #include "basement/runtime/context/runtime_context.h"
+#include "basement/runtime/observability/stats_publisher.h"
 #include "basement/runtime/plan/plan_builder.h"
 #include "basement/runtime/scheduler/native_scheduler.h"
 #include "basement/runtime/scheduler/scheduler.h"
@@ -52,6 +53,8 @@ class NativeComponentHost final {
     }
 
     void set_process_plan(const star::runtime::plan::ProcessPlan& plan) { process_plan_ = plan; }
+
+    void set_process_group(std::string group) { process_group_ = std::move(group); }
 
     void configure() {
         if (tasks_initialized_) {
@@ -89,9 +92,16 @@ class NativeComponentHost final {
                 logE << "NativeComponentHost scheduler start failed, group=" << group << ", err: unknown exception";
             }
         }
+        // 统计发布是普通通道流量：monitor 由此看到本进程真实状态（不再自指）
+        stats_publisher_ = std::make_unique<star::runtime::observability::StatsPublisher>(*context_, process_group_);
+        stats_publisher_->start();
     }
 
     void stop() {
+        if (stats_publisher_) {
+            stats_publisher_->stop();
+            stats_publisher_.reset();
+        }
         for (auto& [group, scheduler] : schedulers_) {
             if (not scheduler) {
                 continue;
@@ -432,6 +442,8 @@ class NativeComponentHost final {
     std::shared_ptr<ComponentRegistry> registry_;
     std::vector<std::unique_ptr<Component>> components_;
     std::vector<star::runtime::plan::ComponentLoadPlan> plans_;
+    std::string process_group_;
+    std::unique_ptr<star::runtime::observability::StatsPublisher> stats_publisher_;
     std::optional<star::runtime::plan::ProcessPlan> process_plan_;
     std::mutex trigger_frame_mutex_;
     std::unordered_map<std::string, int64_t> trigger_frame_ids_;

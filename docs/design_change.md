@@ -22,3 +22,4 @@
 | 2026-11-12 | 逐通道解码策略 unknown/missing/type_mismatch（conf→plan→通道→解码）；同时修复跨进程解码缺陷：shm 默认写二进制 TLV，固定布局帧头 v2 携带 schema 身份并只允许同版本 | schema/transport/runtime | contract_decisions 阶段三；remediation P2-7 |
 | 2026-11-12 | 录制格式 v2：墙钟/单调双锚点 + 每条消息携带 schema 身份；回放前 `validate_against()` 校验；v1 文件仍可读 | transport | contract_decisions 阶段四 |
 | 2026-11-12 | 服务并入通道：删除 ServiceBus/NativeServiceBus/ShmServiceBus，改为 RpcClient/RpcServer（仅依赖 MessageBus）；payload 信封携带 ok/message | transport/runtime/modules/apps | contract_decisions 决策四 阶段五 |
+| 2026-11-12 | monitor 重写：worker 通过 `StatsPublisher` 周期发布 `WorkerStats` 到普通通道 `starletto.stats`；registry 增加「系统发布者」（强制 SHM_WRITE 且不入业务路由表）；monitor 改为普通订阅者，不再自指 | runtime/transport/apps/schema | contract_decisions 附：monitor 自指 |

@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "basement/core/logger/logger.h"
 #include "basement/transport/common/route_parser.h"
 
 namespace star::transport {
@@ -39,11 +40,29 @@ public:
         shm_sub_channels_ = parse_channel_set(shm_sub_channels_csv);
     }
 
+    // 系统通道（如 starletto.stats）：不在业务路由计划里，但必须走 shm，
+    // 否则其它进程（monitor）看不到。生产者显式登记，路由模式覆盖为 SHM_WRITE。
+    void register_system_publisher(const std::string& channel) {
+        if (channel.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        system_pub_channels_.insert(channel);
+    }
+
+    auto is_system_publisher(const std::string& channel) const -> bool {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return system_pub_channels_.count(channel) > 0;
+    }
+
     void register_writer(const std::string& channel, const std::string& process_group) {
         if (channel.empty() || process_group.empty()) {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex_);
+        if (system_pub_channels_.count(channel) > 0) {
+            return;
+        }
         auto& entry = route_registry_[channel];
         if (entry.producer_group.empty()) {
             entry.producer_group = process_group;
@@ -55,6 +74,9 @@ public:
             return;
         }
         std::lock_guard<std::mutex> lock(mutex_);
+        if (system_pub_channels_.count(channel) > 0) {
+            return;
+        }
         route_registry_[channel].consumer_groups.insert(process_group);
     }
 
@@ -94,10 +116,11 @@ public:
 
 private:
     auto shm_route_mode_locked(const std::string& channel) const -> ShmRouteMode {
+        const bool system_pub = system_pub_channels_.count(channel) > 0;
         if (not local_group_.empty()) {
             const auto it = route_registry_.find(channel);
             if (it == route_registry_.end()) {
-                return ShmRouteMode::INPROC_ONLY;
+                return system_pub ? ShmRouteMode::SHM_WRITE : ShmRouteMode::INPROC_ONLY;
             }
             if (it->second.producer_group != local_group_) {
                 if (it->second.consumer_groups.find(local_group_) != it->second.consumer_groups.end()) {
@@ -113,7 +136,7 @@ private:
             return ShmRouteMode::INPROC_ONLY;
         }
 
-        const bool can_write = shm_pub_channels_.find(channel) != shm_pub_channels_.end();
+        const bool can_write = system_pub or shm_pub_channels_.find(channel) != shm_pub_channels_.end();
         const bool can_read = shm_sub_channels_.find(channel) != shm_sub_channels_.end();
         if (can_write && can_read) {
             return ShmRouteMode::SHM_READ_WRITE;
@@ -132,6 +155,7 @@ private:
     std::unordered_map<std::string, RouteEntry> route_registry_;
     std::unordered_set<std::string> shm_pub_channels_;
     std::unordered_set<std::string> shm_sub_channels_;
+    std::unordered_set<std::string> system_pub_channels_;
 };
 
 }  // namespace star::transport

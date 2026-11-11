@@ -253,6 +253,19 @@ RpcServer（声明式，component.conf commands 块不变）
 
 **收益**：`star monitor` 从"自指的空报告"变成真正的运行时观测入口；这也是决策二（可复现）的验证工具——没有观测，任何契约改动的回归都看不见。
 
+**落地（2026-11-12）**：统计通道路线 ✅
+
+- `StatsPublisher`（`basement/runtime/observability/stats_publisher.h`）由 `NativeComponentHost`
+  在 start/stop 时管理，每 1s 把 `all_channel_stats()` 编码成 `WorkerStats` 发布到
+  `starletto.stats`（单一通道，进程组在消息里；monitor 只需订阅一次，避免通配符订阅）。
+- 该通道是普通通道：走路由/录制/类型校验。为跨进程可见，`ChannelRegistry` 增加
+  「系统发布者」概念：登记后即使不在业务路由计划里也走 `SHM_WRITE`，且**不进入**
+  业务路由表（否则会被 `register_writer` 记成无消费者的 inproc 通道）。
+- `star monitor` 变成普通订阅者：默认 `shm_routed` + 订阅 `starletto.stats`，
+  `--monitor-ms=<ms>`（默认 3000）控制观察时长，`--once` 只取一张快照。
+- 验证：单进程 worker 显示 `setting.parameter.snapshot`；多进程 supervisor 下
+  monitor 同时显示 parameter/planning 两个 worker 的真实 pid、hz、p99、drop。
+
 ---
 
 ## 决策之间的关系与顺序

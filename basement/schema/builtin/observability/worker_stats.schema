@@ -1,0 +1,26 @@
+schema observability.worker_stats
+version 1
+namespace star.generated.observability.worker_stats
+
+root WorkerStats {
+    1 process_group : string
+    2 pid : int
+    3 timestamp_ns : int
+    4 transport : string ?
+    5 shm_available : bool ?
+    6 channels : ChannelStatsEntry[]
+}
+
+def ChannelStatsEntry {
+    1 channel : string
+    2 write_count : int
+    3 deliver_count : int
+    4 dropped_count : int
+    5 callback_failures : int
+    6 payload_bytes_total : int
+    7 avg_hz : float
+    8 latency_avg_us : int
+    9 latency_p99_us : int
+    10 latency_max_us : int
+    11 max_queue_depth : int
+}

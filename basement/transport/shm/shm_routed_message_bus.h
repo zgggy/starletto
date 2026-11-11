@@ -42,6 +42,9 @@ class ShmRoutedMessageBus final : public MessageBus, public RecordableBus, publi
         channel_registry_->configure_route_plan(route_plan);
     }
 
+    // 系统通道（统计）由本进程发布、其它进程订阅：即使不在业务路由计划里也必须走 shm
+    void register_system_publisher(const std::string& channel) { channel_registry_->register_system_publisher(channel); }
+
     // 录制委托给内部 NativeMessageBus：routed 写路径本来就先走 inproc，
     // 因此录制发生在 inproc 侧即可覆盖全部发布；此前未继承 RecordableBus，
     // 导致 record:true 在路由模式下静默无效
@@ -279,7 +282,7 @@ class ShmRoutedMessageBus final : public MessageBus, public RecordableBus, publi
         if (channel_registry_ == nullptr || not channel_registry_->has_route_plan()) {
             return;
         }
-        if (channel_registry_->is_in_route_plan(channel_name)) {
+        if (channel_registry_->is_in_route_plan(channel_name) or channel_registry_->is_system_publisher(channel_name)) {
             return;
         }
         {

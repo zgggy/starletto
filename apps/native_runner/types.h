@@ -23,6 +23,8 @@ struct RunOptions {
     std::string log_dir;
     bool multi_process{false};
     bool worker{false};
+    int64_t monitor_ms{3000};
+    bool monitor_once{false};
 };
 
 struct Inputs {

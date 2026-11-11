@@ -81,6 +81,8 @@ static auto parse_args(int argc, char** argv) -> Inputs {
         if (a == "--list") { inputs.options.mode = "list"; continue; }
         if (a == "--doctor") { inputs.options.mode = "doctor"; continue; }
         if (a == "--monitor") { inputs.options.mode = "monitor"; continue; }
+        if (auto v = parse_i64_arg(a, "--monitor-ms=")) { inputs.options.monitor_ms = *v; continue; }
+        if (a == "--once") { inputs.options.monitor_once = true; continue; }
         if (a == "--selftest-transport") { inputs.options.mode = "selftest_transport"; continue; }
         if (a.rfind("--graph=", 0) == 0) {
             inputs.options.mode = "graph";
