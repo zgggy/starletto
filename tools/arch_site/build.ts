@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 const ROOT = new URL('.', import.meta.url).pathname
-const OUT = join(ROOT, '..', '..', '00_hub', 'docs', 'architecture.html')
+const OUT = join(ROOT, '..', '..', 'docs', 'architecture.html')
 
 function isIdentChar(c: string): boolean {
   return /[A-Za-z0-9_$]/.test(c)

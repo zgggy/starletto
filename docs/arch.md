@@ -1,5 +1,7 @@
 # 系统架构设计
 
+> 📖 面向算法工程师的详细图集（含进程/内存/通信白话解释）见 [architecture/](architecture/README.md)。
+
 > 2026-09-27 更新：图改用 Mermaid 并对齐本轮整改后的实际状态
 > （分层归位、纯插件装配、codegen 迁 custom_target、CI 门禁 10 项）。
 > 前置文档：[架构评审与整改](arch_review_20260926.md)。

@@ -97,7 +97,7 @@ Schema 要超过 protobuf 的关键是 zero-copy，因此 core 必须提供：
 
 ### 6.3 集成点
 
-[`runtime_factory.h`](../../../basement/runtime/factory/runtime_factory.h)：当 `STAR_LOG_FILE` 环境变量设置时，自动创建 `RollingFileLogger` 替代 `FileLogger`。
+[`runtime_factory.h`](../../basement/runtime/factory/runtime_factory.h)：当 `STAR_LOG_FILE` 环境变量设置时，自动创建 `RollingFileLogger` 替代 `FileLogger`。
 
 ### 6.4 验收标准
 
@@ -123,7 +123,7 @@ YYYY-MM-DDTHH:MM:SS.uuuuuu LEVEL [TID] file:line function message
 
 ### 7.3 实现
 
-[`logger.h::format_message()`](../../../basement/core/logger/logger.h) — 使用 `<chrono>` + `<iomanip>` + `<thread>` 生成 ISO 时间戳 + 线程 ID + 位置信息。`StdoutLogger` 简化为直接输出 `format_message()` 结果。
+[`logger.h::format_message()`](../../basement/core/logger/logger.h) — 使用 `<chrono>` + `<iomanip>` + `<thread>` 生成 ISO 时间戳 + 线程 ID + 位置信息。`StdoutLogger` 简化为直接输出 `format_message()` 结果。
 
 ### 7.4 验收标准
 
@@ -138,7 +138,7 @@ YYYY-MM-DDTHH:MM:SS.uuuuuu LEVEL [TID] file:line function message
 
 ### 8.2 接口
 
-文件：[`iclock.h`](../../../basement/core/iclock.h)
+文件：[`iclock.h`](../../basement/core/iclock.h)
 
 ```cpp
 class IClock {
@@ -167,7 +167,7 @@ class SimulationClock final : public IClock;   // 可推进/设置的仿真时�
 
 ### 9.2 接口设计
 
-文件：[`resource_monitor.h`](../../../basement/runtime/observability/resource_monitor.h)
+文件：[`resource_monitor.h`](../../basement/runtime/observability/resource_monitor.h)
 
 ```cpp
 struct ResourceSnapshot {
@@ -208,7 +208,7 @@ class ResourceMonitor {
 
 ### 9.5 集成点
 
-[`app.h`](../../../apps/native_runner/app.h) 中 `monitor()` 子命令末尾自动附加资源行：
+[`app.h`](../../apps/native_runner/app.h) 中 `monitor()` 子命令末尾自动附加资源行：
 
 ```
 resource pid=12345 name=native_runner cpu=12.3% rss=45216kB fds=24 threads=8
@@ -229,7 +229,7 @@ resource pid=12345 name=native_runner cpu=12.3% rss=45216kB fds=24 threads=8
 
 ### 10.2 接口设计
 
-文件：[`health_checker.h`](../../../basement/runtime/observability/health_checker.h)
+文件：[`health_checker.h`](../../basement/runtime/observability/health_checker.h)
 
 ```cpp
 enum class HealthSeverity : uint8_t { OK, WARNING, CRITICAL };

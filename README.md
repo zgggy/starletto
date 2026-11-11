@@ -9,7 +9,7 @@ Starletto 是一个自动驾驶开放平台，核心是一套 **Native-first** �
 ## 项目组成
 
 ```
-00_hub/docs/ 项目文档（spec / 架构 / 评审 / 发布记录）
+docs/        项目文档（架构图集 / 组件开发指南 / spec / 评审 / 修复方案 / 发布）
 basement/    运行时底座（自底向上）
              ├── core      日志 / 异常 / 时钟 / 类型擦除指针
              ├── schema    .schema IDL + codegen + 二进制 codec + 兼容检查
@@ -17,12 +17,19 @@ basement/    运行时底座（自底向上）
              └── runtime   组件模型 / 调度 / 插件 / 进程编排 / 健康与观测
 libraries/   算法与通用库（禁止依赖 transport/runtime）
              element（领域类型）/ method（规划算法）/ machine（行为树）/ common / tool
-modules/     业务组件（setting / planning / control / debug）
+modules/     业务组件（setting / planning / control）
 apps/        宿主程序与工具（native_runner 及各 demo/工具）
 data/        标定与地图数据
 ```
 
 分层约束：`libraries` 只依赖 `basement/core` 与必要的数学/几何库；`runtime` 不定义业务消息结构；`transport` 不关心业务含义。
+
+## 文档入口
+
+- [架构图集](docs/architecture/README.md) — 6 篇，面向算法工程师，白话解释进程/内存/通信
+- [组件开发指南](docs/component_guide.md) — 写一个组件要动哪些文件、常见陷阱
+- [修复方案](docs/remediation_plan.md) — 底层缺陷分级与修复计划
+- [设计 spec](docs/spec/) — 四条硬约束与各层契约
 
 ## 技术栈
 
