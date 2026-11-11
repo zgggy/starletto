@@ -144,7 +144,7 @@ core ← schema ← transport ← runtime ← manifest
 | RollingFileLogger | ✅ | 按大小滚动，max_size + backup_count |
 | 统一日志格式 | ✅ | ISO 8601 时间戳 + 微秒 + LEVEL + TID + file:line + function |
 | TypedConstPtr | ✅ | inproc 零拷贝指针传递 |
-| IClock 抽象时钟 | ✅ | steady/real/wall 三种实现，SimulationClock 支持 advance/set |
+| IClock 抽象时钟 | ⛔ 已删除 | 曾实现 steady/system/simulation 三种，零引用；2026-11-12 删除（见 remediation P2-6） |
 
 **待完善**：
 - ⬜ ByteSpan/MutableByteSpan（为 View/Builder 做准备）

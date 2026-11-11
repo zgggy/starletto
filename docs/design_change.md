@@ -25,3 +25,4 @@
 | 2026-11-12 | monitor 重写：worker 通过 `StatsPublisher` 周期发布 `WorkerStats` 到普通通道 `starletto.stats`；registry 增加「系统发布者」（强制 SHM_WRITE 且不入业务路由表）；monitor 改为普通订阅者，不再自指 | runtime/transport/apps/schema | contract_decisions 附：monitor 自指 |
 | 2026-11-12 | shm 读侧线程模型：每 reader 一个轮询线程 → **每通道一个**（多 reader 共享读取、各按 QoS 分发）；reader 析构停线程并 join，剩余 reader 自动重启 poller | transport | remediation_plan P2-3 |
 | 2026-11-12 | 日志结构化：文本行加 pid/tid、可选 JSON（`STAR_LOG_FORMAT=json`）、`AsyncLogger` 有界队列（文件日志默认异步，stdout 默认同步）、`module.conf` 的 `logging.level` → plan → host → 调度线程 `ModuleLogScope` | core/runtime/apps | remediation_plan P2-5 |
+| 2026-11-12 | 删除 `IClock`（零引用）：仅替换 `now()` 无法驱动 futex/timer/回放节奏，仿真时间需要「统一时钟 + 可唤醒等待 + 回放驱动器」，不是单个接口 | core | remediation_plan P2-6 |

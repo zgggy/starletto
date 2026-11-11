@@ -130,15 +130,15 @@ YYYY-MM-DDTHH:MM:SS.uuuuuu LEVEL [TID] file:line function message
 - ✅ 所有 log 输出统一格式（stdout + file）（2026-04-11）
 - ✅ ISO 8601 时间戳 + 微秒精度（2026-04-11）
 
-## 8. Clock 抽象（F4）
+## 8. Clock 抽象（F4，已于 2026-11-12 删除）
 
 ### 8.1 目标
 
 提供可替换的时钟接口，为 record/replay 仿真时间做准备。
 
-### 8.2 接口
+### 8.2 接口（历史）
 
-文件：[`iclock.h`](../../basement/core/iclock.h)
+文件：[`iclock.h`](../../basement/core/iclock.h)（已删除，仅留档）
 
 ```cpp
 class IClock {
@@ -154,10 +154,24 @@ class SimulationClock final : public IClock;   // 可推进/设置的仿真时�
 
 `SimulationClock` 支持 `advance(ns)` 和 `set(time_point)`，用于 record/replay 场景。
 
-### 8.3 验收标准
+### 8.3 验收标准（历史）
 
 - ✅ 三个实现类定义完成（2026-04-11）
 - ✅ 接口纯虚、无业务依赖（2026-04-11）
+
+### 8.4 已删除（2026-11-12）
+
+该抽象自创建起**零引用**：没有任何代码 include `iclock.h`，而 `basement/` 里 32 处
+计时点直接调用 `std::chrono`。更关键的是，仅替换 `now()` **不能**实现仿真回放：
+
+- `ShmChannel::wait_for_update()` 使用 futex（内核等待，超时按真实时间）；
+- 调度器 timer 用 `wait_until(steady_clock)` 阻塞；
+- 回放器用真实时间 sleep 控制节奏。
+
+虚拟时钟无法唤醒这些等待者。真正做 deterministic replay 需要的是一套**虚拟时间
+驱动器**：可注入的统一时钟（参考 `ResourceMonitor` 的 `ClockFn`）+ 可被显式唤醒的
+等待原语 + 回放器推进时间并投递帧。保留零引用接口只会让文档误报「仿真已就绪」，
+因此删除；重新实现时按上述三件套设计。
 
 ## 9. Per-component 资源监控（F-1）
 

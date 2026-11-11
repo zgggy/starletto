@@ -85,7 +85,7 @@ flowchart LR
         C2["异常三类语义"]
         C3["TypedConstPtr<br/>类型擦除的智能指针"]
         C4["futex_compat<br/>跨平台等待唤醒"]
-        C5["IClock / FdGuard"]
+        C5["FdGuard"]
     end
     R --> T --> S --> C
 ```
