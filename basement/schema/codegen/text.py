@@ -27,6 +27,8 @@ def format_block(keyword: str, block: DefBlock) -> list[str]:
     lines = [f"{keyword} {block.name} {{"]
     for field in block.fields:
         lines.append(format_field(field))
+    if block.reserved_ids:
+        lines.append("    reserved " + ", ".join(str(value) for value in sorted(block.reserved_ids)) + ";")
     lines.append("}")
     return lines
 

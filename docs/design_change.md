@@ -28,3 +28,4 @@
 | 2026-11-12 | 删除 `IClock`（零引用）：仅替换 `now()` 无法驱动 futex/timer/回放节奏，仿真时间需要「统一时钟 + 可唤醒等待 + 回放驱动器」，不是单个接口 | core | remediation_plan P2-6 |
 | 2026-11-12 | codegen 拆层：`codegen/{ir,parser,cpp,text}.py`，CLI 只做编排；支持单文件多 root（身份 `<schema>.<root>`、按 root 可达闭包算哈希）；helper 名加 schema 前缀消除 ODR；meson 依赖 codegen 源码 | schema/build | remediation_plan P2-4 |
 | 2026-11-12 | codegen 支持跨文件 `import "path"`：直接可见符号表、重名报错、加载器循环检测、`--include-root` 换算 #include；descriptor children 与固定布局引用导入类型 | schema/build | remediation_plan P2-4 |
+| 2026-11-12 | schema 支持 `reserved 2, 4;`：禁止复用已删除字段的 id，lint 校验冲突，reserved 集合参与内容哈希；`star check` 增加 codegen 自检步骤（11/11） | schema | remediation_plan P2-2 |

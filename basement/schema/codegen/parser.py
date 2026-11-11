@@ -148,17 +148,51 @@ class Parser:
             default = self.parse_default()
         return FieldDef(id=field_id, name=name, type_ref=type_ref, default=default)
 
-    def parse_def(self) -> DefBlock:
-        name = self.parse_identifier()
-        self.skip_ws_and_comments()
-        self.expect("{")
-        out = DefBlock(name=name)
+    def at_keyword(self, word: str) -> bool:
+        saved = self.pos
+        try:
+            token = self.parse_identifier()
+        except ValueError:
+            self.pos = saved
+            return False
+        if token == word:
+            return True
+        self.pos = saved
+        return False
+
+    def parse_reserved(self, block: DefBlock) -> None:
+        # 语法：reserved 2, 4, 9;   （必须用 ';' 结束，避免和下一字段的 id 混淆）
+        while True:
+            self.skip_ws_and_comments()
+            if self.peek() == ";":
+                self.expect(";")
+                return
+            block.reserved_ids.append(self.parse_integer())
+            self.skip_ws_and_comments()
+            if self.peek() == ",":
+                self.expect(",")
+                continue
+            if self.peek() == ";":
+                self.expect(";")
+                return
+            raise ValueError(f"reserved list must be terminated with ';' at position {self.pos}")
+
+    def parse_block_body(self, block: DefBlock) -> DefBlock:
         while True:
             self.skip_ws_and_comments()
             if self.peek() == "}":
                 self.expect("}")
-                return out
-            out.fields.append(self.parse_field())
+                return block
+            if self.at_keyword("reserved"):
+                self.parse_reserved(block)
+                continue
+            block.fields.append(self.parse_field())
+
+    def parse_def(self) -> DefBlock:
+        name = self.parse_identifier()
+        self.skip_ws_and_comments()
+        self.expect("{")
+        return self.parse_block_body(DefBlock(name=name))
 
     def parse(self) -> SchemaDoc:
         doc = SchemaDoc()
@@ -175,13 +209,7 @@ class Parser:
                 self.skip_ws_and_comments()
                 if self.peek() == "{":
                     self.expect("{")
-                    root = DefBlock(name=root_name)
-                    while True:
-                        self.skip_ws_and_comments()
-                        if self.peek() == "}":
-                            self.expect("}")
-                            break
-                        root.fields.append(self.parse_field())
+                    root = self.parse_block_body(DefBlock(name=root_name))
                     doc.root_name = doc.root_name or root.name
                     doc.roots.append(root.name)
                     doc.defs.append(root)

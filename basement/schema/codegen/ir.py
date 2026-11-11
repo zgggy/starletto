@@ -41,6 +41,8 @@ class FieldDef:
 class DefBlock:
     name: str
     fields: list[FieldDef] = field(default_factory=list)
+    # 已删除字段的 id，禁止复用（旧录制/旧进程会按旧布局解析）
+    reserved_ids: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -116,6 +118,7 @@ def schema_content_hash(doc: "SchemaDoc", root_name: str | None = None) -> int:
         "defs": [
             {
                 "name": block.name,
+                "reserved": sorted(block.reserved_ids),
                 "fields": [
                     {
                         "id": item.id,

@@ -5,6 +5,7 @@ namespace star.test.multi_root
 root Alpha {
     1 a : int
     2 label : string ?
+    reserved 9;
 }
 
 root Beta {

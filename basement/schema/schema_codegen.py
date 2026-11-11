@@ -262,6 +262,19 @@ def collect_issues(doc: SchemaDoc) -> list[str]:
             if target not in _PRIMITIVE_TYPES and target not in defs and target not in external_names:
                 issues.append(f"{block.name}: field '{field.name}' references undefined type '{target}'")
 
+        seen_reserved: set[int] = set()
+        for reserved_id in block.reserved_ids:
+            if reserved_id <= 0:
+                issues.append(f"{block.name}: reserved id {reserved_id} is invalid")
+            elif reserved_id in seen_ids:
+                issues.append(
+                    f"{block.name}: reserved id {reserved_id} collides with field '{seen_ids[reserved_id]}'"
+                )
+            elif reserved_id in seen_reserved:
+                issues.append(f"{block.name}: duplicate reserved id {reserved_id}")
+            else:
+                seen_reserved.add(reserved_id)
+
     return issues
 
 

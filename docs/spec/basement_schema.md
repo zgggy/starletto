@@ -152,7 +152,12 @@ dependency {
   - 多 root：身份名为 `<schema 名>.<root 名>`，避免同名文件内不同类型共用一个身份
   - 多 root 的哈希按 root 可达的定义闭包计算：改 B 不会让 A 的版本指纹失效
 - `def` 是可复用子类型，也允许在显式指定时作为 entry 类型
-- 跨文件 import 尚未支持（见 12.6）
+- `import "path"` 只让**直接导入**的 schema 类型可见（不做传递导入）：A import B，
+  A 只能引用 B 的类型；要用 C 必须自己 import C。生成头会自动 `#include`
+  依赖的 `.s.h`，路径由 `--include-root` 换算
+- 本地名与导入名、导入与导入之间重名是错误（不静默遮蔽）
+- `reserved 2, 4;`：把已删除字段的 id 标记为保留，后来的人不能复用；lint 会拦下
+  「保留 id 与现有字段冲突」和「重复保留」，保留集合参与内容哈希（改保留列表也是契约变更）
 
 ### 4.5 词法与类型系统
 
@@ -393,6 +398,7 @@ namespace <cpp::namespace::path> # C++ 命名空间
 version <n>                      # 版本号
 
 def TypeName {                   # 结构体定义
+    reserved 2, 4;               # 已删除字段的 id：禁止复用
     <field_id> field_name : Type [? | []]  # 字段：id, 名, 类型, 可选/重复
 }
 
@@ -470,19 +476,24 @@ python3 basement/schema/schema_codegen.py lint --schema <file>
 `schema_codegen.py` 只保留 CLI 编排、lint/compat/hash。meson 的 `custom_target`
 把 `codegen_sources` 列为 `depend_files`，改实现模块会触发重新生成。
 
-### 12.6 已知限制
+### 12.5 跨文件 import 的边界
 
-- 跨文件 `import` 尚未支持：一个 `.schema` 不能引用另一个文件的类型。
-  需要的改动：`import "path.schema"` 解析 + 符号表（导入类型的 C++ 限定名与
-  `#include` 路径，由 `--include-root` 换算）+ descriptor children 跨文件引用。
-  多 root 已经覆盖了「一个文件放多个消息类型」的常见需求。
+- 可见性：只做直接导入，见 4.4；
+- 生成头引用：`#include "<include-root 相对路径>.s.h"`。`--include-root` 必须是
+  C++ 编译器的 include root（本仓库为源码根，build 目录镜像同一路径），
+  否则生成阶段直接报错，不会产出无法编译的头；
+- descriptor：导入类型的字段树通过对方生成头里的
+  `<ns>::<schema 前缀>_build_fields_<Type>()` 引用，保证嵌套 TLV 解码与
+  多版本策略跨文件仍然生效；
+- 固定布局：跨文件字段使用限定类型名调用 encode/from_fixed_layout，语义与同文件一致；
+- 循环 import：加载器检测并报错（含链式路径）。
 
-### 12.5 验收标准
+### 12.6 验收标准
 
 - ✅ **工具实现**（2026-04-06）：
   - `basement/schema/schema_codegen.py` 可执行
   - 支持 schema/root/namespace/version/def 全部语法
-  - 支持单个文件多个 root（各自独立类型身份），见 4.4/12.6
+  - 支持单个文件多个 root（各自独立类型身份），见 4.4
   - 正确处理 string/int/bool/double/object/?/[] 所有类型组合
 - ✅ **全量验证**（2026-04-06）：22 个 .schema 文件均可正确生成对应 .s.h
 - ✅ **集成到 build**（2026-04-06）：

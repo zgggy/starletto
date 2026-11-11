@@ -660,6 +660,20 @@ check_schema_lint() {
     return $failed
 }
 
+# codegen 自检：reserved/多 root/哈希稳定性/import 循环与缺失、未定义类型
+check_codegen_selftest() {
+    local script="${PROJECT_ROOT}/tools/tests/codegen_selftest.py"
+    if [ ! -f "$script" ]; then
+        log_error "找不到 codegen 自检脚本: ${script}"
+        return 1
+    fi
+    if ! python3 "$script"; then
+        log_error "codegen 自检失败"
+        return 1
+    fi
+    return 0
+}
+
 # schema compat：以 git HEAD 为基线，改动不得破坏与已提交版本的兼容性
 # （对应 spec 的演进禁令：改字段 id、类型互换、删字段等）
 check_schema_compat() {
@@ -714,7 +728,7 @@ run_ci_guard() {
                 echo ""
                 echo "验证项:"
                 echo "  1. build      — 编译产物存在且可执行"
-                echo "  2. schema     — 生成物未入源码树 + lint + 与 HEAD 的兼容性检查"
+                echo "  2. schema     — 生成物未入源码树 + lint + 与 HEAD 的兼容性检查 + codegen 自检"
                 echo "  3. unit-test  — 单元测试全部通过"
                 echo "  4. selftest   — transport 自检通过"
                 echo "  5. doctor     — 模块/组件清单诊断通过"
@@ -783,6 +797,7 @@ run_ci_guard() {
     _check_step "schema-clean" check_schema_generated_untracked
     _check_step "schema-lint" check_schema_lint
     _check_step "schema-compat" check_schema_compat
+    _check_step "codegen-selftest" check_codegen_selftest
 
     log_info "--- CI Guard: Step 3/8 Unit Test ---"
     _check_step "unit-test" meson test -C "$build_dir"
