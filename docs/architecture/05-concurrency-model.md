@@ -1,0 +1,131 @@
+# 05 · 并发模型
+
+这一篇讲清楚 **"我的代码在哪个线程上跑"**。对算法工程师来说，这决定了你能不能在 `process_once` 里做重活、能不能用非线程安全的数据结构。
+
+## 1. 进程与线程总览
+
+```mermaid
+flowchart TB
+    subgraph SUP["supervisor 进程（star run --multi-process）"]
+        SP["ProcessOrchestrator<br/>fork/exec + wait_all"]
+    end
+
+    subgraph PGA["worker 进程 · group=setting"]
+        WA["主线程<br/>加载/装配"]
+        WB["scheduler worker 线程<br/>调 config 的 process_once"]
+        WC["scheduler worker 线程<br/>调 parameter 的 process_once"]
+        WD["timer 线程"]
+    end
+
+    subgraph PGB["worker 进程 · group=planning"]
+        GA["主线程"]
+        GB["scheduler worker<br/>调 motion 的 process_once"]
+        GC["reader 轮询线程<br/>收快照"]
+    end
+
+    subgraph PGC["worker 进程 · group=control"]
+        CA["主线程"]
+        CB["scheduler worker<br/>调 pid 的 process_once"]
+        CC["reader 轮询线程<br/>收轨迹"]
+    end
+
+    SP -->|"exec --worker --process-group=setting"| PGA
+    SP -->|"exec --worker --process-group=planning"| PGB
+    SP -->|"exec --worker --process-group=control"| PGC
+```
+
+**每进程内的线程构成**：
+
+| 线程 | 数量 | 干什么 |
+|---|---|---|
+| 主线程 | 1 | 读 conf、dlopen、装配、启动 |
+| scheduler worker | `executor_threads`（1–4） | 从就绪队列取任务，调 `process_once()` |
+| scheduler timer | 1 | 周期触发 `notify()` |
+| reader 轮询线程 | **每个订阅端口 1 个** | 从 shm 环读新帧，调回调 |
+| ShmChannel 等待 | 0（复用人家的轮询线程） | futex 等待 |
+
+> ⚠️ 注意最后一行：`reader 轮询线程` 是**每个订阅者一个**。8 个相机 × 3 个消费者 = 24 个轮询线程。这是当前设计的一个已知扩展性问题（见修复方案 P2-3）。
+
+## 2. 你的代码在哪个线程上被调
+
+```mermaid
+flowchart LR
+    subgraph TRIG["触发器"]
+        T1["TimerTrigger<br/>timer 线程唤醒"]
+        T2["SyncTrigger<br/>由 reader 回调驱动"]
+    end
+    subgraph Q["就绪队列"]
+        Q1["优先级队列"]
+    end
+    subgraph W["worker 线程"]
+        W1["process_once()"]
+    end
+    T1 -->|"notify"| Q1
+    T2 -->|"notify"| Q1
+    Q1 --> W1
+
+    subgraph RC["reader 回调"]
+        R1["你写的 declare_reader 回调<br/><b>在轮询线程上同步执行</b>"]
+    end
+```
+
+| 你写的代码 | 运行线程 | 可以做什么 | 不要做什么 |
+|---|---|---|---|
+| `init()` | 主线程（装配期） | 读一次性配置 | 开长循环、阻塞 |
+| `process_once()` | scheduler worker | 算算法、publish | 睡长觉、等锁 |
+| `declare_reader` 回调 | **该端口专属轮询线程** | 轻量存数据/置标志 | 做重计算、调阻塞 RPC |
+| service handler | **该服务专属轮询线程** | 快速返回响应 | 长时间阻塞 |
+
+**这条最重要**：`declare_reader` 的回调是在轮询线程上**同步**执行的。回调里做 10ms 的计算，这个端口的读取就停顿 10ms，SHM 环可能在此期间被写满（4 帧）而丢数据。重活必须搬到 `process_once` 里，或者自己投递到队列。
+
+## 3. 帧一致性与同步触发
+
+`planning/motion` 同时消费配置和参数两路快照。如果分别在两个回调里各存一份，可能出现"新的配置 + 旧的参数"这种撕裂组合。
+
+```mermaid
+sequenceDiagram
+    participant CFG as config 快照
+    participant PAR as parameter 快照
+    participant TRG as SyncTrigger
+    participant SCH as Scheduler
+    participant MOT as motion.process_once
+
+    CFG->>TRG: on_message("config_snapshot")
+    Note over TRG: arrived={config}，未齐
+    PAR->>TRG: on_message("parameter_snapshot")
+    Note over TRG: arrived 齐全 → frame_id++
+    TRG->>SCH: notify(frame_id)
+    SCH->>MOT: process_once()
+    Note over MOT: 此时两路数据是同帧的
+```
+
+`SyncTrigger` 的语义：**所有必需通道都到齐后，才触发一次**，且同一帧内 frame_id 相同。这就是"帧一致性"的来源。
+
+## 4. 锁与并发注意事项
+
+| 位置 | 机制 | 你的代码要不要操心 |
+|---|---|---|
+| `NativeMessageBus` 的 channel 表 | `std::mutex` | 不用，`write()/read_latest()` 内部加锁 |
+| `Component::latest_messages_` | `std::mutex` | 不用，`read_latest()` 内部加锁 |
+| `ChannelStats` 累计器 | 由总线锁保护 | 不用 |
+| `SyncTrigger` | 内部锁，**回调在锁外执行** | 不用 |
+| **你的 Processor 成员变量** | **没有任何保护** | **要操心**：同一个组件不会被两个线程同时调 `process_once`（scheduler 串行），但如果你的回调里也访问同一成员，就需要自己加锁 |
+
+**最实用的三条规则**：
+
+1. `process_once` 内部不需要锁（同一组件的任务由调度器串行执行）。
+2. reader 回调与 `process_once` **可能在不同线程**，共享数据要加锁或只用原子标志。
+3. Processor 保持**无状态或纯值成员**，是最省心的写法。
+
+## 5. 多进程下的额外约束
+
+```mermaid
+flowchart LR
+    A["进程 A<br/>group=planning"] -->|"shm 写"| S["共享内存段"]
+    S -->|"shm 读"| B["进程 B<br/>group=control"]
+    A -.->|"同组内：inproc 指针"| A2["同进程其他组件"]
+```
+
+- **跨进程只能传可序列化的数据**（见 [04](04-dataflow-and-memory.md)）。
+- **同组内走指针**，跨组走共享内存——由 `ShmRoutedMessageBus` 自动判断，业务代码无感。
+- 进程崩溃的后果：写共享内存的那个进程如果崩溃在写锁持有时，**该通道会永久卡死**（已知缺陷，见修复方案 P0-2）。
