@@ -19,24 +19,20 @@
 #include "basement/runtime/scheduler/scheduler.h"
 #include "basement/schema/schema_registry.h"
 #include "basement/transport/api/channel_registry.h"
-#include "basement/transport/api/service_bus.h"
 #include "basement/transport/native/native_message_bus.h"
-#include "basement/transport/native/native_service_bus.h"
 #include "basement/runtime/parameter/native_parameter_store.h"
 #include "basement/transport/shm/shm_message_bus.h"
 #include "basement/transport/shm/shm_routed_message_bus.h"
-#include "basement/transport/shm/shm_service_bus.h"
 
 namespace star::runtime {
 
 class NativeRuntimeContext final : public RuntimeContext {
   public:
     NativeRuntimeContext(std::shared_ptr<star::transport::ChannelRegistry> channel_registry, std::shared_ptr<star::transport::MessageBus> message_bus,
-                         std::shared_ptr<star::transport::ServiceBus> service_bus, std::shared_ptr<ParameterStore> parameter_store, std::shared_ptr<Scheduler> scheduler,
+                         std::shared_ptr<ParameterStore> parameter_store, std::shared_ptr<Scheduler> scheduler,
                          std::shared_ptr<star::schema::SchemaRegistry> schema_registry, std::shared_ptr<star::base::Logger> logger)
         : channel_registry_(std::move(channel_registry)),
           message_bus_(std::move(message_bus)),
-          service_bus_(std::move(service_bus)),
           parameter_store_(std::move(parameter_store)),
           scheduler_(std::move(scheduler)),
           schema_registry_(std::move(schema_registry)),
@@ -47,7 +43,6 @@ class NativeRuntimeContext final : public RuntimeContext {
     auto recordable_bus() -> star::transport::RecordableBus* override {
         return dynamic_cast<star::transport::RecordableBus*>(message_bus_.get());
     }
-    auto service_bus() -> star::transport::ServiceBus& override { return *service_bus_; }
     auto parameter_store() -> ParameterStore& override { return *parameter_store_; }
     auto scheduler() -> Scheduler& override { return *scheduler_; }
     auto schema_registry() -> star::schema::SchemaRegistry& override { return *schema_registry_; }
@@ -59,7 +54,6 @@ class NativeRuntimeContext final : public RuntimeContext {
   private:
     std::shared_ptr<star::transport::ChannelRegistry> channel_registry_;
     std::shared_ptr<star::transport::MessageBus> message_bus_;
-    std::shared_ptr<star::transport::ServiceBus> service_bus_;
     std::shared_ptr<ParameterStore> parameter_store_;
     std::shared_ptr<Scheduler> scheduler_;
     std::shared_ptr<star::schema::SchemaRegistry> schema_registry_;
@@ -88,17 +82,8 @@ class RuntimeFactory {
         } else {
             message_bus = std::make_shared<star::transport::NativeMessageBus>(channel_registry);
         }
-        // 服务总线跟随传输方式：shm_routed 下跨进程 RPC 必须走 ShmServiceBus，
-        // 否则客户端在 A 进程、服务端在 B 进程时 call() 直接报 unavailable
-        std::shared_ptr<star::transport::ServiceBus> service_bus;
-        if (transport_name == "shm_routed") {
-            if (auto routed = std::dynamic_pointer_cast<star::transport::ShmRoutedMessageBus>(message_bus)) {
-                service_bus = std::make_shared<star::transport::ShmServiceBus>(routed);
-            }
-        }
-        if (not service_bus) {
-            service_bus = std::make_shared<star::transport::NativeServiceBus>();
-        }
+        // 服务已并入通道：RpcClient/RpcServer 直接用 message_bus 的普通通道，
+        // 不再有第二套「随传输方式切换」的服务总线
         auto parameter_store = std::make_shared<NativeParameterStore>();
         auto scheduler = std::make_shared<star::runtime::NativeScheduler>();
         auto schema_registry = std::make_shared<star::schema::SchemaRegistry>();
@@ -111,7 +96,7 @@ class RuntimeFactory {
             star::base::LoggerManager::get().set_logger(std::make_shared<star::base::StdoutLogger>());
         }
         auto logger = star::base::LoggerManager::get().get_logger_shared();
-        auto ctx = std::make_shared<NativeRuntimeContext>(std::move(channel_registry), std::move(message_bus), std::move(service_bus), std::move(parameter_store), std::move(scheduler),
+        auto ctx = std::make_shared<NativeRuntimeContext>(std::move(channel_registry), std::move(message_bus), std::move(parameter_store), std::move(scheduler),
                                                           std::move(schema_registry), std::move(logger));
         static_cast<NativeScheduler*>(&ctx->scheduler())->set_context(ctx.get());
         return ctx;

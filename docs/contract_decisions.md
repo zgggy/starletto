@@ -139,7 +139,7 @@ flowchart LR
     D --> E["阶段五：服务并入通道<br/>（决策四，见下）"]
 ```
 
-**进度（2026-11-12）**：阶段一 ✅、阶段二 ✅、阶段三 ✅、阶段四 ✅。
+**进度（2026-11-12）**：阶段一 ✅、阶段二 ✅、阶段三 ✅、阶段四 ✅、阶段五 ✅。
 
 - 阶段一：`basement/core/type_id.h`；`TypedConstPtr`/`TypedPtr` 携带 `schema_type_id`；`make_serialized_message` 自动盖章；两个 message bus 首写采纳、后续不一致拒绝。
 - 阶段二：registry 以 `name+version` 为 key，同名多版本共存，同 key 不同内容报错；`lookup()` 返回 `kExact`/`kHashUnknown`/`kHashMismatch`/`kNotFound`；codegen 用 FNV-1a 对语义内容算确定性哈希（字段按 id 排序，重排/fmt 不改哈希）；声明的 `hash` 行由 gen/lint 校验；lint 新增 version≥1、未定义类型、map key 必须 string；`star schema hash` 可打印内容哈希用于钉住契约；四个内置 schema 补 `version 1`。
@@ -147,6 +147,10 @@ flowchart LR
   - **同时修掉一个此前未被覆盖的缺陷**：shm 写路径优先固定布局、读路径固定调用 `from_binary`，生成消息跨进程必然解错（固定布局帧以 `0x5354` 开头，`from_binary` 会按 TLV 解析失败）。现在 shm 默认写二进制 TLV，固定布局帧头升级为 v2 并携带 `schema_version`/`schema_hash`，读取方按帧头识别、校验身份；固定布局仅用于同版本。
 - 阶段四：录制格式 v2（v1 仍可读）。头部增加墙钟/单调时钟双锚点，条目携带 `schema name+version+hash`；`MessageReplayer` 提供 `summaries()`（按通道聚合版本与时间范围）、`wall_clock_ns()`（单调时间戳换算墙钟）、`validate_against()`（回放前把录制身份与本地编译身份逐通道比对，缺注册/版本不同会报告，hash 未知不阻断）。`star record info` 现在能打印格式版本、墙钟时间与每通道 schema 版本。
   - 说明：没有采用「固定头部通道表」，而是**每条消息自带身份**——严格更强（同通道运行中重新声明版本时不会被后来的声明覆盖），通道表由 `summaries()` 按需聚合。
+- 阶段五：服务并入通道。删除 `ServiceBus`/`ServiceClient`/`ServiceServer` 接口与 `NativeServiceBus`/`ShmServiceBus` 两套实现（含工厂的 `dynamic_cast` 选择），新增 `basement/transport/rpc/rpc.h`：
+  - `RpcClient`/`RpcServer` 只依赖 `MessageBus` 的 `create_writer`/`create_reader`；`<service>/request`、`<service>/response` 是普通通道，自动进路由计划、录制、统计与类型校验。
+  - payload 信封 `u64 correlation_id | u8 ok | u32 message_len | message | body`：handler 异常回传为 `ok=false`（旧 shm 实现会丢失错误、让客户端超时）；超时清理 pending。
+  - 回归：并发同步/异步（8×100、6×32×5）、超时/错误回传、服务流量出现在普通通道统计、plan 声明的服务可直接调用；selftest 两总线（模拟两进程）200 次 RPC soak 通过。
 
 ---
 

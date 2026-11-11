@@ -21,7 +21,7 @@
 #include "basement/runtime/context/runtime_context.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/transport/api/message_bus.h"
-#include "basement/transport/api/service_bus.h"
+#include "basement/transport/rpc/rpc.h"
 #include "basement/transport/shm/shm_views.h"
 
 namespace star::runtime {
@@ -125,14 +125,14 @@ class Component {
                 auto desc = star::transport::ServiceDescriptor{};
                 desc.name = s.channel.value_or(s.name);
                 if (s.has_role() && s.role.value_or("") == "server") {
-                    auto server = context_->service_bus().create_server(
-                        desc, [this, svc_name = s.name](const star::transport::ServiceRequest& req) -> star::transport::SerializedServiceResponse {
+                    service_servers_[s.name] = std::make_shared<star::transport::RpcServer>(
+                        context_->message_bus(),
+                        desc.name,
+                        [this, svc_name = s.name](const star::transport::ServiceRequest& req) -> star::transport::SerializedServiceResponse {
                             return handle_service_request(svc_name, req);
                         });
-                    service_servers_[s.name] = std::move(server);
                 } else {
-                    auto client = context_->service_bus().create_client(desc);
-                    service_clients_[s.name] = std::move(client);
+                    service_clients_[s.name] = std::make_shared<star::transport::RpcClient>(context_->message_bus(), desc.name);
                 }
             }
         }
@@ -254,12 +254,11 @@ class Component {
     template <typename _Req, typename _Res>
     auto call_service(const std::string& name, const _Req& request) -> _Res {
         auto it = service_clients_.find(name);
-        std::shared_ptr<star::transport::ServiceClient> client;
+        std::shared_ptr<star::transport::RpcClient> client;
         if (it != service_clients_.end() && it->second) {
             client = it->second;
         } else {
-            auto desc = star::transport::ServiceDescriptor{name};
-            client = context_->service_bus().create_client(desc);
+            client = std::make_shared<star::transport::RpcClient>(context_->message_bus(), name);
         }
         auto req_ptr = std::make_shared<const _Req>(request);
         auto response = client->call_serialized(make_serialized_service_request(req_ptr));
@@ -271,12 +270,11 @@ class Component {
 
     auto call_service_raw(const std::string& name, const star::transport::ServiceRequest& request) -> star::transport::ServiceResponse {
         auto it = service_clients_.find(name);
-        std::shared_ptr<star::transport::ServiceClient> client;
+        std::shared_ptr<star::transport::RpcClient> client;
         if (it != service_clients_.end() && it->second) {
             client = it->second;
         } else {
-            auto desc = star::transport::ServiceDescriptor{name};
-            client = context_->service_bus().create_client(desc);
+            client = std::make_shared<star::transport::RpcClient>(context_->message_bus(), name);
         }
         return client->call(request);
     }
@@ -284,12 +282,11 @@ class Component {
     template <typename _Req, typename _Res>
     auto async_call_service(const std::string& name, const _Req& request) -> std::future<_Res> {
         auto it = service_clients_.find(name);
-        std::shared_ptr<star::transport::ServiceClient> client;
+        std::shared_ptr<star::transport::RpcClient> client;
         if (it != service_clients_.end() && it->second) {
             client = it->second;
         } else {
-            auto desc = star::transport::ServiceDescriptor{name};
-            client = context_->service_bus().create_client(desc);
+            client = std::make_shared<star::transport::RpcClient>(context_->message_bus(), name);
         }
         auto req_ptr = std::make_shared<const _Req>(request);
         return std::async(std::launch::async, [client, request = make_serialized_service_request(req_ptr)]() mutable -> _Res {
@@ -436,12 +433,13 @@ class Component {
         }
         if constexpr (has_from_binary<_Msg>::value) {
             if (const auto slot = msg.payload.as<star::transport::ShmSlotView>()) {
-                if (slot->size > 0) {
+                {
                     // 槽位可能在投递后、解码前被写方覆写（4 槽环形缓冲），复核代际
                     if (not slot->stable()) {
                         logE << "decode_message skipped: channel=" << msg.schema_type_id.name << ", source=shm_slot, reason=slot overwritten before decode";
                         return nullptr;
                     }
+                    // size==0 不是「没消息」：全 optional 的消息编码后就是空字节，交给 codec 按默认值解码
                     try {
                         auto decoded = std::make_shared<_Msg>(decode_payload<_Msg>(slot->bytes(), msg.decode_policy));
                         // seqlock 后置复核：解码期间写方可能已开始覆写本槽，
@@ -461,7 +459,7 @@ class Component {
                 }
             }
             if (const auto binary = msg.payload.as<star::transport::BinaryPayloadView>()) {
-                if (binary->size > 0) {
+                {
                     try {
                         return std::make_shared<_Msg>(decode_payload<_Msg>(binary->bytes(), msg.decode_policy));
                     } catch (const std::exception& ex) {
@@ -500,6 +498,9 @@ class Component {
         auto request = star::transport::ServiceRequest{};
         request.body.payload = star::base::TypedConstPtr::from(req_ptr);
         request.body.correlation_id = star::transport::CorrelationId::generate();
+        if constexpr (has_schema_type_id<_Req>::value) {
+            request.body.schema_type_id = req_ptr->schema_type_id();
+        }
         return star::transport::SerializedServiceRequest{request, make_message_serializer(req_ptr)};
     }
 
@@ -552,8 +553,8 @@ class Component {
     std::unordered_map<std::string, std::shared_ptr<star::transport::Writer>> writers_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::DeliveryWriter>> delivery_writers_;
     std::unordered_set<std::string> bidirectional_channels_;
-    std::unordered_map<std::string, std::shared_ptr<star::transport::ServiceClient>> service_clients_;
-    std::unordered_map<std::string, std::shared_ptr<star::transport::ServiceServer>> service_servers_;
+    std::unordered_map<std::string, std::shared_ptr<star::transport::RpcClient>> service_clients_;
+    std::unordered_map<std::string, std::shared_ptr<star::transport::RpcServer>> service_servers_;
     std::shared_ptr<std::mutex> latest_mutex_;
     std::unordered_map<std::string, star::transport::MessageView> latest_messages_;
 };

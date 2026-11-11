@@ -1,9 +1,11 @@
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "basement/runtime/component/component.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/plan/plan_builder.h"
-#include "basement/transport/shm/shm_service_bus.h"
+#include "basement/transport/rpc/rpc.h"
 
 #include "tests/support/star_test.h"
 
@@ -53,18 +55,50 @@ TEST_CASE("build_process_plan folds service ports into channel lists") {
     REQUIRE(contains(*group.produced_channels, "setting.parameter.get/response"));
 }
 
-// P1-1：shm_routed 下的服务总线必须是 ShmServiceBus，
-// 否则客户端与服务端不在同一进程时 call() 直接报 unavailable
-TEST_CASE("RuntimeFactory selects ShmServiceBus for shm_routed transport") {
-    const auto context = star::runtime::RuntimeFactory::create_native_context("shm_routed");
-    REQUIRE(context != nullptr);
-    REQUIRE(dynamic_cast<star::transport::ShmServiceBus*>(&context->service_bus()) != nullptr);
-}
+// 决策四：服务并入通道——commands 块创建的是普通通道上的 RpcServer，
+// 客户端用同一个 MessageBus 直接调，不再有第二套服务总线
+class ServiceEchoProbe final : public star::runtime::Component {
+  public:
+    auto handle_service_request(const std::string&, const star::transport::ServiceRequest& request)
+        -> star::transport::SerializedServiceResponse override {
+        auto bytes = std::vector<uint8_t>{};
+        if (const auto binary = request.body.payload.as<star::transport::BinaryPayloadView>()) {
+            bytes.assign(binary->data, binary->data + binary->size);
+        }
+        auto response = star::transport::ServiceResponse{};
+        response.ok = true;
+        auto owner = std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
+        response.body.payload = star::base::TypedConstPtr::from(owner);
+        auto serializer = star::transport::MessageSerializer{};
+        serializer.payload_size_hint = owner->size();
+        serializer.encode_binary = [owner]() { return *owner; };
+        return star::transport::SerializedServiceResponse{response, std::move(serializer)};
+    }
+};
 
-TEST_CASE("RuntimeFactory keeps NativeServiceBus for the default transport") {
+TEST_CASE("a service declared in the plan is callable over ordinary channels") {
     const auto context = star::runtime::RuntimeFactory::create_native_context();
     REQUIRE(context != nullptr);
-    REQUIRE(dynamic_cast<star::transport::ShmServiceBus*>(&context->service_bus()) == nullptr);
+
+    auto probe = ServiceEchoProbe{};
+    probe.set_context(context);
+    probe.set_load_plan(make_service_plan("setting", "test.rpc.plan.service"));
+    probe.auto_configure();
+
+    auto client = star::transport::RpcClient{context->message_bus(), "test.rpc.plan.service"};
+    REQUIRE(client.available());
+
+    const auto payload = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x11, 0x22, 0x33});
+    auto request = star::transport::ServiceRequest{};
+    request.body.payload = star::base::TypedConstPtr::from(payload);
+    auto serializer = star::transport::MessageSerializer{};
+    serializer.encode_binary = [payload]() { return *payload; };
+
+    const auto response = client.call_serialized(star::transport::SerializedServiceRequest{request, serializer});
+    REQUIRE(response.ok);
+    const auto binary = response.body.payload.as<star::transport::BinaryPayloadView>();
+    REQUIRE(binary != nullptr);
+    REQUIRE_EQ(std::vector<uint8_t>(binary->data, binary->data + binary->size), (std::vector<uint8_t>{0x11, 0x22, 0x33}));
 }
 
 }  // namespace

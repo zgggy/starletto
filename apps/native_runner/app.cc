@@ -26,7 +26,7 @@
 #include "basement/schema/schema_value.h"
 #include "basement/transport/shm/shm_channel.h"
 #include "basement/transport/shm/shm_routed_message_bus.h"
-#include "basement/transport/shm/shm_service_bus.h"
+#include "basement/transport/rpc/rpc.h"
 #include "basement/transport/shm/shm_views.h"
 #include "modules/setting/schema/schema_bootstrap.h"
 
@@ -542,14 +542,16 @@ namespace star::native_runner {
                 server_bus->configure_route_registry("control", route_plan);
                 client_bus->configure_route_registry("planner", route_plan);
 
-                auto server = star::transport::ShmServiceBus(server_bus).create_server(
-                    star::transport::ServiceDescriptor{service_name},
+                // 服务已并入通道：两个独立 routed 总线（模拟两个进程）之间用 RpcServer/RpcClient
+                auto server = star::transport::RpcServer{
+                    *server_bus,
+                    service_name,
                     [](const star::transport::ServiceRequest& req) -> star::transport::SerializedServiceResponse {
                         auto bytes = std::vector<uint8_t>{};
-                        if (const auto slot = req.body.payload.as<star::transport::ShmSlotView>()) {
-                            bytes.assign(slot->data, slot->data + slot->size);
-                        } else if (const auto bin = req.body.payload.as<star::transport::BinaryPayloadView>()) {
+                        if (const auto bin = req.body.payload.as<star::transport::BinaryPayloadView>()) {
                             bytes.assign(bin->data, bin->data + bin->size);
+                        } else if (const auto slot = req.body.payload.as<star::transport::ShmSlotView>()) {
+                            bytes.assign(slot->data, slot->data + slot->size);
                         }
                         auto resp = star::transport::ServiceResponse{};
                         resp.ok = true;
@@ -559,17 +561,9 @@ namespace star::native_runner {
                         serializer.payload_size_hint = payload->size();
                         serializer.encode_binary = [payload]() -> std::vector<uint8_t> { return *payload; };
                         return star::transport::SerializedServiceResponse{resp, std::move(serializer)};
-                    });
+                    }};
 
-                auto client = star::transport::ShmServiceBus(client_bus).create_client(star::transport::ServiceDescriptor{service_name});
-                if (!client || !client->available()) {
-                    logE << "selftest_transport failed: service client not available";
-                    return 5;
-                }
-
-                auto body = star::transport::ServiceRequest{};
-                body.body.payload = star::base::TypedConstPtr::from(std::make_shared<const int64_t>(123));
-                body.body.correlation_id = star::transport::CorrelationId{};
+                auto client = star::transport::RpcClient{*client_bus, service_name};
 
                 const auto kCalls = int64_t{200};
                 for (int64_t i = 0; i < kCalls; ++i) {
@@ -582,18 +576,18 @@ namespace star::native_runner {
                     serializer.payload_size_hint = payload->size();
                     serializer.encode_binary = [payload]() -> std::vector<uint8_t> { return *payload; };
 
-                    const auto r = client->call_serialized(star::transport::SerializedServiceRequest{req, std::move(serializer)});
+                    const auto r = client.call_serialized(star::transport::SerializedServiceRequest{req, std::move(serializer)});
                     if (!r.ok) {
                         logE << "selftest_transport failed: service call failed: " << r.message;
                         return 5;
                     }
-                    if (const auto slot = r.body.payload.as<star::transport::ShmSlotView>()) {
-                        if (slot->size != payload->size() || std::memcmp(slot->data, payload->data(), payload->size()) != 0) {
+                    if (const auto bin = r.body.payload.as<star::transport::BinaryPayloadView>()) {
+                        if (bin->size != payload->size() || std::memcmp(bin->data, payload->data(), payload->size()) != 0) {
                             logE << "selftest_transport failed: service response mismatch";
                             return 5;
                         }
-                    } else if (const auto bin = r.body.payload.as<star::transport::BinaryPayloadView>()) {
-                        if (bin->size != payload->size() || std::memcmp(bin->data, payload->data(), payload->size()) != 0) {
+                    } else if (const auto slot = r.body.payload.as<star::transport::ShmSlotView>()) {
+                        if (slot->size != payload->size() || std::memcmp(slot->data, payload->data(), payload->size()) != 0) {
                             logE << "selftest_transport failed: service response mismatch";
                             return 5;
                         }

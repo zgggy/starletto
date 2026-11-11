@@ -13,7 +13,7 @@
 Transport 层是 Starletto 的核心通信基础设施，负责：
 
 - **Stream 通信**：1:N 发布订阅模式，用于传感器数据、控制指令等高频流式数据
-- **RPC 通信**：1:1 请求响应模式，用于服务调用、参数查询等同步交互
+- **RPC 通信**：1:1 请求响应模式，用于服务调用、参数查询等同步交互；实现为**两条普通通道 + correlation_id**（`RpcClient`/`RpcServer` 工具），不是独立传输层
 - **跨进程通信**：通过共享内存（SHM）实现零拷贝进程间通信
 
 ***
@@ -62,7 +62,7 @@ struct Port {
 | 模式         | 语义   | Writer:Reader | 可靠性 | 典型场景       |
 | ---------- | ---- | ------------- | --- | ---------- |
 | **Stream** | 发布订阅 | 1:N           | 可配置 | 传感器数据、控制指令 |
-| **RPC**    | 请求响应 | 1:1           | 可靠  | 服务调用、参数查询  |
+| **RPC**    | 请求响应 | 1:1（两条 stream 通道） | 可靠  | 服务调用、参数查询  |
 
 ***
 
@@ -72,8 +72,12 @@ struct Port {
 graph TB
     subgraph "API Layer"
         MB[MessageBus]
-        SB[ServiceBus]
         CR[ChannelRegistry]
+    end
+
+    subgraph "RPC Tools（基于普通通道）"
+        RC[RpcClient]
+        RS[RpcServer]
     end
 
     subgraph "Common"
@@ -87,7 +91,6 @@ graph TB
             NW[NativeWriter]
             NR[NativeReader]
             NSW[InprocSyncWriter]
-            NSB[NativeServiceBus]
         end
 
         subgraph "SHM"
@@ -99,11 +102,6 @@ graph TB
 
         subgraph "Routed"
             SRMB[ShmRoutedMessageBus]
-        end
-
-        subgraph "Service - SHM"
-            SSC[ShmServiceClient]
-            SSS[ShmServiceServer]
         end
     end
 
@@ -127,10 +125,8 @@ graph TB
     SMB --> SR
     SMB --> SC
 
-    SB --> NSB
-    SB --> SSC
-    SSC --> SRMB
-    SSS --> SRMB
+    RC --> MB
+    RS --> MB
 
     NMB --> CS
     SMB --> CS
@@ -147,21 +143,20 @@ graph TB
 basement/transport/
 ├── api/
 │   ├── message_bus.h         # 核心接口定义
-│   ├── service_bus.h         # RPC 接口定义
 │   └── channel_registry.h    # 通道注册表
+├── rpc/
+│   └── rpc.h                 # RpcClient/RpcServer（通道之上的请求-响应关联工具）
 ├── common/
 │   └── channel_stats.h       # 统计数据结构 + 计算函数
 ├── native/
 │   ├── native_message_bus.h   # 进程内 MessageBus 实现
 │   ├── native_writer.h       # 本地写入器
-│   ├── native_reader.h       # 本地读取器
-│   └── native_service_bus.h  # 进程内 ServiceBus 实现
+│   └── native_reader.h       # 本地读取器
 ├── shm/
 │   ├── shm_message_bus.h     # 共享内存 MessageBus 实现
 │   ├── shm_channel.h         # 共享内存环形缓冲区
 │   ├── shm_views.h           # SHM 视图类型
-│   ├── shm_routed_message_bus.h  # 路由消息总线
-│   └── shm_service_bus.h     # SHM RPC 实现
+│   └── shm_routed_message_bus.h  # 路由消息总线
 └── record/
     ├── message_recorder.h   # 消息录制
     └── message_replayer.h    # 消息回放
@@ -291,25 +286,39 @@ class Reader {
 };
 ```
 
-### 5.4 ServiceBus
+### 5.4 RPC 工具（不是总线）
+
+服务已并入通道（决策四）：`RpcClient`/`RpcServer` 只依赖 `MessageBus` 的
+`create_writer` / `create_reader`，用 `<service>/request` 与 `<service>/response`
+两条普通通道完成请求-响应。它们没有传输层抽象、没有 `ServiceBus` 接口、没有工厂
+按传输方式切换。
 
 ```cpp
-class ServiceBus {
-    virtual auto create_client(const ServiceDescriptor& descriptor)
-        -> std::shared_ptr<ServiceClient> = 0;
-    virtual auto create_server(const ServiceDescriptor& descriptor, Handler handler)
-        -> std::shared_ptr<ServiceServer> = 0;
-};
-```
-
-```cpp
-class ServiceServer {
+class RpcClient {
   public:
-    virtual ~ServiceServer() = default;
-    virtual void start() {}
-    virtual void stop() {}
+    RpcClient(MessageBus& bus, std::string service_name, int64_t timeout_ms = 5000);
+    auto available() const -> bool;
+    auto call(const ServiceRequest& request) -> ServiceResponse;
+    auto call_serialized(const SerializedServiceRequest& request) -> ServiceResponse;
+    auto async_call_serialized(const SerializedServiceRequest& request) -> std::future<ServiceResponse>;
+};
+
+class RpcServer {
+  public:
+    using Handler = std::function<SerializedServiceResponse(const ServiceRequest&)>;
+    RpcServer(MessageBus& bus, std::string service_name, Handler handler);
+    void start();
+    void stop();
 };
 ```
+
+payload 内部信封（transport 私有，不是 schema）：
+
+```
+u64 correlation_id | u8 ok | u32 message_len | message | body
+```
+
+请求的 `ok` 恒为 1、`message` 为空；响应携带错误信息。`body` 是用户消息的二进制编码。
 
 ```cpp
 struct ServiceRequest {
@@ -419,7 +428,7 @@ Transport 层当前不提供独立的 ACK 通道与 reader 确认语义；可靠
 
 ### 7.4 FixedLayoutCodec（零拷贝 Wire Format）
 
-`FixedLayoutCodec` 是 SHM 零拷贝的核心编解码器，定义在 `transport/common/fixed_layout_codec.h`。它只负责“用户 payload”的 fixed-layout 编码，不承载 transport 元数据；service 的 `correlation_id` 等元数据由上层 envelope 负责。
+`FixedLayoutCodec` 是 SHM 零拷贝的核心编解码器，定义在 `basement/schema/fixed_layout_codec.h`。它只负责“用户 payload”的 fixed-layout 编码，不承载 transport 元数据；RPC 的 `correlation_id` 等元数据由 `rpc.h` 的 payload 信封负责。固定布局是位置语义、没有字段 id，因此只能同版本使用；帧头携带 schema 身份，跨版本帧会被拒绝。
 
 **内存布局**：
 
@@ -493,26 +502,32 @@ graph LR
 
 ```mermaid
 sequenceDiagram
-    Client->>+Server: ServiceRequest (correlation_id)
-    Server-->>-Client: ServiceResponse (correlation_id)
+    Client->>+Req: write(request, corr_id)
+    Req->>+Server: deliver
+    Server-->>-Resp: write(response, corr_id)
+    Resp-->>-Client: deliver（按 corr_id 唤醒 pending）
 ```
 
-**实现**：内部使用两个 Channel：
+**实现**：两条普通通道
 
 - `{service}/request`：请求通道
 - `{service}/response`：响应通道
 
-通过 `CorrelationId` 关联请求与响应。
+`CorrelationId` 放在 payload 信封里，客户端用 pending 表关联请求与响应；超时后清理
+pending 并返回 `ok=false`。因为两条都是普通通道，路由计划、录制、统计、类型校验与
+解码策略**全部自动生效**，不需要为服务单独实现。
 
-### 8.3 Service 实现对比
+### 8.3 为什么不再有 ServiceBus
 
-| 特性                | NativeServiceBus                          | ShmServiceBus                              |
-| ----------------- | ---------------------------------------- | ------------------------------------------ |
-| 位置               | transport/native/native_service_bus.h     | transport/shm/shm_service_bus.h             |
-| 通信方式           | 进程内直接函数调用                         | 基于 MessageBus 的 request/response 通道      |
-| 跨进程支持         | ❌                                       | ✅                                         |
-| 延迟               | 极低（函数调用）                           | 较高（SHM + 回调）                            |
-| Record/Replay     | ❌                                       | ✅（自动通过 MessageBus 录制）                  |
+旧的 `NativeServiceBus`（进程内函数调用）与 `ShmServiceBus`（SHM 通道）是同一件事的
+两套实现，工厂还要按传输方式动态选择。并入通道后只有一套实现：
+
+| 旧 | 现在 |
+|---|---|
+| `ServiceBus` / `ServiceClient` / `ServiceServer` 接口 | `RpcClient` / `RpcServer` 具体类 |
+| `NativeServiceBus` + `ShmServiceBus` | 一套基于 `MessageBus` 的实现 |
+| 工厂 `dynamic_cast` 选择 | 不需要（客户端/服务端直接用本地 `MessageBus`） |
+| 服务流量不进统计/录制（除非专门处理） | 普通通道，统计与录制自动覆盖 |
 
 ***
 
@@ -638,7 +653,7 @@ graph LR
 | ACK 机制        | ✅                | ❌             | ✅ (通过 Native)       |
 | 自动路由          | ❌                | ❌             | ✅                   |
 | Record/Replay | ✅                | ❌             | ✅ (通过 Native)       |
-| Service 支持      | ✅ (NativeServiceBus) | ❌            | ✅ (ShmServiceBus)     |
+| RPC 支持        | ✅（RpcClient/RpcServer） | ✅         | ✅（同左，经普通通道）      |
 | 结构化统计         | ✅                | ✅             | ✅ (合并)              |
 | peek_latest   | ✅                | ✅             | ✅ (委托)              |
 | SHM 失败降级      | N/A              | ❌             | ✅ 自动降级到 inproc      |
@@ -671,6 +686,7 @@ STAR_PROCESS_GROUP=control ./star run &
 
 | 版本     | 日期         | 变更内容                                                                                                          |
 | ------ | ---------- | --------------------------------------------------------------------------------------------------------------- |
+| v0.7.0 | 2026-11-12 | **服务并入通道（决策四）**：删除 `ServiceBus`/`NativeServiceBus`/`ShmServiceBus`，改为 `transport/rpc/rpc.h` 的 `RpcClient`/`RpcServer`（仅依赖 `MessageBus`）；payload 信封携带 `ok/message`，handler 异常不再丢失；服务流量进入普通通道统计/录制/路由。同期：通道类型身份改为 `SchemaTypeId`（name+version+hash）、逐通道 `decode_policy`、录制格式 v2、shm 默认写二进制 TLV |
 | v0.6.0 | 2026-04-19 | MessageView/ServiceRequest/ServiceResponse 重构为“载荷视图 + 显式 serializer”双对象；Writer/DeliveryWriter 新增 `write_serialized*`；SHM service 使用 envelope 显式携带 `CorrelationId`；FixedLayoutCodec 文档边界更新为“仅承载 payload” |
 | v0.5.0 | 2026-04-17 | FixedLayoutCodec 零拷贝 wire format 实现；codegen 生成 View/Builder 端到端闭环；SHM 失败降级策略；publish/subscribe 统一为 write/read；Reader 实现 peek_latest/has_data；RecordableBus 从 MessageBus 分离；dump_stats_lines 降级为非纯虚；ResourceMonitor 添加 ClockFn 注入 |
 | v0.4.0 | 2026-04-14 | 架构重整：提取 transport/common/ 公共模块；Reader 添加 peek_latest/has_data；MessageBus 添加结构化统计 API（channel_stats/all_channel_stats/peek_latest）；NativeServiceBus 从 runtime/factory/ 移至 transport/native/；ParameterStore 移至 runtime/parameter/（star::runtime 命名空间）；删除 is_conf_value_field hack |

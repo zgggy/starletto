@@ -3,7 +3,7 @@
 #include "basement/schema/native/schema_bootstrap.h"
 #include "basement/schema/schema_validator.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
-#include "basement/transport/api/service_bus.h"
+#include "basement/transport/rpc/rpc.h"
 #include "basement/transport/shm/shm_views.h"
 #include "basement/schema/schema_value.h"
 #include "modules/setting/parameter/parameter_component.h"
@@ -46,14 +46,12 @@ auto decode_typed_response(const star::transport::ServiceResponse& response) -> 
         return *typed;
     }
     if (const auto slot = response.body.payload.as<star::transport::ShmSlotView>()) {
-        if (slot->size > 0) {
+        if (slot->stable()) {
             return _ResponseT::from_binary(slot->bytes());
         }
     }
     if (const auto binary = response.body.payload.as<star::transport::BinaryPayloadView>()) {
-        if (binary->size > 0) {
-            return _ResponseT::from_binary(binary->bytes());
-        }
+        return _ResponseT::from_binary(binary->bytes());
     }
     throw star::excep::RuntimeError("typed response decode failed");
 }
@@ -85,9 +83,9 @@ struct CliOptions {
 struct ServiceHarness {
     star::runtime::RuntimeContextPtr context;
     star::setting::ParameterComponent component;
-    std::shared_ptr<star::transport::ServiceClient> get_client;
-    std::shared_ptr<star::transport::ServiceClient> set_client;
-    std::shared_ptr<star::transport::ServiceClient> list_client;
+    std::shared_ptr<star::transport::RpcClient> get_client;
+    std::shared_ptr<star::transport::RpcClient> set_client;
+    std::shared_ptr<star::transport::RpcClient> list_client;
 };
 
 void print_usage() {
@@ -180,9 +178,9 @@ auto build_harness(std::filesystem::path config_dir) -> ServiceHarness {
     harness.component.set_context(context);
     harness.component.set_load_plan(std::move(plan));
     harness.component.init();
-    harness.get_client = context->service_bus().create_client(star::transport::ServiceDescriptor{"setting.parameter.get"});
-    harness.set_client = context->service_bus().create_client(star::transport::ServiceDescriptor{"setting.parameter.set"});
-    harness.list_client = context->service_bus().create_client(star::transport::ServiceDescriptor{"setting.parameter.list"});
+    harness.get_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "setting.parameter.get");
+    harness.set_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "setting.parameter.set");
+    harness.list_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "setting.parameter.list");
     return harness;
 }
 

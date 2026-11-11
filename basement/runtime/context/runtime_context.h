@@ -17,7 +17,6 @@ namespace star::transport {
 class ChannelRegistry;
 class MessageBus;
 class RecordableBus;
-class ServiceBus;
 }  // namespace star::transport
 namespace star::runtime {
 class ParameterStore;
@@ -32,7 +31,6 @@ class RuntimeContext {
     virtual auto message_bus() -> star::transport::MessageBus& = 0;
     virtual auto recordable_bus() -> star::transport::RecordableBus* = 0;
     virtual auto channel_registry() -> star::transport::ChannelRegistry& = 0;
-    virtual auto service_bus() -> star::transport::ServiceBus& = 0;
     virtual auto parameter_store() -> ParameterStore& = 0;
     virtual auto scheduler() -> Scheduler& = 0;
     virtual auto schema_registry() -> star::schema::SchemaRegistry& = 0;

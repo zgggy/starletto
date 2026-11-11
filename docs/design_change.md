@@ -17,3 +17,8 @@
 | 2026-11-11 | 服务总线随传输方式选择（shm_routed → ShmServiceBus）；服务端口折算进路由计划；parameter 组件改为 commands 声明式 | transport/runtime/modules | remediation_plan P1-1 |
 | 2026-11-11 | ShmRoutedMessageBus 实现 RecordableBus（委托 inproc），routed 模式录制恢复 | transport | remediation_plan P1-2 |
 | 2026-11-12 | 契约确认：支持多版本 Schema 演进（registry 多版本 + 解码策略 per-channel + record v2）；服务抽象撤销，并入通道（保留轻量 RPC 关联工具） | schema/transport/runtime | contract_decisions |
+| 2026-11-12 | 类型身份改为 SchemaTypeId（name+version+hash）：`TypedConstPtr`/`TypedPtr` 携带，写入自动盖章、通道首写采纳；`typeid` 降级为调试信息 | core/schema/transport | contract_decisions 决策一 |
+| 2026-11-12 | registry 多版本：key=name+version，同名多版本共存，同 key 不同内容报错；codegen 用 FNV-1a 算内容哈希（字段按 id 排序），lint 校验 hash/未定义类型/map key/version | schema | contract_decisions 决策二/三 阶段二 |
+| 2026-11-12 | 逐通道解码策略 unknown/missing/type_mismatch（conf→plan→通道→解码）；同时修复跨进程解码缺陷：shm 默认写二进制 TLV，固定布局帧头 v2 携带 schema 身份并只允许同版本 | schema/transport/runtime | contract_decisions 阶段三；remediation P2-7 |
+| 2026-11-12 | 录制格式 v2：墙钟/单调双锚点 + 每条消息携带 schema 身份；回放前 `validate_against()` 校验；v1 文件仍可读 | transport | contract_decisions 阶段四 |
+| 2026-11-12 | 服务并入通道：删除 ServiceBus/NativeServiceBus/ShmServiceBus，改为 RpcClient/RpcServer（仅依赖 MessageBus）；payload 信封携带 ok/message | transport/runtime/modules/apps | contract_decisions 决策四 阶段五 |

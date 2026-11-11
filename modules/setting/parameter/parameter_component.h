@@ -10,7 +10,7 @@
 #include "basement/schema/schema_validator.h"
 #include "basement/schema/binary_codec.h"
 #include "basement/transport/api/message_bus.h"
-#include "basement/transport/api/service_bus.h"
+#include "basement/transport/rpc/rpc.h"
 #include "basement/transport/shm/shm_views.h"
 #include "basement/schema/schema_value.h"
 #include "modules/setting/parameter/parameter_store_service.h"
@@ -122,14 +122,17 @@ private:
 
     // 回退路径：conf 未声明 commands 时按内置默认名注册
     void register_parameter_services() {
-        get_server_ = context()->service_bus().create_server(
-            star::transport::ServiceDescriptor{default_get_service_name()},
+        get_server_ = std::make_shared<star::transport::RpcServer>(
+            context()->message_bus(),
+            default_get_service_name(),
             [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse { return handle_get_service(request); });
-        set_server_ = context()->service_bus().create_server(
-            star::transport::ServiceDescriptor{default_set_service_name()},
+        set_server_ = std::make_shared<star::transport::RpcServer>(
+            context()->message_bus(),
+            default_set_service_name(),
             [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse { return handle_set_service(request); });
-        list_server_ = context()->service_bus().create_server(
-            star::transport::ServiceDescriptor{default_list_service_name()},
+        list_server_ = std::make_shared<star::transport::RpcServer>(
+            context()->message_bus(),
+            default_list_service_name(),
             [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse { return handle_list_service(request); });
     }
 
@@ -211,14 +214,13 @@ private:
             return *typed;
         }
         if (const auto slot = request.body.payload.as<star::transport::ShmSlotView>()) {
-            if (slot->size > 0) {
+            if (slot->stable()) {
                 return _RequestT::from_binary(slot->bytes());
             }
         }
         if (const auto binary = request.body.payload.as<star::transport::BinaryPayloadView>()) {
-            if (binary->size > 0) {
-                return _RequestT::from_binary(binary->bytes());
-            }
+            // size==0 是合法编码（全 optional 的消息），交给 from_binary 按默认值解码
+            return _RequestT::from_binary(binary->bytes());
         }
         throw star::excep::RuntimeError("ParameterComponent decode typed service request failed");
     }
@@ -451,9 +453,9 @@ private:
 
     std::shared_ptr<ParameterStoreService> store_service_;
     std::shared_ptr<star::transport::Writer> writer_;
-    std::shared_ptr<star::transport::ServiceServer> get_server_;
-    std::shared_ptr<star::transport::ServiceServer> set_server_;
-    std::shared_ptr<star::transport::ServiceServer> list_server_;
+    std::shared_ptr<star::transport::RpcServer> get_server_;
+    std::shared_ptr<star::transport::RpcServer> set_server_;
+    std::shared_ptr<star::transport::RpcServer> list_server_;
 
     template <typename _T, typename = void>
     struct has_encode_fixed_layout_into : std::false_type {};

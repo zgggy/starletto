@@ -150,6 +150,31 @@ readers {
 - **字段删除/改名是编译期错误**，没有运行时策略——源码引用了不存在的字段，编译直接失败，这是正确行为。
 - **固定布局帧（`*View` 零拷贝读取）不支持跨版本**：它按位置取值，没有字段 id。帧头带 schema 身份，版本不一致时直接拒绝，不会读出错位数据。
 
+#### 提供/调用服务（`commands` 块）
+
+服务就是两条普通通道，没有单独的「服务总线」：
+
+```conf
+commands {                          # 本组件提供的服务（server 侧）
+    get {
+        channel = setting.parameter.get
+        type = star::setting::service::parameter::get_request::ParameterGetRequest
+        ack_type = star::setting::service::parameter::get_response::ParameterGetResponse
+    }
+}
+```
+
+组件里覆写 `handle_service_request(name, request)` 按 `name`（= commands 的键名）分发；
+客户端直接基于同一个 `MessageBus` 调：
+
+```cpp
+auto client = star::transport::RpcClient{context()->message_bus(), "setting.parameter.get"};
+auto response = client.call_serialized(make_typed_request(request));
+```
+
+因为走的是普通通道，服务流量自动进路由计划、录制、通道统计与类型校验；
+`<service>/request`、`<service>/response` 在 `star monitor` 里和普通 topic 一样可见。
+
 
 ### 2.3 `register.cc` —— 插件入口（永远照抄）
 
