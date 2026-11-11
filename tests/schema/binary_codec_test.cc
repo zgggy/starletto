@@ -45,6 +45,50 @@ root Sample {
 }
 )SCHEMA";
 
+// 同一个字段 id 在 v1 是 int、在 v2 是 string，用于类型不一致策略
+constexpr const char* kTypeTextInt = R"SCHEMA(
+schema test.typed
+version 1
+root Typed {
+    1 value : int
+}
+)SCHEMA";
+
+constexpr const char* kTypeTextString = R"SCHEMA(
+schema test.typed
+version 2
+root Typed {
+    1 value : string
+}
+)SCHEMA";
+
+// v2 有一个带默认值的必填字段 note；v1 生产者不会发它
+constexpr const char* kMissingTextV1 = R"SCHEMA(
+schema test.missing
+version 1
+root Missing {
+    1 id : int
+}
+)SCHEMA";
+
+constexpr const char* kRequiredRepeated = R"SCHEMA(
+schema test.repeat
+version 1
+root Repeat {
+    1 id : int
+    2 tags : string[]
+}
+)SCHEMA";
+
+constexpr const char* kMissingTextV2 = R"SCHEMA(
+schema test.missing
+version 2
+root Missing {
+    1 id : int
+    2 note : string = "fallback"
+}
+)SCHEMA";
+
 auto load(const char* text) -> star::schema::SchemaDescriptor { return NativeSchemaLoader{}.load_schema_text(text); }
 
 auto make_sample() -> SchemaValue {
@@ -99,11 +143,29 @@ TEST_CASE("binary codec roundtrips every scalar kind plus a string array") {
     REQUIRE_EQ(std::get<std::string>(tags[1].as_scalar()), std::string{"beta"});
 }
 
-TEST_CASE("binary codec roundtrips an empty object") {
+TEST_CASE("binary codec roundtrips a complete object") {
     const auto schema = load(kSchemaText);
-    const auto bytes = BinaryCodec::encode(schema, SchemaValue{SchemaObject{}});
+    auto obj = SchemaObject{};
+    obj["id"] = SchemaValue{int64_t{7}};
+    obj["name"] = SchemaValue{std::string{"star"}};
+    const auto bytes = BinaryCodec::encode(schema, SchemaValue{obj});
     const auto decoded = BinaryCodec::decode(schema, bytes);
     REQUIRE(decoded.is_object());
+    REQUIRE_EQ(std::get<int64_t>(decoded.as_object().at("id").as_scalar()), int64_t{7});
+}
+
+// 默认策略 missing=default：没有默认值的必填字段缺席时仍然报错（不能凭空造值）
+TEST_CASE("decode rejects a missing required field without default under the default policy") {
+    const auto schema = load(kSchemaText);
+    const auto bytes = BinaryCodec::encode(schema, SchemaValue{SchemaObject{}});
+
+    auto threw = false;
+    try {
+        (void)BinaryCodec::decode(schema, bytes);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
 }
 
 TEST_CASE("apply_defaults fills optional fields that were omitted") {
@@ -200,6 +262,134 @@ TEST_CASE("unknown fields survive a decode and re-encode cycle") {
     const auto second = BinaryCodec::decode_with_unknown(schema_v2, reencoded);
     REQUIRE_EQ(second.unknown_fields.size(), 0U);
     REQUIRE_EQ(std::get<std::string>(second.value.as_object().at("note").as_scalar()), std::string{"from the future"});
+}
+
+// 决策二/三：三类版本不一致各自有 per-channel 策略
+
+TEST_CASE("unknown=drop discards fields from a newer schema") {
+    const auto schema_v2 = load(kSchemaTextV2);
+    auto obj = SchemaObject{};
+    obj["id"] = SchemaValue{int64_t{1}};
+    obj["name"] = SchemaValue{std::string{"legacy"}};
+    obj["note"] = SchemaValue{std::string{"from the future"}};
+    const auto bytes = BinaryCodec::encode(schema_v2, SchemaValue{obj});
+
+    auto policy = star::schema::DecodePolicy{};
+    policy.unknown = star::schema::UnknownFieldPolicy::kDrop;
+    const auto decoded = BinaryCodec::decode_with_unknown(load(kSchemaText), bytes, policy);
+
+    REQUIRE_EQ(decoded.unknown_fields.size(), 0U);
+    REQUIRE(decoded.value.as_object().count("note") == 0);
+}
+
+TEST_CASE("unknown=error rejects fields from a newer schema") {
+    const auto schema_v2 = load(kSchemaTextV2);
+    auto obj = SchemaObject{};
+    obj["id"] = SchemaValue{int64_t{1}};
+    obj["name"] = SchemaValue{std::string{"legacy"}};
+    obj["note"] = SchemaValue{std::string{"from the future"}};
+    const auto bytes = BinaryCodec::encode(schema_v2, SchemaValue{obj});
+
+    auto policy = star::schema::DecodePolicy{};
+    policy.unknown = star::schema::UnknownFieldPolicy::kError;
+    auto threw = false;
+    try {
+        (void)BinaryCodec::decode_with_unknown(load(kSchemaText), bytes, policy);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+}
+
+TEST_CASE("missing=default fills a declared default for a field the producer did not send") {
+    const auto schema_v1 = load(kMissingTextV1);
+    auto obj = SchemaObject{};
+    obj["id"] = SchemaValue{int64_t{9}};
+    const auto bytes = BinaryCodec::encode(schema_v1, SchemaValue{obj});
+
+    const auto decoded = BinaryCodec::decode_with_unknown(load(kMissingTextV2), bytes);
+    REQUIRE_EQ(std::get<std::string>(decoded.value.as_object().at("note").as_scalar()), std::string{"fallback"});
+}
+
+TEST_CASE("missing=error rejects a field that the producer did not send even if it has a default") {
+    const auto schema_v1 = load(kMissingTextV1);
+    auto obj = SchemaObject{};
+    obj["id"] = SchemaValue{int64_t{9}};
+    const auto bytes = BinaryCodec::encode(schema_v1, SchemaValue{obj});
+
+    auto policy = star::schema::DecodePolicy{};
+    policy.missing = star::schema::MissingFieldPolicy::kError;
+    auto threw = false;
+    try {
+        (void)BinaryCodec::decode_with_unknown(load(kMissingTextV2), bytes, policy);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+}
+
+TEST_CASE("missing=default fills an empty array for an omitted repeated field") {
+    // 旧生产者没有 tags 字段：required repeated 缺席等价于空数组，不应报错
+    const auto schema = load(kRequiredRepeated);
+    auto obj = SchemaObject{};
+    obj["id"] = SchemaValue{int64_t{1}};
+    const auto bytes = BinaryCodec::encode(schema, SchemaValue{obj});
+
+    const auto decoded = BinaryCodec::decode_with_unknown(schema, bytes);
+    const auto& tags = decoded.value.as_object().at("tags").as_array();
+    REQUIRE(tags.empty());
+}
+
+TEST_CASE("type_mismatch=error rejects a field decoded with a different kind") {
+    auto obj = SchemaObject{};
+    obj["value"] = SchemaValue{std::string{"42"}};
+    const auto bytes = BinaryCodec::encode(load(kTypeTextString), SchemaValue{obj});
+
+    auto threw = false;
+    try {
+        (void)BinaryCodec::decode(load(kTypeTextInt), bytes);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+}
+
+TEST_CASE("type_mismatch=best_effort converts a numeric string to int") {
+    auto obj = SchemaObject{};
+    obj["value"] = SchemaValue{std::string{"42"}};
+    const auto bytes = BinaryCodec::encode(load(kTypeTextString), SchemaValue{obj});
+
+    auto policy = star::schema::DecodePolicy{};
+    policy.type_mismatch = star::schema::TypeMismatchPolicy::kBestEffort;
+    const auto decoded = BinaryCodec::decode(load(kTypeTextInt), bytes, policy);
+    REQUIRE_EQ(std::get<int64_t>(decoded.as_object().at("value").as_scalar()), int64_t{42});
+}
+
+TEST_CASE("type_mismatch=best_effort converts an int to string") {
+    auto obj = SchemaObject{};
+    obj["value"] = SchemaValue{int64_t{7}};
+    const auto bytes = BinaryCodec::encode(load(kTypeTextInt), SchemaValue{obj});
+
+    auto policy = star::schema::DecodePolicy{};
+    policy.type_mismatch = star::schema::TypeMismatchPolicy::kBestEffort;
+    const auto decoded = BinaryCodec::decode(load(kTypeTextString), bytes, policy);
+    REQUIRE_EQ(std::get<std::string>(decoded.as_object().at("value").as_scalar()), std::string{"7"});
+}
+
+TEST_CASE("type_mismatch=best_effort still rejects an unsafe conversion") {
+    auto obj = SchemaObject{};
+    obj["value"] = SchemaValue{std::string{"not-a-number"}};
+    const auto bytes = BinaryCodec::encode(load(kTypeTextString), SchemaValue{obj});
+
+    auto policy = star::schema::DecodePolicy{};
+    policy.type_mismatch = star::schema::TypeMismatchPolicy::kBestEffort;
+    auto threw = false;
+    try {
+        (void)BinaryCodec::decode(load(kTypeTextInt), bytes, policy);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
 }
 
 }  // namespace

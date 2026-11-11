@@ -38,6 +38,13 @@ def PortPlan {
     5 direction : string ?
     6 qos_depth : int ?
     7 qos_drop_policy : string ?
+    8 decode_policy : DecodePolicyPlan ?
+}
+
+def DecodePolicyPlan {
+    1 unknown : string ?
+    2 missing : string ?
+    3 type_mismatch : string ?
 }
 
 def ServicePortPlan {

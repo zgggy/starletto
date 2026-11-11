@@ -118,6 +118,39 @@ writers {                          # 发布的通道
 2. `component_class` = `register_native_components` 里注册的字符串
 3. `readers/writers` 的**键名** = 代码里 `read_latest("...")` / `write("...", ...)` 的字符串
 
+#### 跨版本通信：`decode_policy`（可选）
+
+生产者和消费者编译在不同版本的同一个 schema 时，接收端按通道决定怎么处理差异。
+默认值已经是「尽量兼容」，只在需要更严格或更宽松时显式写：
+
+```conf
+readers {
+    parameter_snapshot {
+        channel = setting.parameter.snapshot
+        type = star::generated::setting::parameter::snapshot::ParameterSnapshot
+        decode_policy {
+            unknown = keep         # error | keep（默认）| drop
+            missing = default      # error | default（默认）
+            type_mismatch = error  # error（默认）| best_effort
+        }
+    }
+}
+```
+
+| 配置 | 含义 | 什么时候用 |
+|---|---|---|
+| `unknown=keep` | 保留生产者新增字段的原始字节，随消息继续传递 | 默认；滚动升级时旧进程不丢数据 |
+| `unknown=error` | 出现不认识的字段立即报错 | 控制通道：宁可停也不要跑错 |
+| `missing=default` | 缺字段用 schema 默认值补；没有默认值且非 optional 时仍报错 | 默认；旧生产者 → 新消费者 |
+| `missing=error` | 缺字段即报错 | 严格契约：要求对方必须发全 |
+| `type_mismatch=best_effort` | 只做安全转换（数值↔数值、数值→字符串），否则报错 | 历史字段类型改过且需平滑过渡 |
+
+注意两点：
+
+- **字段删除/改名是编译期错误**，没有运行时策略——源码引用了不存在的字段，编译直接失败，这是正确行为。
+- **固定布局帧（`*View` 零拷贝读取）不支持跨版本**：它按位置取值，没有字段 id。帧头带 schema 身份，版本不一致时直接拒绝，不会读出错位数据。
+
+
 ### 2.3 `register.cc` —— 插件入口（永远照抄）
 
 ```cpp

@@ -47,6 +47,25 @@ class Component {
         return &(*plan_);
     }
 
+    // 按帧头选择解码器：固定布局帧走 from_fixed_layout（内部校验 schema 身份），
+    // 其余走二进制 TLV + 通道解码策略。录制回放、测试与组件共用这一个入口。
+    template <typename _Msg>
+    static auto decode_payload(std::span<const uint8_t> bytes, const star::schema::DecodePolicy& policy) -> _Msg {
+        if constexpr (has_from_fixed_layout<_Msg>::value) {
+            if (star::schema::is_fixed_layout_frame(bytes)) {
+                return _Msg::from_fixed_layout(bytes);
+            }
+        }
+        if constexpr (has_from_binary_with_policy<_Msg>::value) {
+            return _Msg::from_binary_with_policy(bytes, policy);
+        } else if constexpr (has_from_binary<_Msg>::value) {
+            (void)policy;
+            return _Msg::from_binary(bytes);
+        } else {
+            throw star::excep::RuntimeError("decode_payload failed, message type has no binary decoder");
+        }
+    }
+
     void auto_configure() {
         if (not plan_ || not context_) {
             return;
@@ -69,6 +88,7 @@ class Component {
                         d.options.drop_policy = star::transport::DropPolicy::DROP_NEWEST;
                     }
                 }
+                d.options.decode_policy = decode_policy_for(e);
                 auto port_name = e.name;
                 auto reader = bus.create_reader(d, [this, port_name](const star::transport::MessageView& msg) {
                     std::lock_guard<std::mutex> lock(*latest_mutex_);
@@ -82,6 +102,7 @@ class Component {
                 auto d = star::transport::ChannelDescriptor{};
                 d.name = e.channel.value_or(e.name);
                 d.type_name = e.type_name.value_or("");
+                d.options.decode_policy = decode_policy_for(e);
                 writers_[e.name] = bus.create_writer(d);
                 if (e.record.value_or(false)) {
                     if (auto* recordable = context_->recordable_bus()) {
@@ -171,6 +192,7 @@ class Component {
         auto d = star::transport::ChannelDescriptor{};
         d.name = resolve_channel(name, true);
         d.type_name = resolve_type_name<_Msg>(name, true);
+        d.options.decode_policy = resolve_decode_policy(name, true);
         auto reader = context()->message_bus().create_reader(d, [this, cb = std::move(callback)](const star::transport::MessageView& msg) { decode_and_dispatch<_Msg>(msg, cb); });
         readers_[name] = std::move(reader);
     }
@@ -180,6 +202,7 @@ class Component {
         auto d = star::transport::ChannelDescriptor{};
         d.name = resolve_channel(name, false);
         d.type_name = resolve_type_name<_Msg>(name, false);
+        d.options.decode_policy = resolve_decode_policy(name, false);
         writers_[name] = context()->message_bus().create_writer(d);
     }
 
@@ -331,6 +354,45 @@ class Component {
         return "";
     }
 
+    // 端口策略来自 component.conf 的 decode_policy 块（经 plan 传下来）。
+    // 取值非法属于装配错误，直接抛异常并带上通道名——静默退回默认会让线上行为不可解释。
+    static auto decode_policy_for(const star::generated::runtime::component_load_plan::PortPlan& endpoint)
+        -> star::schema::DecodePolicy {
+        auto policy = star::schema::DecodePolicy{};
+        if (not endpoint.decode_policy.has_value()) {
+            return policy;
+        }
+        const auto& conf = *endpoint.decode_policy;
+        const auto unknown = conf.unknown.value_or("");
+        const auto missing = conf.missing.value_or("");
+        const auto mismatch = conf.type_mismatch.value_or("");
+        if (not star::schema::parse_decode_policy(unknown, missing, mismatch, &policy)) {
+            throw star::excep::RuntimeError("component decode_policy invalid: channel=",
+                                            endpoint.channel.value_or(endpoint.name),
+                                            ", unknown=",
+                                            unknown,
+                                            ", missing=",
+                                            missing,
+                                            ", type_mismatch=",
+                                            mismatch);
+        }
+        return policy;
+    }
+
+    auto resolve_decode_policy(const std::string& port_name, bool is_reader) const -> star::schema::DecodePolicy {
+        if (const auto* plan = load_plan()) {
+            const auto& endpoints = is_reader ? plan->inputs : plan->outputs;
+            if (endpoints.has_value()) {
+                for (const auto& e : *endpoints) {
+                    if (e.name == port_name) {
+                        return decode_policy_for(e);
+                    }
+                }
+            }
+        }
+        return star::schema::DecodePolicy{};
+    }
+
     template <typename _Snapshot, typename _Target>
     auto decode_snapshot_entry(const std::shared_ptr<const _Snapshot>& snap, const std::string& key, const std::string& expected_schema) const -> std::optional<_Target> {
         if (not snap) {
@@ -381,7 +443,7 @@ class Component {
                         return nullptr;
                     }
                     try {
-                        auto decoded = std::make_shared<_Msg>(_Msg::from_binary(slot->bytes()));
+                        auto decoded = std::make_shared<_Msg>(decode_payload<_Msg>(slot->bytes(), msg.decode_policy));
                         // seqlock 后置复核：解码期间写方可能已开始覆写本槽，
                         // 此时解码结果可能来自撕裂数据，必须丢弃
                         if (not slot->stable()) {
@@ -401,7 +463,7 @@ class Component {
             if (const auto binary = msg.payload.as<star::transport::BinaryPayloadView>()) {
                 if (binary->size > 0) {
                     try {
-                        return std::make_shared<_Msg>(_Msg::from_binary(binary->bytes()));
+                        return std::make_shared<_Msg>(decode_payload<_Msg>(binary->bytes(), msg.decode_policy));
                     } catch (const std::exception& ex) {
                         logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=binary, size=" << binary->size << ", error=" << ex.what();
                         return nullptr;
@@ -458,6 +520,19 @@ class Component {
 
     template <typename _T>
     struct has_schema_type_id<_T, std::void_t<decltype(std::remove_const_t<_T>::schema_type_id())>> : std::true_type {};
+
+    template <typename _T, typename = void>
+    struct has_from_fixed_layout : std::false_type {};
+    template <typename _T>
+    struct has_from_fixed_layout<_T, std::void_t<decltype(_T::from_fixed_layout(std::span<const uint8_t>{}))>> : std::true_type {};
+
+    template <typename _T, typename = void>
+    struct has_from_binary_with_policy : std::false_type {};
+    template <typename _T>
+    struct has_from_binary_with_policy<
+        _T,
+        std::void_t<decltype(_T::from_binary_with_policy(std::span<const uint8_t>{}, star::schema::DecodePolicy{}))>>
+        : std::true_type {};
 
     template <typename _T, typename = void>
     struct has_from_binary : std::false_type {};

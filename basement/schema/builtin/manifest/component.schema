@@ -53,4 +53,11 @@ def Port {
     8 pending_queue_size : int ?
     9 qos_profile : QosProfile ?
     10 record : bool ?
+    11 decode_policy : DecodePolicyConf ?
+}
+
+def DecodePolicyConf {
+    1 unknown : string ?
+    2 missing : string ?
+    3 type_mismatch : string ?
 }

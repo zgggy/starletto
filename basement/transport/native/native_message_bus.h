@@ -57,9 +57,14 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
             channel.descriptor.schema_type_id = descriptor.schema_type_id;
             return;
         }
-        if (not descriptor.schema_type_id.empty() and channel.descriptor.schema_type_id != descriptor.schema_type_id) {
-            throw star::excep::RuntimeError("NativeMessageBus declare_channel failed, schema mismatch for channel: ", descriptor.name, ", existing=", channel.descriptor.schema_type_id.name,
+        if (not descriptor.schema_type_id.empty() and channel.descriptor.schema_type_id.name != descriptor.schema_type_id.name) {
+            throw star::excep::RuntimeError("NativeMessageBus declare_channel failed, schema name mismatch for channel: ", descriptor.name, ", existing=", channel.descriptor.schema_type_id.name,
                                             ", new=", descriptor.schema_type_id.name);
+        }
+        // 解码策略声明在接收端：先声明的是 writer（默认策略），reader 的显式策略要覆盖上来
+        if (descriptor.options.decode_policy != star::schema::DecodePolicy{} and
+            channel.descriptor.options.decode_policy == star::schema::DecodePolicy{}) {
+            channel.descriptor.options.decode_policy = descriptor.options.decode_policy;
         }
     }
 
@@ -186,6 +191,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
         std::shared_ptr<MessageRecorder> recorder;
         bool should_record = false;
         std::string record_type_name;
+        MessageView delivered;
         const auto dispatch_begin = std::chrono::steady_clock::now();
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -193,8 +199,11 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
             if (it == channels_.end()) {
                 return;
             }
-            if (not it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty() and it->second.descriptor.schema_type_id != message.schema_type_id) {
-                throw star::excep::RuntimeError("NativeMessageBus write failed, schema mismatch for channel: ", channel_name, ", existing=", it->second.descriptor.schema_type_id.name,
+            // 通道身份只强制 name 一致：同名不同 version/hash 是跨版本通信，
+            // 由接收端的 decode_policy 决定接受还是拒绝（决策二/三）
+            if (not it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty() and
+                it->second.descriptor.schema_type_id.name != message.schema_type_id.name) {
+                throw star::excep::RuntimeError("NativeMessageBus write failed, schema name mismatch for channel: ", channel_name, ", existing=", it->second.descriptor.schema_type_id.name,
                                                 ", message=", message.schema_type_id.name);
             }
             // 首写采纳：conf 只声明了类型名，通道的 TypeId 由首个带身份的消息补全
@@ -202,11 +211,13 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
                 it->second.descriptor.schema_type_id = message.schema_type_id;
             }
             const auto& options = it->second.descriptor.options;
+            delivered = message;
+            delivered.decode_policy = options.decode_policy;
             reader_callbacks.reserve(it->second.readers.size());
             for (const auto& [reader_id, cb] : it->second.readers) {
                 if (options.depth > 0) {
                     auto& history = it->second.reader_history[reader_id];
-                    auto result = apply_qos(history, message, options, it->second.stats);
+                    auto result = apply_qos(history, delivered, options, it->second.stats);
                     if (not result.should_deliver) {
                         continue;
                     }
@@ -225,7 +236,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
         for (const auto& [_, cb] : reader_callbacks) {
             // 回调异常不得杀死发布方线程，但必须计数可见
             try {
-                cb(message);
+                cb(delivered);
             } catch (const std::exception& e) {
                 record_callback_failure(channel_name);
                 logE << "NativeMessageBus: reader callback threw: channel=" << channel_name << ", err=" << e.what();

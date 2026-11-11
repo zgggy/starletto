@@ -135,6 +135,13 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             if (port.qos_profile.has_value() && port.qos_profile->history.has_value()) {
                 item.qos_drop_policy = *port.qos_profile->history;
             }
+            if (port.decode_policy.has_value()) {
+                auto decode_policy = star::generated::runtime::component_load_plan::DecodePolicyPlan{};
+                decode_policy.unknown = port.decode_policy->unknown;
+                decode_policy.missing = port.decode_policy->missing;
+                decode_policy.type_mismatch = port.decode_policy->type_mismatch;
+                item.decode_policy = std::move(decode_policy);
+            }
             inputs.emplace_back(std::move(item));
         }
         plan.inputs = std::move(inputs);
@@ -161,6 +168,13 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             }
             if (port.qos_profile.has_value() && port.qos_profile->history.has_value()) {
                 item.qos_drop_policy = *port.qos_profile->history;
+            }
+            if (port.decode_policy.has_value()) {
+                auto decode_policy = star::generated::runtime::component_load_plan::DecodePolicyPlan{};
+                decode_policy.unknown = port.decode_policy->unknown;
+                decode_policy.missing = port.decode_policy->missing;
+                decode_policy.type_mismatch = port.decode_policy->type_mismatch;
+                item.decode_policy = std::move(decode_policy);
             }
             outputs.emplace_back(std::move(item));
         }

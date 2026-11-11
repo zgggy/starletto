@@ -155,11 +155,12 @@
 | # | 问题 | 修法方向 |
 |---|---|---|
 | P2-1 ✅ | 类型身份靠 `typeid`/mangled name，跨 DSO/插件卸载不成立 | `TypedConstPtr` 改携带 `SchemaTypeId`（name+version+hash）作为唯一身份；`typeid` 仅用于 debug 断言。**已落地（2026-11-12）**：`basement/core/type_id.h`、写入路径盖章、通道首写采纳 |
-| P2-2 ✅ 部分 | schema 演进机制缺失：无 reserved/deprecated、hash 手写、registry 单版本 | 加 `reserved` 关键字与 lint；`schema_hash` 由 codegen 计算写入；registry 支持同 name 多版本并存。**已落地（2026-11-12）**：registry key=name+version、`lookup` 区分 hash 未知/不一致、FNV-1a 内容哈希、lint 校验 hash/未定义类型/map key/version；`reserved` 与逐通道解码策略见阶段三 |
+| P2-2 ✅ 部分 | schema 演进机制缺失：无 reserved/deprecated、hash 手写、registry 单版本 | 加 `reserved` 关键字与 lint；`schema_hash` 由 codegen 计算写入；registry 支持同 name 多版本并存。**已落地（2026-11-12）**：registry key=name+version、`lookup` 区分 hash 未知/不一致、FNV-1a 内容哈希、lint 校验 hash/未定义类型/map key/version；逐通道 `decode_policy`（unknown/missing/type_mismatch）已接通 conf→plan→通道→解码，`reserved` 关键字仍未做 |
 | P2-3 | 每个 reader 一个轮询线程（8 相机 × 3 消费者 = 24 线程） | 改为每通道一个 epoll/事件线程，或共享一个轮询池 |
 | P2-4 | codegen 单文件单 root、跨文件无引用、helper 可能 ODR | 拆 IR + per-language emitter；先支持跨文件 import 与多 root；helper 加文件级前缀 |
 | P2-5 | 日志无 pid、同步写、无结构化 | 加 pid/异步队列/JSON；per-module 级别接线 |
 | P2-6 | `IClock` 有抽象零引用，仿真时钟无法驱动 futex | 要么接入 `RuntimeContext` 并贯穿调度/futex/录放，要么删除 |
+| P2-7 ✅ | **本轮复审发现（2026-11-12）**：shm 写路径优先固定布局，读路径固定调用 `from_binary`——生成消息跨进程必然解析失败（固定布局帧以 `0x5354` 开头，TLV 解析读到非法 wire type）。此前没有双进程 + 生成消息的用例，所以一直未暴露 | shm 默认写二进制 TLV（可演进格式）；固定布局帧头升级 v2 并携带 `schema_version`+`schema_hash`，读取方按帧头自动选解码器并校验身份；固定布局明确限定同版本使用。回归：`transport_shm_payload_encoding` 2 用例 + `schema_fixed_layout` 4 用例 + `Component decode_payload selects the decoder from the frame header` |
 
 ---
 

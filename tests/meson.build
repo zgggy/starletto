@@ -197,6 +197,26 @@ test(
 )
 
 test(
+    'transport_shm_payload_encoding',
+    executable(
+        'transport_shm_payload_encoding_test',
+        files('transport/shm_payload_encoding_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [transport_native_dep],
+    ),
+)
+
+test(
+    'schema_fixed_layout',
+    executable(
+        'schema_fixed_layout_test',
+        files('schema/fixed_layout_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [schema_dep, libraries_dep],
+    ),
+)
+
+test(
     'schema_registry',
     executable(
         'schema_registry_test',

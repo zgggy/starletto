@@ -2,6 +2,7 @@
 #define __SCHEMA_BINARY_CODEC_H__
 
 #include "basement/core/exception.h"
+#include "basement/schema/decode_policy.h"
 #include "basement/schema/schema_ast.h"
 #include "basement/schema/schema_value.h"
 
@@ -46,14 +47,20 @@ public:
         return out;
     }
 
-    static auto decode(const SchemaDescriptor& schema, std::span<const uint8_t> bytes) -> star::schema::SchemaValue {
-        return decode_with_unknown(schema, bytes).value;
+    static auto decode(
+        const SchemaDescriptor& schema,
+        std::span<const uint8_t> bytes,
+        const DecodePolicy& policy = DecodePolicy{}) -> star::schema::SchemaValue {
+        return decode_with_unknown(schema, bytes, policy).value;
     }
 
-    static auto decode_with_unknown(const SchemaDescriptor& schema, std::span<const uint8_t> bytes) -> DecodedMessage {
+    static auto decode_with_unknown(
+        const SchemaDescriptor& schema,
+        std::span<const uint8_t> bytes,
+        const DecodePolicy& policy = DecodePolicy{}) -> DecodedMessage {
         star::schema::SchemaObject obj;
         UnknownFieldSet unknown_fields;
-        decode_object(schema.root_name, schema.fields, bytes, &obj, &unknown_fields);
+        decode_object(schema.root_name, schema.fields, bytes, &obj, &unknown_fields, policy);
         return DecodedMessage{
             .value = star::schema::SchemaValue(std::move(obj)),
             .unknown_fields = std::move(unknown_fields),
@@ -195,7 +202,8 @@ private:
         const std::vector<FieldDescriptor>& fields,
         std::span<const uint8_t> bytes,
         star::schema::SchemaObject* out,
-        UnknownFieldSet* unknown_fields = nullptr) {
+        UnknownFieldSet* unknown_fields,
+        const DecodePolicy& policy) {
         if (out == nullptr) {
             throw star::excep::RuntimeError("BinaryCodec decode_object failed, output is null");
         }
@@ -211,8 +219,13 @@ private:
             const auto wire_type = static_cast<uint8_t>(tag & 0x7);
             const auto it = by_id.find(field_id);
             if (it == by_id.end()) {
+                if (policy.unknown == UnknownFieldPolicy::kError) {
+                    throw star::excep::RuntimeError(
+                        "BinaryCodec decode failed, unknown field (policy=error): ", scope, ", field_id=", field_id);
+                }
                 const auto tlv = consume_unknown_tlv(tag, field_id, wire_type, &cur);
-                if (unknown_fields != nullptr) {
+                // keep 只在根对象保留未知字段的原始 TLV；嵌套层没有可携带的结构位置，按 drop 处理
+                if (policy.unknown == UnknownFieldPolicy::kKeep and unknown_fields != nullptr) {
                     unknown_fields->emplace_back(UnknownField{
                         .field_id = field_id,
                         .wire_type = wire_type,
@@ -221,7 +234,45 @@ private:
                 }
                 continue;
             }
-            decode_field(scope, *it->second, wire_type, &cur, out);
+            decode_field(scope, *it->second, wire_type, &cur, out, policy);
+        }
+        apply_missing_policy(scope, fields, out, policy);
+    }
+
+    // missing 策略：非 optional 字段缺席时，按 error 抛错或按 default 补值。
+    // repeated 缺席补空数组、map 缺席补空对象；无默认值的普通字段仍报错。
+    static void apply_missing_policy(
+        const std::string& scope,
+        const std::vector<FieldDescriptor>& fields,
+        star::schema::SchemaObject* out,
+        const DecodePolicy& policy) {
+        for (const auto& field : fields) {
+            if (out->find(field.name) != out->end()) {
+                continue;
+            }
+            if (field.optional) {
+                // optional 缺席是合法语义，不属于版本不一致
+                continue;
+            }
+            const auto path = scope + "." + field.name;
+            if (policy.missing == MissingFieldPolicy::kError) {
+                throw star::excep::RuntimeError(
+                    "BinaryCodec decode failed, missing field (policy=error): ", path);
+            }
+            if (field.has_default) {
+                (*out)[field.name] = field.default_value;
+                continue;
+            }
+            if (field.repeated) {
+                (*out)[field.name] = star::schema::SchemaValue(star::schema::SchemaArray{});
+                continue;
+            }
+            if (field.has_value_kind) {
+                (*out)[field.name] = star::schema::SchemaValue(star::schema::SchemaObject{});
+                continue;
+            }
+            throw star::excep::RuntimeError(
+                "BinaryCodec decode failed, missing required field without default: ", path);
         }
     }
 
@@ -230,48 +281,113 @@ private:
         const FieldDescriptor& field,
         uint8_t wire_type,
         Cursor* cur,
-        star::schema::SchemaObject* out) {
+        star::schema::SchemaObject* out,
+        const DecodePolicy& policy) {
         if (cur == nullptr || out == nullptr) {
             throw star::excep::RuntimeError("BinaryCodec decode_field failed, invalid output");
         }
         const auto path = scope + "." + field.name;
         if (field.repeated) {
             auto& slot = ensure_array_slot(out, field.name);
-            slot.emplace_back(decode_single_value(path, field, wire_type, cur));
+            slot.emplace_back(decode_single_value(path, field, wire_type, cur, policy));
             return;
         }
         if (field.has_value_kind) {
             auto& slot = ensure_object_slot(out, field.name);
-            decode_map_entry(path, field, wire_type, cur, &slot);
+            decode_map_entry(path, field, wire_type, cur, &slot, policy);
             return;
         }
-        (*out)[field.name] = decode_single_value(path, field, wire_type, cur);
+        (*out)[field.name] = decode_single_value(path, field, wire_type, cur, policy);
     }
 
-    static auto decode_single_value(const std::string& path, const FieldDescriptor& field, uint8_t wire_type, Cursor* cur)
-        -> star::schema::SchemaValue {
+    static auto decode_single_value(
+        const std::string& path,
+        const FieldDescriptor& field,
+        uint8_t wire_type,
+        Cursor* cur,
+        const DecodePolicy& policy) -> star::schema::SchemaValue {
+        const auto best_effort = policy.type_mismatch == TypeMismatchPolicy::kBestEffort;
         switch (field.kind) {
         case FieldKind::BOOL:
-            expect_wire_type(path, wire_type, WireType::VARINT);
-            return star::schema::SchemaValue(read_varint(cur) != 0);
+            if (wire_type == static_cast<uint8_t>(WireType::VARINT)) {
+                return star::schema::SchemaValue(read_varint(cur) != 0);
+            }
+            if (best_effort and wire_type == static_cast<uint8_t>(WireType::BYTES)) {
+                const auto data = read_bytes(cur);
+                const std::string_view text(reinterpret_cast<const char*>(data.data()), data.size());
+                if (text == "true" or text == "1") {
+                    return star::schema::SchemaValue(true);
+                }
+                if (text == "false" or text == "0") {
+                    return star::schema::SchemaValue(false);
+                }
+                throw star::excep::RuntimeError(
+                    "BinaryCodec decode failed, cannot convert string to bool (policy=best_effort): ", path);
+            }
+            throw type_mismatch_error(path, "bool", wire_type, best_effort);
         case FieldKind::INT64:
-            expect_wire_type(path, wire_type, WireType::VARINT);
-            return star::schema::SchemaValue(static_cast<int64_t>(read_varint(cur)));
+            if (wire_type == static_cast<uint8_t>(WireType::VARINT)) {
+                return star::schema::SchemaValue(static_cast<int64_t>(read_varint(cur)));
+            }
+            if (best_effort) {
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED64)) {
+                    return star::schema::SchemaValue(static_cast<int64_t>(std::bit_cast<double>(read_fixed64(cur))));
+                }
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED32)) {
+                    return star::schema::SchemaValue(static_cast<int64_t>(std::bit_cast<float>(read_fixed32(cur))));
+                }
+                if (wire_type == static_cast<uint8_t>(WireType::BYTES)) {
+                    const auto data = read_bytes(cur);
+                    int64_t value = 0;
+                    if (try_parse_int64(std::string_view(reinterpret_cast<const char*>(data.data()), data.size()), &value)) {
+                        return star::schema::SchemaValue(value);
+                    }
+                }
+            }
+            throw type_mismatch_error(path, "int64", wire_type, best_effort);
         case FieldKind::FLOAT64:
             if (field.type_name == "float") {
-                expect_wire_type(path, wire_type, WireType::FIXED32);
-                const auto raw = read_fixed32(cur);
-                return star::schema::SchemaValue(static_cast<double>(std::bit_cast<float>(raw)));
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED32)) {
+                    return star::schema::SchemaValue(static_cast<double>(std::bit_cast<float>(read_fixed32(cur))));
+                }
+            } else if (wire_type == static_cast<uint8_t>(WireType::FIXED64)) {
+                return star::schema::SchemaValue(std::bit_cast<double>(read_fixed64(cur)));
             }
-            expect_wire_type(path, wire_type, WireType::FIXED64);
-            return star::schema::SchemaValue(std::bit_cast<double>(read_fixed64(cur)));
+            if (best_effort) {
+                if (wire_type == static_cast<uint8_t>(WireType::VARINT)) {
+                    return star::schema::SchemaValue(static_cast<double>(read_varint(cur)));
+                }
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED32)) {
+                    return star::schema::SchemaValue(static_cast<double>(std::bit_cast<float>(read_fixed32(cur))));
+                }
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED64)) {
+                    return star::schema::SchemaValue(std::bit_cast<double>(read_fixed64(cur)));
+                }
+            }
+            throw type_mismatch_error(path, "float64", wire_type, best_effort);
         case FieldKind::STRING: {
-            expect_wire_type(path, wire_type, WireType::BYTES);
-            const auto data = read_bytes(cur);
-            return star::schema::SchemaValue(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
+            if (wire_type == static_cast<uint8_t>(WireType::BYTES)) {
+                const auto data = read_bytes(cur);
+                return star::schema::SchemaValue(std::string(reinterpret_cast<const char*>(data.data()), data.size()));
+            }
+            if (best_effort) {
+                // 数值 → 字符串是安全转换；字符串 → 数值不是（可能解析失败），不做
+                if (wire_type == static_cast<uint8_t>(WireType::VARINT)) {
+                    return star::schema::SchemaValue(std::to_string(read_varint(cur)));
+                }
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED32)) {
+                    return star::schema::SchemaValue(std::to_string(std::bit_cast<float>(read_fixed32(cur))));
+                }
+                if (wire_type == static_cast<uint8_t>(WireType::FIXED64)) {
+                    return star::schema::SchemaValue(std::to_string(std::bit_cast<double>(read_fixed64(cur))));
+                }
+            }
+            throw type_mismatch_error(path, "string", wire_type, best_effort);
         }
         case FieldKind::OBJECT:
-            expect_wire_type(path, wire_type, WireType::BYTES);
+            if (wire_type != static_cast<uint8_t>(WireType::BYTES)) {
+                throw type_mismatch_error(path, "object", wire_type, best_effort);
+            }
             if (field.children.empty()) {
                 const auto raw = read_bytes(cur);
                 auto parsed = star::schema::parse_schema_text(std::string(
@@ -286,11 +402,56 @@ private:
             {
                 star::schema::SchemaObject obj;
                 const auto nested = read_bytes(cur);
-                decode_object(path, field.children, nested, &obj, nullptr);
+                decode_object(path, field.children, nested, &obj, nullptr, policy);
                 return star::schema::SchemaValue(std::move(obj));
             }
         }
         throw star::excep::RuntimeError("BinaryCodec decode failed, unknown field kind: ", path);
+    }
+
+    static auto type_mismatch_error(const std::string& path, const char* expected, uint8_t wire_type, bool best_effort)
+        -> star::excep::RuntimeError {
+        if (best_effort) {
+            return star::excep::RuntimeError(
+                "BinaryCodec decode failed, unsupported type conversion (policy=best_effort): ",
+                path,
+                ", expected=",
+                expected,
+                ", wire_type=",
+                static_cast<int>(wire_type));
+        }
+        return star::excep::RuntimeError(
+            "BinaryCodec decode failed, type mismatch (policy=error): ",
+            path,
+            ", expected=",
+            expected,
+            ", wire_type=",
+            static_cast<int>(wire_type));
+    }
+
+    static auto try_parse_int64(std::string_view text, int64_t* out) -> bool {
+        if (text.empty() or out == nullptr) {
+            return false;
+        }
+        const bool negative = text.front() == '-';
+        size_t index = negative ? 1 : 0;
+        if (index == text.size()) {
+            return false;
+        }
+        int64_t value = 0;
+        for (; index < text.size(); ++index) {
+            const char ch = text[index];
+            if (ch < '0' or ch > '9') {
+                return false;
+            }
+            const int64_t digit = ch - '0';
+            if (value > (INT64_MAX - digit) / 10) {
+                return false;
+            }
+            value = value * 10 + digit;
+        }
+        *out = negative ? -value : value;
+        return true;
     }
 
     static void decode_map_entry(
@@ -298,7 +459,8 @@ private:
         const FieldDescriptor& field,
         uint8_t wire_type,
         Cursor* cur,
-        star::schema::SchemaObject* out) {
+        star::schema::SchemaObject* out,
+        const DecodePolicy& policy) {
         expect_wire_type(path, wire_type, WireType::BYTES);
         auto bytes = read_bytes(cur);
         Cursor entry{bytes, 0};
@@ -323,7 +485,7 @@ private:
                 value_field.kind = field.value_kind;
                 value_field.type_name = field.value_type_name;
                 value_field.children = field.value_children;
-                value = decode_single_value(path + ".$value", value_field, wt, &entry);
+                value = decode_single_value(path + ".$value", value_field, wt, &entry, policy);
                 has_value = true;
                 continue;
             }

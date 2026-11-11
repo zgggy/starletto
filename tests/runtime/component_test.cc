@@ -15,7 +15,9 @@
 namespace {
 
 using star::generated::runtime::component_load_plan::ComponentLoadPlan;
+using star::generated::runtime::component_load_plan::DecodePolicyPlan;
 using star::generated::runtime::component_load_plan::PortPlan;
+using star::transport::BinaryPayloadView;
 using star::runtime::Component;
 using star::runtime::RuntimeFactory;
 
@@ -256,6 +258,110 @@ TEST_CASE("Component read_latest returns nothing for unknown port") {
     probe.auto_configure();
 
     REQUIRE(probe.read_latest<TestMsg>("missing") == nullptr);
+}
+
+
+// 读路径必须按帧头选解码器：此前固定调用 from_binary，shm 里的固定布局帧必然解错
+TEST_CASE("Component decode_payload selects the decoder from the frame header") {
+    const auto msg = make_plan("test.component.frames");
+
+    const auto fixed = msg.encode_fixed_layout();
+    REQUIRE(star::schema::is_fixed_layout_frame(fixed));
+    const auto from_fixed = Component::decode_payload<ComponentLoadPlan>(fixed, star::schema::DecodePolicy{});
+    REQUIRE_EQ(from_fixed.module_name, std::string("test"));
+
+    const auto tlv = msg.encode_binary();
+    REQUIRE(not star::schema::is_fixed_layout_frame(tlv));
+    const auto from_tlv = Component::decode_payload<ComponentLoadPlan>(tlv, star::schema::DecodePolicy{});
+    REQUIRE_EQ(from_tlv.module_name, std::string("test"));
+}
+
+namespace {
+
+// 在 TLV 消息尾部追加一个未知字段（field_id=100, wire_type=2, 单字节 'x'）
+auto append_unknown_field(std::vector<uint8_t> bytes) -> std::vector<uint8_t> {
+    auto push_varint = [](std::vector<uint8_t>* out, uint64_t value) {
+        while (value >= 0x80) {
+            out->push_back(static_cast<uint8_t>((value & 0x7F) | 0x80));
+            value >>= 7;
+        }
+        out->push_back(static_cast<uint8_t>(value));
+    };
+    push_varint(&bytes, (100u << 3) | 2u);
+    push_varint(&bytes, 1);
+    bytes.push_back(static_cast<uint8_t>('x'));
+    return bytes;
+}
+
+auto make_policy_plan(const std::string& channel, bool strict) -> ComponentLoadPlan {
+    auto plan = ComponentLoadPlan{};
+    plan.module_name = "test";
+    plan.component_name = "probe";
+    plan.component_class = "star::test::LifecycleProbe";
+
+    auto input = PortPlan{};
+    input.name = "in";
+    input.channel = channel;
+    if (strict) {
+        auto policy = DecodePolicyPlan{};
+        policy.unknown = std::string("error");
+        policy.missing = std::string("error");
+        input.decode_policy = std::move(policy);
+    }
+    plan.inputs = std::vector<PortPlan>{input};
+
+    auto output = PortPlan{};
+    output.name = "out";
+    output.channel = channel;
+    plan.outputs = std::vector<PortPlan>{output};
+    return plan;
+}
+
+auto write_binary(const std::shared_ptr<star::runtime::RuntimeContext>& context, const std::string& channel, std::vector<uint8_t> bytes) -> void {
+    auto owner = std::make_shared<std::vector<uint8_t>>(std::move(bytes));
+    auto payload = BinaryPayloadView{owner, owner->data(), owner->size()};
+    auto view = star::transport::MessageView{};
+    view.payload = star::base::TypedConstPtr::from(std::make_shared<BinaryPayloadView>(payload));
+    view.schema_type_id = ComponentLoadPlan::schema_type_id();
+
+    auto descriptor = star::transport::ChannelDescriptor{};
+    descriptor.name = channel;
+    descriptor.type_name = "runtime.component_load_plan";
+    auto writer = context->message_bus().create_writer(descriptor);
+    const auto result = writer->write(view);
+    REQUIRE(result.ok());
+}
+
+}  // namespace
+
+// 通道策略从 conf → plan → 通道描述符 → 解码：strict 下未知字段必须解码失败
+TEST_CASE("auto_configure applies the port decode policy to delivered messages") {
+    const auto context = RuntimeFactory::create_native_context();
+    auto probe = LifecycleProbe{};
+    probe.set_context(context);
+    probe.set_load_plan(make_policy_plan("test.component.policy.strict", true));
+    probe.auto_configure();
+
+    const auto msg = make_plan("test.component.policy.strict");
+    write_binary(context, "test.component.policy.strict", append_unknown_field(msg.encode_binary()));
+
+    REQUIRE(probe.read_latest<ComponentLoadPlan>("in") == nullptr);
+}
+
+TEST_CASE("default decode policy keeps unknown fields instead of failing") {
+    const auto context = RuntimeFactory::create_native_context();
+    auto probe = LifecycleProbe{};
+    probe.set_context(context);
+    probe.set_load_plan(make_policy_plan("test.component.policy.default", false));
+    probe.auto_configure();
+
+    const auto msg = make_plan("test.component.policy.default");
+    write_binary(context, "test.component.policy.default", append_unknown_field(msg.encode_binary()));
+
+    const auto decoded = probe.read_latest<ComponentLoadPlan>("in");
+    REQUIRE(decoded != nullptr);
+    REQUIRE_EQ(decoded->module_name, std::string("test"));
+    REQUIRE_EQ(decoded->unknown_fields().size(), 1U);
 }
 
 TEST_CASE("Component auto_configure without plan or context is a no-op") {

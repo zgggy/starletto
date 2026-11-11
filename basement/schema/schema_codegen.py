@@ -490,6 +490,7 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         '#include "basement/schema/schema_codec_helpers.h"',
         '#include "basement/schema/schema_registry.h"',
         '#include "basement/schema/fixed_layout_codec.h"',
+        '#include "basement/schema/decode_policy.h"',
         "",
         "#include <cstring>",
         "#include <optional>",
@@ -641,11 +642,15 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
             lines.append(f"        return star::schema::BinaryCodec::encode(_schema_descriptor_{def_name}(), to_value(), unknown_fields_);")
             lines.append("    }")
             lines.append("")
-            lines.append("    static auto from_binary(std::span<const uint8_t> bytes) -> " + def_name + " {")
-            lines.append(f"        auto decoded = star::schema::BinaryCodec::decode_with_unknown(_schema_descriptor_{def_name}(), bytes);")
+            lines.append("    static auto from_binary_with_policy(std::span<const uint8_t> bytes, const star::schema::DecodePolicy& policy) -> " + def_name + " {")
+            lines.append(f"        auto decoded = star::schema::BinaryCodec::decode_with_unknown(_schema_descriptor_{def_name}(), bytes, policy);")
             lines.append("        auto out = from_value(decoded.value);")
             lines.append("        out.unknown_fields_ = std::move(decoded.unknown_fields);")
             lines.append("        return out;")
+            lines.append("    }")
+            lines.append("")
+            lines.append("    static auto from_binary(std::span<const uint8_t> bytes) -> " + def_name + " {")
+            lines.append("        return from_binary_with_policy(bytes, star::schema::DecodePolicy{});")
             lines.append("    }")
             lines.append("")
             lines.append("    auto unknown_fields() const -> const star::schema::UnknownFieldSet& {")
@@ -671,6 +676,12 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         lines.append(f"    explicit {def_name}View(std::span<const uint8_t> bytes) : view_(bytes.data(), bytes.size()) {{}}")
         lines.append("")
         lines.append(f"    auto valid() const -> bool {{ return view_.valid(); }}")
+        lines.append("")
+        lines.append("    auto schema_version() const -> int64_t { return view_.schema_version(); }")
+        lines.append("")
+        lines.append("    auto schema_hash() const -> uint64_t { return view_.schema_hash(); }")
+        lines.append("")
+        lines.append("    auto matches(const star::schema::SchemaTypeId& type_id) const -> bool { return view_.matches(type_id); }")
         if def_name == doc.root_name:
             lines.append("")
             lines.append(f"    static auto FromBinary(std::span<const uint8_t> bytes) -> {def_name}View {{")
@@ -779,7 +790,7 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         lines.append(f"struct {def_name}Builder {{")
         lines.append(f"    static constexpr size_t kFieldCount = {len(block.fields)};")
         lines.append("")
-        lines.append(f"    {def_name}Builder() : writer_({len(block.fields)}) {{}}")
+        lines.append(f"    {def_name}Builder() : writer_({len(block.fields)}, _schema_type_id_{doc.root_name}()) {{}}")
         lines.append("")
         for i, field in enumerate(block.fields):
             if field.type_ref.category == "array":
@@ -890,6 +901,10 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         lines.append("")
         lines.append(f"inline auto {def_name}::from_fixed_layout(std::span<const uint8_t> data) -> {def_name} {{")
         lines.append(f"    auto view = {def_name}View(data.data(), data.size());")
+        lines.append(f"    const auto expected = _schema_type_id_{doc.root_name}();")
+        lines.append("    if (not view.matches(expected)) {")
+        lines.append('        throw star::excep::RuntimeError("fixed layout schema mismatch: expected=", expected.name, " v", expected.version, " h", expected.hash, ", frame v", view.schema_version(), " h", view.schema_hash());')
+        lines.append("    }")
         lines.append(f"    auto out = {def_name}();")
         for i, field in enumerate(block.fields):
             if field.type_ref.optional and field.default is None:

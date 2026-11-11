@@ -2,11 +2,13 @@
 #define __SCHEMA_FIXED_LAYOUT_CODEC_H__
 
 #include "basement/core/exception.h"
+#include "basement/core/type_id.h"
 
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <utility>
 #include <optional>
 #include <span>
 #include <string>
@@ -15,17 +17,23 @@
 
 namespace star::schema {
 
+// 固定布局是位置语义：没有字段 id，无法跳过/补默认值，因此**只能同版本通信**。
+// 帧头携带 schema version+hash，接收方据此拒绝跨版本帧（版本不同 = 布局可能已变）。
+static constexpr uint8_t kFixedLayoutVersion = 2;
+
 #pragma pack(push, 1)
 struct FixedLayoutHeader {
     uint16_t magic{0x5354};
-    uint8_t version{1};
+    uint8_t version{kFixedLayoutVersion};
     uint8_t flags{0};
     uint16_t fixed_section_size{0};
     uint32_t total_size{0};
+    int64_t schema_version{0};
+    uint64_t schema_hash{0};
 };
 #pragma pack(pop)
 
-static_assert(sizeof(FixedLayoutHeader) == 10, "FixedLayoutHeader must be 10 bytes");
+static_assert(sizeof(FixedLayoutHeader) == 26, "FixedLayoutHeader layout changed unexpectedly");
 
 struct FixedFieldSlot {
     union {
@@ -53,7 +61,10 @@ static_assert(sizeof(FixedFieldSlot) == 16, "FixedFieldSlot must be 16 bytes");
 
 class FixedLayoutWriter {
   public:
-    explicit FixedLayoutWriter(size_t field_count) { fixed_slots_.resize(field_count); }
+    explicit FixedLayoutWriter(size_t field_count, star::schema::SchemaTypeId schema_id = {})
+        : schema_id_(std::move(schema_id)) {
+        fixed_slots_.resize(field_count);
+    }
 
     void set_bool(size_t index, bool value) {
         if (index >= fixed_slots_.size()) { throw star::excep::RuntimeError("FixedLayoutWriter: index out of bounds"); }
@@ -125,10 +136,12 @@ class FixedLayoutWriter {
         auto out = std::vector<uint8_t>(total_size);
         auto* header = reinterpret_cast<FixedLayoutHeader*>(out.data());
         header->magic = 0x5354;
-        header->version = 1;
+        header->version = kFixedLayoutVersion;
         header->flags = 0;
         header->fixed_section_size = static_cast<uint16_t>(fixed_size);
         header->total_size = static_cast<uint32_t>(total_size);
+        header->schema_version = schema_id_.version;
+        header->schema_hash = schema_id_.hash;
 
         if (not fixed_slots_.empty()) {
             std::memcpy(out.data() + sizeof(FixedLayoutHeader), fixed_slots_.data(), fixed_slots_.size() * sizeof(FixedFieldSlot));
@@ -147,10 +160,12 @@ class FixedLayoutWriter {
         }
         auto* header = reinterpret_cast<FixedLayoutHeader*>(buf);
         header->magic = 0x5354;
-        header->version = 1;
+        header->version = kFixedLayoutVersion;
         header->flags = 0;
         header->fixed_section_size = static_cast<uint16_t>(fixed_size);
         header->total_size = static_cast<uint32_t>(total_size);
+        header->schema_version = schema_id_.version;
+        header->schema_hash = schema_id_.hash;
 
         if (not fixed_slots_.empty()) {
             std::memcpy(buf + sizeof(FixedLayoutHeader), fixed_slots_.data(), fixed_slots_.size() * sizeof(FixedFieldSlot));
@@ -162,6 +177,7 @@ class FixedLayoutWriter {
     }
 
   private:
+    star::schema::SchemaTypeId schema_id_{};
     std::vector<FixedFieldSlot> fixed_slots_;
     std::vector<uint8_t> var_data_;
 };
@@ -176,7 +192,43 @@ class FixedLayoutView {
             return false;
         }
         const auto* header = reinterpret_cast<const FixedLayoutHeader*>(data_);
-        return header->magic == 0x5354 && header->version == 1;
+        if (header->magic != 0x5354 or header->version != kFixedLayoutVersion) {
+            return false;
+        }
+        if (header->fixed_section_size < sizeof(FixedLayoutHeader) or header->total_size > size_) {
+            return false;
+        }
+        return true;
+    }
+
+    auto schema_version() const -> int64_t {
+        if (not valid()) {
+            return 0;
+        }
+        return reinterpret_cast<const FixedLayoutHeader*>(data_)->schema_version;
+    }
+
+    auto schema_hash() const -> uint64_t {
+        if (not valid()) {
+            return 0;
+        }
+        return reinterpret_cast<const FixedLayoutHeader*>(data_)->schema_hash;
+    }
+
+    // 固定布局要求精确的类型身份；hash=0 表示写方没有嵌入身份（手工构造），按未知处理。
+    auto matches(const star::schema::SchemaTypeId& type_id) const -> bool {
+        if (not valid()) {
+            return false;
+        }
+        const auto version = schema_version();
+        const auto hash = schema_hash();
+        if (version != 0 and version != type_id.version) {
+            return false;
+        }
+        if (hash != 0 and type_id.hash != 0 and hash != type_id.hash) {
+            return false;
+        }
+        return true;
     }
 
     auto field_count() const -> size_t {
@@ -693,6 +745,12 @@ auto decode_binary_value_map(std::span<const uint8_t> data) -> std::map<std::str
         out.emplace(std::move(key), std::move(val));
     }
     return out;
+}
+
+// 读取方据此区分「固定布局帧」与「TLV 二进制帧」，两种格式不能混解。
+// 只检查 magic/version/长度，不校验 schema 身份（身份校验在 from_fixed_layout / matches）。
+inline auto is_fixed_layout_frame(std::span<const uint8_t> bytes) -> bool {
+    return FixedLayoutView(bytes.data(), bytes.size()).valid();
 }
 
 }  // namespace star::schema

@@ -163,9 +163,16 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             }
             if (channel.descriptor.schema_type_id.empty()) {
                 channel.descriptor.schema_type_id = descriptor.schema_type_id;
-            } else if (not descriptor.schema_type_id.empty() && channel.descriptor.schema_type_id != descriptor.schema_type_id) {
-                throw star::excep::RuntimeError("ShmMessageBus declare_channel failed, schema mismatch for channel: ", descriptor.name, ", existing=", channel.descriptor.schema_type_id.name,
+            } else if (not descriptor.schema_type_id.empty() and
+                       channel.descriptor.schema_type_id.name != descriptor.schema_type_id.name) {
+                throw star::excep::RuntimeError("ShmMessageBus declare_channel failed, schema name mismatch for channel: ", descriptor.name,
+                                                ", existing=", channel.descriptor.schema_type_id.name,
                                                 ", new=", descriptor.schema_type_id.name);
+            }
+            // 解码策略声明在接收端：先声明的是 writer（默认策略），reader 的显式策略要覆盖上来
+            if (descriptor.options.decode_policy != star::schema::DecodePolicy{} and
+                channel.descriptor.options.decode_policy == star::schema::DecodePolicy{}) {
+                channel.descriptor.options.decode_policy = descriptor.options.decode_policy;
             }
         }
         if (not channel.channel) {
@@ -301,8 +308,11 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             channel = it->second.channel;
             payload_size = estimate_payload_size(message, serializer);
             // 类型一致性 + 首写采纳（与 native 同语义）
-            if (not it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty() and it->second.descriptor.schema_type_id != message.schema_type_id) {
-                throw star::excep::RuntimeError("ShmMessageBus write failed, schema mismatch for channel: ", channel_name, ", existing=",
+            // 通道身份只强制 name 一致：同名不同 version/hash 是跨版本通信，
+            // 由接收端的 decode_policy 决定接受还是拒绝（决策二/三）
+            if (not it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty() and
+                it->second.descriptor.schema_type_id.name != message.schema_type_id.name) {
+                throw star::excep::RuntimeError("ShmMessageBus write failed, schema name mismatch for channel: ", channel_name, ", existing=",
                                                 it->second.descriptor.schema_type_id.name, ", message=", message.schema_type_id.name);
             }
             if (it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty()) {
@@ -324,29 +334,8 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
 
         try {
-            if (serializer->encode_into) {
-                auto loaned = channel->loan(channel->slot_size());
-                const auto size = serializer->encode_into(loaned.data(), loaned.capacity);
-                if (size == 0) {
-                    auto out = WriteResult{};
-                    out.status = WriteStatus::ENCODE_FAILED;
-                    out.shm_required = true;
-                    return out;
-                }
-                loaned.commit(static_cast<uint32_t>(size));
-                auto out = WriteResult{};
-                out.status = WriteStatus::OK;
-                out.shm_ok = true;
-                out.shm_required = true;
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    auto it = channels_.find(channel_name);
-                    if (it != channels_.end()) {
-                        it->second.stats.record_write(payload_size);
-                    }
-                }
-                return out;
-            }
+            // 优先二进制 TLV：它是唯一支持跨版本演进（未知字段保留、缺失补默认）的格式。
+            // 固定布局没有字段 id，只能同版本通信；仅当消息没有二进制编码器时才用它。
             if (serializer->encode_binary) {
                 const auto bytes = serializer->encode_binary();
                 if (bytes.empty()) {
@@ -378,6 +367,30 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                 }
                 return out;
             }
+            if (serializer->encode_into) {
+                auto loaned = channel->loan(channel->slot_size());
+                const auto size = serializer->encode_into(loaned.data(), loaned.capacity);
+                if (size == 0) {
+                    auto out = WriteResult{};
+                    out.status = WriteStatus::ENCODE_FAILED;
+                    out.shm_required = true;
+                    return out;
+                }
+                loaned.commit(static_cast<uint32_t>(size));
+                auto out = WriteResult{};
+                out.status = WriteStatus::OK;
+                out.shm_ok = true;
+                out.shm_required = true;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto it = channels_.find(channel_name);
+                    if (it != channels_.end()) {
+                        it->second.stats.record_write(payload_size);
+                    }
+                }
+                return out;
+            }
+
             auto out = WriteResult{};
             out.status = WriteStatus::ENCODE_FAILED;
             out.shm_required = true;
@@ -448,6 +461,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
 
     void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint32_t gen, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
         msg.schema_type_id = it->second.descriptor.schema_type_id;
+        msg.decode_policy = it->second.descriptor.options.decode_policy;
         msg.correlation_id = CorrelationId{};
         auto channel = it->second.channel;
         if (not channel) {

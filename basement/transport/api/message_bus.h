@@ -12,6 +12,7 @@
 
 #include "basement/core/common_types.h"
 #include "basement/core/type_id.h"
+#include "basement/schema/decode_policy.h"
 #include "basement/transport/api/correlation_id.h"
 #include "basement/transport/common/channel_stats.h"
 
@@ -26,6 +27,8 @@ struct ChannelOptions {
     uint32_t depth{0};
     DropPolicy drop_policy{DropPolicy::KEEP_LAST};
     bool reliable{false};
+    // 版本不一致时的解码策略（声明在接收端；写入端不看这个字段）
+    star::schema::DecodePolicy decode_policy{};
 };
 
 class MessageRecorder;
@@ -34,6 +37,8 @@ struct MessageView {
     star::base::TypedConstPtr payload;
     star::schema::SchemaTypeId schema_type_id;
     CorrelationId correlation_id;
+    // 投递时由总线按通道描述符填入；组件解码据此选择策略
+    star::schema::DecodePolicy decode_policy{};
 };
 
 struct BinaryPayloadView {
