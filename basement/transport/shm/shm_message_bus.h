@@ -300,6 +300,14 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             }
             channel = it->second.channel;
             payload_size = estimate_payload_size(message, serializer);
+            // 类型一致性 + 首写采纳（与 native 同语义）
+            if (not it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty() and it->second.descriptor.schema_type_id != message.schema_type_id) {
+                throw star::excep::RuntimeError("ShmMessageBus write failed, schema mismatch for channel: ", channel_name, ", existing=",
+                                                it->second.descriptor.schema_type_id.name, ", message=", message.schema_type_id.name);
+            }
+            if (it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty()) {
+                it->second.descriptor.schema_type_id = message.schema_type_id;
+            }
         }
         if (not channel) {
             auto out = WriteResult{};

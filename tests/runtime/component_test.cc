@@ -19,6 +19,29 @@ using star::generated::runtime::component_load_plan::PortPlan;
 using star::runtime::Component;
 using star::runtime::RuntimeFactory;
 
+// 决策一回归：携带 schema 身份的类型（模拟生成的 .s.h 类型）
+struct IdentifiedMsg {
+    int value{0};
+
+    auto encode_binary() const -> std::vector<uint8_t> {
+        auto out = std::vector<uint8_t>(sizeof(int));
+        std::memcpy(out.data(), &value, sizeof(int));
+        return out;
+    }
+
+    static auto from_binary(std::span<const uint8_t> bytes) -> IdentifiedMsg {
+        auto msg = IdentifiedMsg{};
+        if (bytes.size() >= sizeof(int)) {
+            std::memcpy(&msg.value, bytes.data(), sizeof(int));
+        }
+        return msg;
+    }
+
+    static auto schema_type_id() -> star::schema::SchemaTypeId {
+        return star::schema::SchemaTypeId{"test.identified", 1, 0};
+    }
+};
+
 // 满足 Component 对消息类型的契约：encode_binary() + 静态 from_binary()
 struct TestMsg {
     int value{0};
@@ -180,6 +203,33 @@ TEST_CASE("Component write returns ok status on success") {
 
     const auto result = probe.write("out", TestMsg{5});
     REQUIRE(result.ok());
+}
+
+// 决策一回归：生成的类型经 Component::write 后自动盖章 TypeId，
+// 订阅方拿到的 MessageView 携带同一身份
+TEST_CASE("Component write stamps the schema type id from the message type") {
+    const auto context = RuntimeFactory::create_native_context();
+    auto probe = LifecycleProbe{};
+    probe.set_context(context);
+    probe.set_load_plan(make_plan("test.component.typeid"));
+    probe.auto_configure();
+
+    auto seen = std::optional<star::schema::SchemaTypeId>{};
+    const auto reader = context->message_bus().create_reader(
+        [&] {
+            auto d = star::transport::ChannelDescriptor{};
+            d.name = "test.component.typeid";
+            return d;
+        }(),
+        [&](const star::transport::MessageView& msg) { seen = msg.schema_type_id; });
+
+    (void)probe.write("out", IdentifiedMsg{7});
+
+    for (int i = 0; i < 100 and not seen.has_value(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(seen.has_value());
+    REQUIRE_EQ(seen->name, std::string("test.identified"));
 }
 
 TEST_CASE("Component write to an undeclared port throws") {

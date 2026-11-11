@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "basement/core/common_types.h"
-#include "basement/schema/type_id.h"
+#include "basement/core/type_id.h"
 #include "basement/transport/api/correlation_id.h"
 #include "basement/transport/common/channel_stats.h"
 

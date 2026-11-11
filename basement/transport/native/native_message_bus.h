@@ -197,6 +197,10 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
                 throw star::excep::RuntimeError("NativeMessageBus write failed, schema mismatch for channel: ", channel_name, ", existing=", it->second.descriptor.schema_type_id.name,
                                                 ", message=", message.schema_type_id.name);
             }
+            // 首写采纳：conf 只声明了类型名，通道的 TypeId 由首个带身份的消息补全
+            if (it->second.descriptor.schema_type_id.empty() and not message.schema_type_id.empty()) {
+                it->second.descriptor.schema_type_id = message.schema_type_id;
+            }
             const auto& options = it->second.descriptor.options;
             reader_callbacks.reserve(it->second.readers.size());
             for (const auto& [reader_id, cb] : it->second.readers) {

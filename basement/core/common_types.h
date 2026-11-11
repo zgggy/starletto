@@ -5,12 +5,17 @@
 #include <memory>
 #include <typeinfo>
 
+#include "basement/core/type_id.h"
+
 namespace star::base {
 
 struct TypedConstPtr {
     std::shared_ptr<const void> ptr;
     const std::type_info* type{nullptr};
     const char* type_name{nullptr};
+    // 跨 DSO/跨语言稳定的类型身份（来自 schema），总线层据此校验；
+    // typeid/mangled name 仅作调试断言，不作为身份依据（决策一）
+    star::schema::SchemaTypeId schema_type_id;
 
     template <typename _T>
     static auto from(std::shared_ptr<const _T> p) -> TypedConstPtr {
@@ -52,6 +57,7 @@ struct TypedPtr {
     std::shared_ptr<void> ptr;
     const std::type_info* type{nullptr};
     const char* type_name{nullptr};
+    star::schema::SchemaTypeId schema_type_id;
 
     template <typename _T>
     static auto from(std::shared_ptr<_T> p) -> TypedPtr {

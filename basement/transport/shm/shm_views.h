@@ -10,7 +10,7 @@
 #include <string_view>
 
 #include "basement/schema/fixed_layout_codec.h"
-#include "basement/schema/type_id.h"
+#include "basement/core/type_id.h"
 
 namespace star::transport {
 

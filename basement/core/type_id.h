@@ -1,5 +1,5 @@
-#ifndef __SCHEMA_TYPE_ID_H__
-#define __SCHEMA_TYPE_ID_H__
+#ifndef __STAR_CORE_TYPE_ID_H__
+#define __STAR_CORE_TYPE_ID_H__
 
 #include <cstdint>
 #include <string>
@@ -26,4 +26,4 @@ inline auto operator!=(const SchemaTypeId& lhs, const SchemaTypeId& rhs) -> bool
 
 }  // namespace star::schema
 
-#endif // __SCHEMA_TYPE_ID_H__
+#endif  // __STAR_CORE_TYPE_ID_H__

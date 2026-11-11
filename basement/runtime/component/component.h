@@ -427,6 +427,9 @@ class Component {
     static auto make_serialized_message(const std::shared_ptr<const _Msg>& msg_ptr) -> star::transport::SerializedMessage {
         auto view = star::transport::MessageView{};
         view.payload = star::base::TypedConstPtr::from(msg_ptr);
+        if constexpr (has_schema_type_id<_Msg>::value) {
+            view.schema_type_id = msg_ptr->schema_type_id();
+        }
         return star::transport::SerializedMessage{view, make_message_serializer(msg_ptr)};
     }
 
@@ -447,6 +450,14 @@ class Component {
         }
         return serializer;
     }
+
+    // 类型是否携带 schema 身份（生成的 .s.h 类型有，普通结构体没有）。
+    // 有则写入路径自动盖章 TypeId，总线层据此做类型一致性校验（决策一）。
+    template <typename _T, typename = void>
+    struct has_schema_type_id : std::false_type {};
+
+    template <typename _T>
+    struct has_schema_type_id<_T, std::void_t<decltype(std::remove_const_t<_T>::schema_type_id())>> : std::true_type {};
 
     template <typename _T, typename = void>
     struct has_from_binary : std::false_type {};

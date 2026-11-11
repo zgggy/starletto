@@ -1,7 +1,7 @@
 #ifndef __SCHEMA_AST_H__
 #define __SCHEMA_AST_H__
 
-#include "basement/schema/type_id.h"
+#include "basement/core/type_id.h"
 #include "basement/schema/schema_value.h"
 
 #include <cstdint>
