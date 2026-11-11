@@ -44,5 +44,5 @@ flowchart LR
 | 测试 | 17 套 113 用例 |
 | CI 门禁 | `star check` 10/10 |
 | 业务模块 | setting/config、setting/parameter、planning/motion（示例）、control/pid |
-| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：P0 六项，**P0-1 seqlock 已修**，其余五项待修 |
+| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：P0 六项，**P0-1 seqlock、P0-2 写锁恢复已修**，其余四项待修 |
 | 算法资产 | `libraries/` 约 3500 行未接线，等 localization/perception 等模块落地 |

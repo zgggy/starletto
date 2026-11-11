@@ -97,6 +97,43 @@ TEST_CASE("ShmSlotView rejects payload overwritten before decode") {
     REQUIRE(not view.as_fixed_layout().valid());
 }
 
+// P0-2 回归：写方在 loan 与 commit 之间崩溃（_exit 跳过析构），
+// 锁与代际都留在中间态。下一个写者必须能在超时后接管，而不是永久阻塞。
+TEST_CASE("ShmChannel recovers the write lock from a dead owner") {
+    char name[32]{};
+    std::snprintf(name, sizeof(name), "/st_recover_%d", static_cast<int>(::getpid()));
+    const auto channel = std::make_shared<ShmChannel>(std::string(name), 1024 * 1024);
+    const auto payload = std::vector<uint8_t>(64, 0x7E);
+
+    const auto pid = ::fork();
+    if (pid == 0) {
+        // 子进程：持锁后直接退出，跳过所有析构（模拟崩溃）
+        const auto loaned = channel->loan(static_cast<uint32_t>(payload.size()));
+        (void)loaned;
+        ::_exit(0);
+    }
+    REQUIRE(pid > 0);
+
+    int status = 0;
+    // 必须回收：僵尸进程会让 kill(pid,0) 仍视为存活，从而不触发恢复
+    REQUIRE(::waitpid(pid, &status, 0) == pid);
+
+    const auto begin = std::chrono::steady_clock::now();
+    channel->write(payload.data(), static_cast<uint32_t>(payload.size()));
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+
+    REQUIRE(elapsed_ms < 5000);                  // 会等一个恢复阈值，但不能无限阻塞
+    REQUIRE_EQ(channel->lock_recovery_count(), 1U);
+
+    uint64_t last_seq = 0;
+    const auto result = channel->read(&last_seq);
+    REQUIRE(result.has_value());
+    REQUIRE_EQ(result->size, payload.size());
+
+    // 子进程跳过了析构，ref_count 未减 → 手动清理，避免测试累积泄漏段
+    ::shm_unlink(name);
+}
+
 // P0-1 核心回归：写方持有 loan（memcpy 进行中、全局 seq 尚未推进）时，
 // 本槽必须判为不稳定。旧实现按「全局 seq 推进量 < slot_count」推断，
 // 在这个窗口会误判为稳定，从而读到被覆写的撕裂数据。

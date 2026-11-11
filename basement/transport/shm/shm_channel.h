@@ -7,14 +7,17 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <climits>
 #include <chrono>
+#include <csignal>
 #include <cstring>
 #include <memory>
 #include <utility>
 
 #include "basement/core/exception.h"
 #include "basement/core/fd_guard.h"
+#include "basement/core/logger/logger.h"
 #include "basement/core/futex_compat.h"
 
 namespace star::transport {
@@ -29,27 +32,10 @@ static constexpr uint32_t kShmSlotCount = 4;
 static constexpr uint32_t kShmSlotSize = kShmCapacity / kShmSlotCount;
 static constexpr int kInitRetryCount = 100;
 static constexpr int kSpinRetryCount = 100;
+// 写锁 owner-death 恢复：等待超过阈值且确认持锁进程已死，才强制复位
+static constexpr int64_t kLockRecheckMs = 50;
+static constexpr int64_t kOwnerDeathTimeoutMs = 200;
 
-static void spin_lock(std::atomic<uint32_t>* lock) {
-    for (int i = 0; i < kSpinRetryCount; ++i) {
-        if (lock->exchange(1, std::memory_order_acquire) == 0) {
-            return;
-        }
-    }
-    while (true) {
-        if (lock->load(std::memory_order_relaxed) == 0) {
-            if (lock->exchange(1, std::memory_order_acquire) == 0) {
-                return;
-            }
-        }
-        star::base::futex_wait(lock, 1, -1);
-    }
-}
-
-static void spin_unlock(std::atomic<uint32_t>* lock) {
-    lock->store(0, std::memory_order_release);
-    star::base::futex_wake(lock, 1);
-}
 
 struct ShmHeader {
     uint64_t magic;
@@ -58,6 +44,14 @@ struct ShmHeader {
     std::atomic<uint64_t> seq;
     std::atomic<uint32_t> notify_seq;
     std::atomic<uint32_t> write_lock;
+    // owner-death 恢复：记录持锁者，供等待者判断「持锁进程是否已崩溃」
+    std::atomic<int32_t> write_lock_owner_pid;
+    std::atomic<uint64_t> write_lock_owner_ns;
+    std::atomic<uint32_t> lock_recovery;
+    std::atomic<uint32_t> lock_recoveries;
+    // 崩溃的写方会把 gen 留在奇数位；下一个持锁者需要把它归一化，
+    // 否则后续写入的 +1 会让它变偶数，读方将把「已损坏的槽」当成稳定
+    std::atomic<uint32_t> gen_parity_dirty;
     std::atomic<uint32_t> init_state;
     std::atomic<uint32_t> ref_count;
     uint32_t slot_size;
@@ -70,6 +64,92 @@ struct ShmHeader {
     // 读方据此判断「本槽是否正在被覆写」，而不是靠全局 seq 推进量推断。
     std::atomic<uint32_t> gen[kShmMaxSlots];
 };
+
+// ── 写锁：owner 追踪与 owner-death 恢复 ──────────────────────────
+inline auto lock_now_ns() -> uint64_t { return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
+
+inline auto process_alive(int32_t pid) -> bool {
+    if (pid <= 0) {
+        return false;
+    }
+    if (::kill(static_cast<pid_t>(pid), 0) == 0) {
+        return true;
+    }
+    // EPERM：进程存在但无权限发信号；ESRCH：进程不存在
+    return errno != ESRCH;
+}
+
+// 只有「确知 owner 已死」才复位；owner 未知（0）时保守等待，
+// 避免把「刚拿到锁、尚未写入 owner」的正当持锁者误判为死亡。
+inline void try_recover_dead_owner(ShmHeader* header) {
+    const auto owner = header->write_lock_owner_pid.load(std::memory_order_relaxed);
+    if (owner <= 0 || process_alive(owner)) {
+        return;
+    }
+    // 复位操作本身需要串行化：两个等待者同时复位会互相踩掉对方刚拿到的锁
+    if (header->lock_recovery.exchange(1, std::memory_order_acquire) != 0) {
+        return;
+    }
+    if (header->write_lock.load(std::memory_order_relaxed) == 1 && header->write_lock_owner_pid.load(std::memory_order_relaxed) == owner && not process_alive(owner)) {
+        logW << "ShmChannel: write_lock owner died, recovering: pid=" << owner;
+        header->write_lock_owner_pid.store(0, std::memory_order_relaxed);
+        header->gen_parity_dirty.store(1, std::memory_order_release);
+        header->write_lock.store(0, std::memory_order_release);
+        header->lock_recoveries.fetch_add(1, std::memory_order_relaxed);
+        star::base::futex_wake(&header->write_lock, INT_MAX);
+    }
+    header->lock_recovery.store(0, std::memory_order_release);
+}
+
+// 必须在持锁状态下调用：把崩溃写方留下的奇数代际归一化为偶数
+inline void fix_gen_parity_locked(ShmHeader* header) {
+    if (header->gen_parity_dirty.exchange(0, std::memory_order_acq_rel) == 0) {
+        return;
+    }
+    for (uint32_t i = 0; i < kShmMaxSlots; ++i) {
+        const auto gen = header->gen[i].load(std::memory_order_relaxed);
+        if ((gen & 1u) != 0u) {
+            header->gen[i].store(gen + 1, std::memory_order_release);
+        }
+    }
+    logW << "ShmChannel: normalized slot generations after owner death";
+}
+
+inline void spin_lock(ShmHeader* header) {
+    auto& lock = header->write_lock;
+    for (int i = 0; i < kSpinRetryCount; ++i) {
+        if (lock.exchange(1, std::memory_order_acquire) == 0) {
+            header->write_lock_owner_pid.store(static_cast<int32_t>(::getpid()), std::memory_order_relaxed);
+            header->write_lock_owner_ns.store(lock_now_ns(), std::memory_order_relaxed);
+            fix_gen_parity_locked(header);
+            return;
+        }
+    }
+    auto waited_ms = int64_t{0};
+    while (true) {
+        if (lock.load(std::memory_order_relaxed) == 0) {
+            if (lock.exchange(1, std::memory_order_acquire) == 0) {
+                header->write_lock_owner_pid.store(static_cast<int32_t>(::getpid()), std::memory_order_relaxed);
+                header->write_lock_owner_ns.store(lock_now_ns(), std::memory_order_relaxed);
+                fix_gen_parity_locked(header);
+                return;
+            }
+        }
+        // 有界等待，周期性复核 owner 是否已死（无限等待会让崩溃变成永久停摆）
+        star::base::futex_wait(&lock, 1, kLockRecheckMs);
+        waited_ms += kLockRecheckMs;
+        if (waited_ms >= kOwnerDeathTimeoutMs) {
+            try_recover_dead_owner(header);
+            waited_ms = 0;
+        }
+    }
+}
+
+inline void spin_unlock(ShmHeader* header) {
+    header->write_lock_owner_pid.store(0, std::memory_order_relaxed);
+    header->write_lock.store(0, std::memory_order_release);
+    star::base::futex_wake(&header->write_lock, 1);
+}
 
 class ShmChannel {
   public:
@@ -125,6 +205,11 @@ class ShmChannel {
         if (created) {
             header_->init_state.store(0, std::memory_order_relaxed);
             header_->write_lock.store(0, std::memory_order_relaxed);
+            header_->write_lock_owner_pid.store(0, std::memory_order_relaxed);
+            header_->write_lock_owner_ns.store(0, std::memory_order_relaxed);
+            header_->lock_recovery.store(0, std::memory_order_relaxed);
+            header_->lock_recoveries.store(0, std::memory_order_relaxed);
+            header_->gen_parity_dirty.store(0, std::memory_order_relaxed);
             header_->ref_count.store(0, std::memory_order_relaxed);
             header_->magic = kShmMagic;
             header_->version = kShmVersion;
@@ -187,6 +272,9 @@ class ShmChannel {
     auto slot_size() const -> uint32_t { return slot_size_; }
     auto slot_count() const -> uint32_t { return slot_count_; }
 
+    // 观测：本通道发生过多少次写锁 owner-death 恢复
+    auto lock_recovery_count() const -> uint32_t { return header_ != nullptr ? header_->lock_recoveries.load(std::memory_order_relaxed) : 0; }
+
     struct Loan {
         ShmHeader* header{nullptr};
         uint8_t* slot_ptr{nullptr};
@@ -226,7 +314,7 @@ class ShmChannel {
             header->seq.store(seq, std::memory_order_release);
             header->notify_seq.fetch_add(1, std::memory_order_release);
             ShmChannel::wake_waiters(header);
-            spin_unlock(&header->write_lock);
+            spin_unlock(header);
             header = nullptr;
         }
 
@@ -236,7 +324,7 @@ class ShmChannel {
                 // 未提交就释放（异常/提前返回）：把代际恢复为偶，
                 // 否则读方会永久把本槽判为「写入中」而停止收消息
                 header->gen[slot].fetch_add(1, std::memory_order_release);
-                spin_unlock(&header->write_lock);
+                spin_unlock(header);
                 header = nullptr;
             }
         }
@@ -249,7 +337,7 @@ class ShmChannel {
         if (size > slot_size_) {
             throw star::excep::RuntimeError("ShmChannel loan failed, size too large: ", size);
         }
-        spin_lock(&header_->write_lock);
+        spin_lock(header_);
         const auto next_seq = header_->seq.load(std::memory_order_relaxed) + 1;
         const auto idx = static_cast<uint32_t>(next_seq % slot_count_);
         // 进入写入窗口：代际置奇，读方据此拒绝本槽（含 memcpy 进行中的整个区间）

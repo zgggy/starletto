@@ -110,7 +110,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                             bus->record_drop(channel_name_, r->dropped);
                         }
                         bus->record_latency(channel_name_, r->write_ns);
-                        bus->deliver_to_reader(channel_name_, id_, r->slot, r->size, r->seq, r->gen);
+                        bus->deliver_to_reader(channel_name_, id_, r->slot, r->size, r->gen);
                     }
                     continue;
                 }
@@ -378,7 +378,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
     }
 
-    void deliver_to_reader(const std::string& channel_name, uint64_t reader_id, uint32_t slot, uint32_t size, uint64_t seq, uint32_t gen) {
+    void deliver_to_reader(const std::string& channel_name, uint64_t reader_id, uint32_t slot, uint32_t size, uint32_t gen) {
         Reader::Callback cb;
         MessageView msg;
         bool should_deliver = false;
@@ -395,7 +395,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             cb = cb_it->second;
 
             const auto& options = it->second.descriptor.options;
-            build_shm_message_view(channel_name, slot, size, seq, gen, it, msg);
+            build_shm_message_view(channel_name, slot, size, gen, it, msg);
             if (options.depth > 0) {
                 auto& history = it->second.reader_history[reader_id];
                 auto result = apply_qos(history, msg, options, it->second.stats);
@@ -411,8 +411,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
     }
 
-    void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint64_t seq, uint32_t gen, std::unordered_map<std::string, ChannelState>::iterator it,
-                                MessageView& msg) {
+    void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint32_t gen, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
         msg.schema_type_id = it->second.descriptor.schema_type_id;
         msg.correlation_id = CorrelationId{};
         auto channel = it->second.channel;

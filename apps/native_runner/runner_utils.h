@@ -39,7 +39,7 @@ inline auto resolve_load_context(const std::filesystem::path& component_conf_pat
     return ctx;
 }
 
-static auto build_component_load_plan(const std::filesystem::path& component_conf_path, const star::runtime::plan::PlanLoader& loader) -> std::optional<star::runtime::plan::ComponentLoadPlan> {
+inline auto build_component_load_plan(const std::filesystem::path& component_conf_path, const star::runtime::plan::PlanLoader& loader) -> std::optional<star::runtime::plan::ComponentLoadPlan> {
     const auto ctx = resolve_load_context(component_conf_path, loader);
     const auto result = loader.try_load_component_plan(component_conf_path.string(), ctx);
     if (not result.value) {
@@ -48,7 +48,7 @@ static auto build_component_load_plan(const std::filesystem::path& component_con
     return result.value;
 }
 
-static auto normalize_inputs_to_component_conf_paths(const std::vector<std::string>& raw_paths) -> std::vector<std::string> {
+inline auto normalize_inputs_to_component_conf_paths(const std::vector<std::string>& raw_paths) -> std::vector<std::string> {
     star::runtime::plan::PlanLoader loader;
     std::unordered_set<std::string> seen;
     std::vector<std::string> out;

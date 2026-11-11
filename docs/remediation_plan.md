@@ -8,7 +8,7 @@
 
 | 级别 | 数量 | 主题 |
 |---|---|---|
-| P0 | 6 | 零拷贝正确性（**P0-1 已修**）、崩溃恢复、静默停投、越界、容量硬限 |
+| P0 | 6 | 零拷贝正确性（**P0-1 已修**）、崩溃恢复（**P0-2 已修**）、静默停投、越界、容量硬限 |
 | P1 | 5 | 跨进程 RPC、路由/录制/降级静默、资源泄漏 |
 | P2 | 6 | 类型身份、schema 演进、codegen 扩展性、观测、线程模型 |
 
@@ -45,20 +45,26 @@
 
 **遗留**：本次未改 `ShmChannel::read()` 的 `last_seq` 推进策略——遇到"写入中"返回 nullopt 不推进，由调用方重试；已在高频写压力测试中验证不会饿死。
 
-### P0-2 写锁无 owner-death → 通道永久毒化
+### P0-2 写锁无 owner-death → 通道永久毒化 ✅ 已修（2026-11-11）
 
-**问题**：`write_lock` 是共享内存里的裸 `atomic<uint32_t>`，非 `FUTEX_ROBUST`，无 owner、无超时。写方在 `loan()` 与 `commit()` 之间崩溃 → 锁永为 1 → 该通道所有写者永久阻塞；段名由通道名哈希决定且跨运行复用 → **下次启动继承毒状态**。
+**问题**：`write_lock` 是共享内存里的裸 `atomic<uint32_t>`，非 robust、无 owner、无限等待。写方在 `loan()` 与 `commit()` 之间崩溃 → 锁永为 1 → 该通道所有写者永久阻塞，且无日志、无自愈。
 
-**证据**：`shm_channel.h:30-44`（无限 futex 等待）、`:212`（loan 加锁）、`:186-196`（只有 commit 解锁）；全仓无 `FUTEX_ROBUST`。
+**修复内容**：
 
-**修法**（两层）：
-1. 段名加启动 epoch：`/starletto_<hash>_<boot_id|start_ts>`，让崩溃遗留段不再被新进程复用（简单、立即消除"跨启动毒化"）
-2. `write_lock` 升级为「owner pid + 单调时间戳」的自旋锁：
-   - 加锁时写入 `owner_pid` 与 `lock_time_ns`
-   - 等待超过阈值（如 200ms）且 `owner_pid` 已不存在（`kill(pid,0)` 失败）→ 强制置 0 并记 WARN
-3. 或采用 `PTHREAD_PROCESS_SHARED` robust mutex（更标准，但要求共享内存内放 pthread 对象）
+| 改动 | 说明 |
+|---|---|
+| `ShmHeader` 增加 `write_lock_owner_pid` / `write_lock_owner_ns` / `lock_recovery` / `lock_recoveries` / `gen_parity_dirty` | 记录持锁者与恢复状态 |
+| `spin_lock` 改为有界等待（每 50ms 复核），超过 200ms 且确认 owner 已死则复位 | 从"无限等待"变为"可恢复" |
+| 恢复判定用 `kill(pid, 0)`：仅 `ESRCH` 视为死亡，`EPERM` 视为存活 | 不会误杀存活进程 |
+| 复位操作由 `lock_recovery` 守卫串行化，且复位前复核 owner 未变 | 避免两个等待者互相踩掉刚获得的锁 |
+| **代际奇偶归一化**：崩溃写方会把 `gen` 留在奇数位，恢复时置 `gen_parity_dirty`，下一个持锁者把奇数代际 +1 归偶 | 否则后续写入的 +1 会让它变偶，读方会把已损坏的槽当成稳定 |
+| 段名带版本 `/star_v%02u_<hash>`，attach 校验 magic/version/header 大小/布局 | 崩溃遗留的旧布局段不再被复用 |
 
-**验收**：新增测试——子进程持锁后 `SIGKILL`，父进程能在阈值内恢复写入；连续 100 次崩溃/恢复循环无线程泄漏。
+**验收证据**：新增用例 `ShmChannel recovers the write lock from a dead owner`——子进程持锁后 `_exit(0)`（跳过析构），父进程 `waitpid` 回收后写入，断言：恢复计数 = 1、耗时 < 5s、之后能正常读到数据。**双向验证**：临时禁用恢复逻辑后该用例直接卡死（`timeout` 退出码 124），恢复后 9/9 通过。
+
+**运行前提**：恢复依赖 `kill(pid,0)` 能返回 `ESRCH`，因此**死掉的 worker 必须被回收**（supervisor 的 `wait_all` 已如此）。僵尸进程会被视为存活而阻塞恢复。
+
+**遗留**：pid 复用窗口（崩溃进程的 pid 被新进程复用）会导致误判为存活；概率低且有 WARN 日志，暂不处理。
 
 ### P0-3 订阅回调抛异常 → 进程 terminate
 
