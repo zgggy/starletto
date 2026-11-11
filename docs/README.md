@@ -22,7 +22,7 @@ flowchart LR
 | [`arch.md`](arch.md) | 系统架构（简版，Mermaid 三图 + 关键决策表） | 快速总览 |
 | [`spec/`](spec/) | 设计契约：system_vision、basement_design/schema/transport/runtime_*、workplan | 改底座前必读 |
 | [`remediation_plan.md`](remediation_plan.md) | 底层缺陷修复方案（2026-11-11 复审，P0/P1/P2 分级 + 验收） | 系统工程师 |
-| [`contract_decisions.md`](contract_decisions.md) | **P2 前置契约决策**：类型身份 / 录制格式 / 版本策略 / 服务类型（待确认） | 系统工程师 |
+| [`contract_decisions.md`](contract_decisions.md) | **契约决策（已确认）**：多版本 Schema 演进 + 服务并入通道；实施计划五阶段 | 系统工程师 |
 | [`arch_review_20260926.md`](arch_review_20260926.md) | 2026-09 架构评审与整改记录（已完成部分） | 了解历史决策 |
 | [`design_change.md`](design_change.md) | 设计变更日志 | 查"为什么这么改" |
 | [`release/`](release/) | 版本记录、部署、回滚 | 运维 |

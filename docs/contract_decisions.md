@@ -1,10 +1,12 @@
-# 底层契约决策记录（P2 前置）
+# 底层契约决策记录（已确认）
 
 > 日期：2026-11-11
 > 目的：P2 的六项里有四项是**契约级**改动（类型身份、schema 演进、录制格式、服务类型），会同时波及
 > `TypedConstPtr`、transport 类型校验、record 格式、registry、codegen 五处。
 > 本文件把需要先定的契约问题逐个展开：现状与证据、选项、建议、理由、收益、不决策的代价、影响面。
-> 每条决策一旦确认，应同步进 `spec/` 与 `design_change.md`。
+> 状态：**已由 owner 确认（2026-11-12）**。决策二与决策三合并为一项能力（多版本 Schema 演进）；
+> 决策四结论为「通道可以满足全部需求，服务抽象撤销」。
+> 确认后应同步进 `spec/` 与 `design_change.md`。
 
 ---
 
@@ -39,7 +41,7 @@ const char* type_name;             // mangled 名字字符串
 | B. **SchemaTypeId 作为唯一身份** | `TypedConstPtr` 增加 `schema::SchemaTypeId{name, version, hash}` 字段；`as<T>()` 改为先比 TypeId；`typeid` 降级为 debug 断言 | 类型身份来自 schema（本就是系统的类型源）；跨 DSO 稳定（纯值比较）；跨语言可行 |
 | C. 完全去 RTTI | 手写 tag + 工厂 | 与 B 等价但多一套机制，无额外收益 |
 
-### 建议：B
+### 建议：B ✅ 已确认
 
 ### 理由
 
@@ -64,106 +66,122 @@ const char* type_name;             // mangled 名字字符串
 
 ---
 
-## 决策二：录制要记什么，才配叫「可复现」
+## 决策二 + 三（合并）：多版本 Schema 演进 ✅ 已确认
+
+> Owner 决定：**必须支持跨版本回放、甚至跨版本收发**，且对版本不一致的响应方式可配置。
+> 这同时回答了原决策二（录制格式）与决策三（registry 多版本）——它们本来就是同一件事的两半：
+> 录制要跨版本，registry 就必须存多版本；registry 存了多版本，收发才能跨版本。合并为一项能力。
 
 ### 这是什么
 
-`spec/system_vision.md` §4.3 与 `basement_tools.md` §5 把验收定为"**回放与线上一致（同版本、同参数、同输入）**"。当前 STARREC 格式（`message_recorder.h:17-68`）每条只记：
+让生产者与消费者**各自使用不同版本的同一个 schema** 仍能正确通信与回放：
 
-```
-timestamp(i64, steady_clock) + channel(string) + type_name(string) + payload(bytes)
-```
+- 生产者编译并发布 v2（新增了字段），消费者仍编译在 v1
+- 录制文件由 v2 进程产出，回放给 v1 进程
+- 版本不一致时的行为**按通道配置**，而非全局一刀切
 
-对照验收标准逐项检查：
+### 需要的机制（五块）
 
-| 验收要求 | 是否满足 | 缺什么 |
+| # | 机制 | 说明 |
 |---|---|---|
-| 同输入 | 部分 | 只有 payload 本身；不记 QoS、丢帧、序列号 |
-| 同参数 | **否** | 参数/配置快照完全不入录制文件 |
-| 同版本 | **否** | 只记 `type_name` 字符串，不记 SchemaTypeId（version/hash），schema 演进后旧文件无法判断按哪版解码 |
-| 时钟 | 部分 | steady_clock 纳秒（`native_message_bus.h:223-229`）：同机同 boot 可比，**跨重启/跨机器无意义**，没有 wall-clock 锚点 |
+| 1 | **wire 携带版本** | 生产者在通道上声明其 schema 版本；消费者编译版本已知 → 双方都知道是否一致。录制文件头按通道记录版本 |
+| 2 | **registry 多版本共存** | key 从 `name` 改为 `name+version`；同名 v1/v2 同时注册；重复注册同 key 校验内容一致（不再静默返回） |
+| 3 | **解码策略（per-channel 配置）** | 见下表 |
+| 4 | **hash 真实化** | codegen 对 descriptor 内容计算确定性哈希；lint 校验 hash 与内容一致；hash 不再是手写 0 |
+| 5 | **演进兼容检查升级** | `schema-compat` 从「一律 breaking」改为按策略分类：缺失可默认 → 允许；新增字段 → 允许；类型互换/改 id → 默认拒绝（可显式标注 override） |
 
-另有一个刚发现的事实：**`star monitor` 监控的是它自己**。`app.cc:618-645` 的 `monitor` 创建了一个全新的 `RuntimeContext`——新进程、新总线、零通道，所以永远输出 `(no topics registered)`。它根本连不上正在运行的系统：统计是各 worker 进程的内存对象（`ChannelStats` 在 bus 实例里），没有任何跨进程暴露机制。这意味着观测闭环的入口实际不存在。
+### 解码策略（per-channel，conf 配置）
 
-### 选项
-
-| 选项 | 做法 | 取舍 |
+| 不一致场景 | 可选策略 | 默认 |
 |---|---|---|
-| A. 明确降级承诺 | 文档写死"录制仅限同机同 boot、同版本调试用途"，格式不动 | 零改动；"可复现"从验收标准里删掉 |
-| B. **格式 v2：最小可复现集** | 文件头加：格式版本、wall-clock 锚点、每条加 `SchemaTypeId`（version+hash）；文件尾加参数快照通道 | 录制文件自描述；跨版本可诊断 |
-| C. 完整可复现 | B + 全量参数/配置快照、QoS、丢帧记录、时钟域标识 | 工作量大；部分能力（QoS 记录）依赖 P1 已修的统计 |
+| 消费者**不认识**的新增字段 | `error` / `keep`（保留进 unknown，随消息继续传递）/ `drop` | `keep`（与现有 unknown field 保留机制一致） |
+| 消费者**需要**但生产者没发的字段 | `error` / `default`（用 schema 里的默认值） | `default`（schema 无默认值时仍 error） |
+| **类型不同**（如 int→string） | `error` / `best_effort`（可安全转换才转，否则 error） | `error` |
+| **编译期**：字段被删除/改名 | 无策略——**编译必须失败**。这是正确行为，不用运行时兜底 | — |
 
-### 建议：B（并明确"不支持跨版本回放"写进 spec）
+> 编译期与运行期的边界要说清楚：你源码里访问的字段消失了，编译失败，这是好事；运行期解码面对的是「字节比我的结构体新/旧」，这才是策略生效的地方。
 
-### 理由
+### 选项回顾
 
-- **B 是"自描述"与"工作量"的平衡点**：格式 v2 只动 `message_recorder.h`（写）与 `message_replayer.h`（读）两个文件，各约 50 行；C 需要参数快照机制先存在（当前参数服务只有 get/set/list，没有"导出全量"）。
-- **"不能跨版本回放"必须显式化**。现在的事实是：旧录制文件按当前 schema 盲解，结果要么静默错、要么抛异常，用户无法区分"数据坏了"和"schema 变了"。给每条记 TypeId 后，至少能报"这是 v3 时代的数据"。
-- **monitor 的修复依赖这个决策**。如果观测走"共享内存统计段"，那统计段格式也是契约；如果走"工作者发布统计通道"，那统计通道也要录/不录的决策。先定观测契约，monitor 才能一次修对。
+| 选项 | 取舍 |
+|---|---|
+| A. 单版本 + 明确边界 | 改动小，但滚动升级、跨版本回放永久不可用 |
+| **B. 多版本共存 + 解码策略（已选）** | 复杂度高，但滚动升级与跨版本回放成立；registry/transport/record/monitor 全部受益 |
 
 ### 收益
 
-- 录制文件自描述：拿到任何一份 `.starrec` 都能知道它属于哪个版本、参数是什么
-- 回放器可以校验：schema 不匹配时明确报错，而不是静默解错
-- monitor 有机会做成真的：观测走 shm 统计段或统计通道后，`star monitor` 才能连上运行中的系统
+- 滚动升级成立：升级 planning 不用同时重启 control
+- 跨版本回放成立：旧录制文件不再变成不可诊断的垃圾
+- hash 从装饰变成机制：CI 拦「改 schema 忘同步」
+- `schema-compat` 的判断从「一律 breaking」进化为「按策略可演进」
 
-### 不决策的代价
+### 代价与影响面（如实）
 
-录制/回放继续是"演示可用、实战不可用"；每次 schema 演进都会让存量录制文件变成不可诊断的垃圾。
+| 模块 | 改动 |
+|---|---|
+| `schema_registry.h` | key 改 name+version；支持枚举同 name 的版本集 |
+| `binary_codec.h` | 解码入口带策略参数；missing 字段填默认值 |
+| `shm/native message_bus` | 通道声明带 (name, version)；类型校验按策略 |
+| `schema_codegen.py` | hash 计算；lint 加 hash 一致性、map key、未定义类型 |
+| `message_recorder/replayer` | 文件头按通道记版本 |
+| `component.conf` | 新增 `decode_policy` 块（schema 描述） |
+| `schema_compat.py`/`star schema compat` | 分级判定 |
 
-### 影响面
+预估 **2–3 周**（含测试），是六项里最大的单项。
 
-`message_recorder.h`、`message_replayer.h`、`native_message_bus.h`（写入口带 TypeId）、`record_replay_tool`；monitor 重写单独列（见下）。
+### 实施顺序（依赖关系）
 
----
-
-## 决策三：SchemaRegistry 要不要支持同 name 多版本共存
-
-### 这是什么
-
-`SchemaRegistry` 当前行为（`schema_registry.h:22-37`）：
-
-- 同 TypeId 重复注册：**静默返回**（第一个赢）
-- 同 name 不同 TypeId：**抛异常**
-- 无 unregister / 无版本枚举
-
-这意味着：生产者想发 v2、消费者还在读 v1，是不可能的——registry 在启动期就拒绝了。而真实的滚动升级场景（A 进程已升级、B 进程还没重启）恰恰需要两个版本短暂共存。
-
-### 为什么现在"没炸"
-
-因为全仓 schema 的 `version` 基本写死 0/1，`hash` 全是手写 0（`schema_codegen.py:442-447` 只把字面量写进去，全仓没有计算 hash 的工具）。版本号与哈希**只是装饰**，真正生效的是 name 字符串 + 人工纪律（改 schema 时全量重编、全量重启）。
-
-### 选项
-
-| 选项 | 做法 | 取舍 |
-|---|---|---|
-| A. **明确单版本** | registry 保持现状；把"升级必须全量重启"写进 spec 与 README；**补上 hash 计算与 lint 检查**（改 schema 忘改 hash 就 FAIL） | 承认边界，消除"看似支持实则不支持"的错觉；改动小 |
-| B. 支持多版本共存 | registry key 改为 `name+version`；transport 校验放宽为"消费者声明可接受的版本集合" | 滚动升级可行；但 transport 校验、codegen、record、monitor 全要跟着改，且需要 schema 兼容性矩阵 |
-| C. 双注册过渡 | 新旧版本同时注册，通道按 TypeId 路由 | 折中；仍需 B 的大部分机制 |
-
-### 建议：先 A（现在），把 B 挂到路线图
-
-### 理由
-
-- **当前没有消费者需要多版本**。业务模块只有 4 个示例，全量重启的代价接近零。B 的全部复杂度是为"未来"付的，而未来什么时候来、来不来，未定。
-- **A 不是什么都不做**：hash 计算缺失是实打实的洞——compat 工具能拦"改字段 id"，但拦不住"忘了更新 hash"，而 hash 一旦真的被用来做版本协商，全 0 的 hash 会让协商永远通过。补 hash 计算（codegen 对 descriptor 内容做确定性哈希）+ lint 检查（hash 与内容不符即 FAIL），是把"装饰"变成"真实机制"的最小一步。
-- **B 的复杂度应该在有第一个真实需求时再付**，而且 B 依赖决策一（TypeId 身份）与决策二（record 带 version）先行。
-
-### 收益（A）
-
-- hash 从装饰变成可验证的机制：CI 拦"改了 schema 忘了同步 hash"
-- spec 写明升级语义，消除"看似支持多版本"的错觉
-- 为将来 B 留好了口子：TypeId 三要素已经在了，B 只是改 key 与校验策略
-
-### 不决策的代价
-
-维持现状的"薛定谔支持"：文档与代码结构暗示支持多版本，实际一跑就抛异常；hash 全 0 的坑在真正用 hash 时才爆。
-
-### 影响面
-
-`schema_codegen.py`（hash 计算 + lint）、`schema_registry.h`（可选：重复注册从静默改为校验内容一致）、`spec/basement_schema.md`（写明单版本语义）。
+```mermaid
+flowchart LR
+    A["阶段一：类型身份<br/>SchemaTypeId 进 TypedConstPtr"] --> B["阶段二：registry 多版本<br/>key=name+version + hash 真实化"]
+    B --> C["阶段三：解码策略<br/>per-channel 配置 + 双检保留"]
+    C --> D["阶段四：record v2<br/>按通道记版本 + 回放校验"]
+    D --> E["阶段五：服务并入通道<br/>（决策四，见下）"]
+```
 
 ---
+
+## 决策四：服务是否并入通道 ✅ 已确认：是
+
+> Owner 问题：我们是否真的需要服务类型的接口？是不是只有通道也能满足全部需求？
+
+### 分析
+
+**通道可以满足全部需求。** 理由分三层：
+
+1. **现服务的传输层本来就是通道**。`ShmServiceBus` 内部就是 `<name>/request` 与 `<name>/response` 两个通道——RPC 只是通道之上的一层「请求-响应关联」糖。P1-1 刚把这些通道接进了路由计划，说明它们已经是普通通道了。
+2. **并入通道后服务自动获得通道的全部能力**：路由计划自动覆盖（P1-1 是手工折算的，并入后不再特殊）、类型校验直接复用通道的（比 `ServiceDescriptor` 只有名字更强）、录制自动生效、`star monitor` 可见服务流量。这些现在都要为服务单独实现一遍。
+3. **消除整个抽象的双轨制**：`ServiceBus` 接口 + `NativeServiceBus`/`ShmServiceBus` 两套实现 + 工厂动态选择 + `RecordableBus` 缺席问题——全部消失。
+
+### 需要保留的一小块：请求-响应关联
+
+纯通道没有「这条响应对应哪条请求」的关联语义。每个组件自己实现 pending 表 + 超时 + 清理是易错路径。因此保留一个**单实现的轻量工具**：
+
+```
+RpcClient（基于通道的工具，非总线抽象）
+  call(request_channel, payload, timeout) -> response
+  内部：CorrelationId 关联 + pending 表 + 超时清理
+RpcServer（声明式，component.conf commands 块不变）
+  通道收请求 → handler → 回响应通道
+```
+
+与现有 `ServiceBus` 的区别：**只有一个实现**（直接基于 MessageBus），没有传输双轨制，没有 `dynamic_cast` 选择，类型校验来自通道层（决策一的 TypeId）。
+
+### 撤销清单
+
+| 移除 | 替代 |
+|---|---|
+| `ServiceBus` / `ServiceClient` / `ServiceServer` 接口 | `RpcClient` / `RpcServer` 工具 |
+| `NativeServiceBus` / `ShmServiceBus` 两套实现 | 一套基于 MessageBus 的实现 |
+| `RuntimeFactory` 的 dynamic_cast 选择 | 直接创建工具所需资源 |
+| 服务通道的 route plan 特殊折算（P1-1 的手工部分） | 通道天然进路由计划 |
+| `ServicePortPlan` 的弱类型 | 通道的 SchemaTypeId 校验 |
+
+### 代价（如实）
+
+- `handle_service_request` 的分发模式保留，但 `parameter_component` 要迁移（量小）
+- `star param` / `parameter_service_demo` 要迁移（调 RpcClient）
+- 超时/取消语义要重新审：`async_call` 无超时、超时不通知服务端等问题在新实现里要一次做对
 
 ## 决策四：服务端口要不要纳入类型校验
 

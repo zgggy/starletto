@@ -16,3 +16,4 @@
 | 2026-11-11 | shm 写锁增加 owner 追踪与 owner-death 恢复（有界等待 + kill 探测 + 代际奇偶归一化），段名带版本号 | transport | remediation_plan P0-2 |
 | 2026-11-11 | 服务总线随传输方式选择（shm_routed → ShmServiceBus）；服务端口折算进路由计划；parameter 组件改为 commands 声明式 | transport/runtime/modules | remediation_plan P1-1 |
 | 2026-11-11 | ShmRoutedMessageBus 实现 RecordableBus（委托 inproc），routed 模式录制恢复 | transport | remediation_plan P1-2 |
+| 2026-11-12 | 契约确认：支持多版本 Schema 演进（registry 多版本 + 解码策略 per-channel + record v2）；服务抽象撤销，并入通道（保留轻量 RPC 关联工具） | schema/transport/runtime | contract_decisions |
