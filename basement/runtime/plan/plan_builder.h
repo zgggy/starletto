@@ -174,6 +174,9 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
             auto item = star::generated::runtime::component_load_plan::ServicePortPlan{};
             item.name = name;
             item.channel = port.channel;
+            // commands 块语义是「本组件提供的服务」，固定为 server；
+            // 客户端由调用方在代码里 create_client，无需声明
+            item.role = std::string("server");
             if (const auto type_name = resolve_port_type_name("commands", name, port)) {
                 item.request_type_name = *type_name;
             }
@@ -285,6 +288,30 @@ inline auto build_process_plan(const std::vector<ComponentLoadPlan>& component_p
             for (const auto& port : *plan.inputs) {
                 if (port.channel.has_value()) {
                     group.consumed_channels->emplace_back(*port.channel);
+                }
+            }
+        }
+        // 服务端口折算成两条通道：<name>/request 与 <name>/response。
+        // 不折算的话服务通道永远不进路由计划，跨进程 RPC 会静默超时。
+        if (plan.services.has_value()) {
+            if (not group.produced_channels.has_value()) {
+                group.produced_channels = std::vector<std::string>{};
+            }
+            if (not group.consumed_channels.has_value()) {
+                group.consumed_channels = std::vector<std::string>{};
+            }
+            for (const auto& svc : *plan.services) {
+                const auto svc_channel = svc.channel.value_or(svc.name);
+                if (svc_channel.empty()) {
+                    continue;
+                }
+                const auto is_server = svc.has_role() and svc.role.value_or("") == "server";
+                if (is_server) {
+                    group.consumed_channels->emplace_back(svc_channel + "/request");
+                    group.produced_channels->emplace_back(svc_channel + "/response");
+                } else {
+                    group.produced_channels->emplace_back(svc_channel + "/request");
+                    group.consumed_channels->emplace_back(svc_channel + "/response");
                 }
             }
         }

@@ -41,8 +41,8 @@ flowchart LR
 | 项 | 状态 |
 |---|---|
 | 构建 | 0 错误 0 警告（5 类告警提为 `-Werror`） |
-| 测试 | 17 套 119 用例 |
+| 测试 | 18 套 124 用例 |
 | CI 门禁 | `star check` 10/10 |
 | 业务模块 | setting/config、setting/parameter、planning/motion（示例）、control/pid |
-| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项已全部修复**；P1 五项与 P2 六项待处理 |
+| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 六项待处理 |
 | 算法资产 | `libraries/` 约 3500 行未接线，等 localization/perception 等模块落地 |

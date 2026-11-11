@@ -54,7 +54,13 @@ public:
         writer_descriptor.schema_type_id = default_snapshot_schema_type_id();
         writer_ = context()->message_bus().create_writer(writer_descriptor);
 
-        register_parameter_services();
+        // 若 conf 未声明 commands（例如工具侧直接实例化组件、没有 load plan），
+        // 退回内置注册，保证单进程工具用法不受影响
+        const auto* plan = load_plan();
+        const auto declared = plan != nullptr and plan->services.has_value() and not plan->services->empty();
+        if (not declared) {
+            register_parameter_services();
+        }
     }
 
     auto process_once() -> bool override {
@@ -114,22 +120,35 @@ private:
         return default_snapshot_type_name();
     }
 
+    // 回退路径：conf 未声明 commands 时按内置默认名注册
     void register_parameter_services() {
         get_server_ = context()->service_bus().create_server(
             star::transport::ServiceDescriptor{default_get_service_name()},
-            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
-                return handle_get_service(request);
-            });
+            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse { return handle_get_service(request); });
         set_server_ = context()->service_bus().create_server(
             star::transport::ServiceDescriptor{default_set_service_name()},
-            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
-                return handle_set_service(request);
-            });
+            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse { return handle_set_service(request); });
         list_server_ = context()->service_bus().create_server(
             star::transport::ServiceDescriptor{default_list_service_name()},
-            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {
-                return handle_list_service(request);
-            });
+            [this](const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse { return handle_list_service(request); });
+    }
+
+    // 服务端由 component.conf 的 commands 块声明，auto_configure 负责创建；
+    // 这里只负责按端口名分发（端口名 = conf 里的 commands 键名）
+    auto handle_service_request(const std::string& service_name, const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse override {
+        if (service_name == "get") {
+            return handle_get_service(request);
+        }
+        if (service_name == "set") {
+            return handle_set_service(request);
+        }
+        if (service_name == "list") {
+            return handle_list_service(request);
+        }
+        auto response = star::transport::ServiceResponse{};
+        response.ok = false;
+        response.message = "unknown service: " + service_name;
+        return star::transport::SerializedServiceResponse{response, {}};
     }
 
     auto handle_get_service(const star::transport::ServiceRequest& request) -> star::transport::SerializedServiceResponse {

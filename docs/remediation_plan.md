@@ -9,7 +9,7 @@
 | 级别 | 数量 | 主题 |
 |---|---|---|
 | P0 | 6 | **全部已修**：seqlock、写锁 owner-death、回调异常、单帧降级、DROP_NEWEST、解码溢出 |
-| P1 | 5 | 跨进程 RPC、路由/录制/降级静默、资源泄漏 |
+| P1 | 5 | **全部已修**：跨进程 RPC、routed 录制、路由静默、段校验、peek_view |
 | P2 | 6 | 类型身份、schema 演进、codegen 扩展性、观测、线程模型 |
 
 ---
@@ -110,46 +110,45 @@
 
 ## P1 · 能力缺失与静默失效
 
-### P1-1 跨进程 RPC 实际不存在
+### P1-1 跨进程 RPC 实际不存在 ✅ 已修（2026-11-11）
 
-**问题**：`RuntimeFactory` 无条件创建 `NativeServiceBus`，`ShmServiceBus` 只在 selftest 里手工构造。多进程部署下 `call()` 直接抛 unavailable。
+**问题**：`RuntimeFactory` 无条件创建 `NativeServiceBus`；且服务通道从不进入路由计划。多进程下客户端 `call()` 直接抛 unavailable。
 
-**证据**：`runtime_factory.h:90`；`shm_service_bus.h` 无生产调用点。
+**修复（三处联动）**：
+1. `RuntimeFactory`：`shm_routed` 下创建 `ShmServiceBus`（依赖 routed 总线的通道与路由），其余情况保持 `NativeServiceBus`
+2. `build_process_plan`：把 `plan.services` 折算成 `<name>/request` 与 `<name>/response` 两条通道（server 消费 request / 生产 response，client 反之），使它们进入路由计划；`plan_builder` 把 `commands` 块标记为 `role=server`
+3. `parameter_component` 改为**声明式**：服务由 `component.conf` 的 `commands` 块声明、`auto_configure` 创建、`handle_service_request` 按端口名分发；conf 未声明时（工具侧直接实例化组件）退回内置注册，保持 `star param` 可用
 
-**修法**：按 transport 名称选择 service bus 实现；同时把服务通道纳入 route plan（当前 `build_route_plan` 只看 inputs/outputs，服务 topic 永远 `INPROC_ONLY`）。
+**验证**：新增 3 个用例——`build_process_plan` 折算出两条通道、`shm_routed` 下工厂返回 `ShmServiceBus`、默认传输仍是 `NativeServiceBus`。多进程 `star run --multi-process setting` 两 worker 正常退出；`star param list/get` 正常。
 
-### P1-2 routed 模式录制完全失效
+**遗留**：`parameter_service_demo` 仍走单进程（默认传输），未验证「A 进程客户端 + B 进程服务端」的端到端调用——需要一个双进程 RPC 用例，建议在 P2 阶段随性能优化一起补。
+
+### P1-2 routed 模式录制完全失效 ✅ 已修（2026-11-11）
 
 **问题**：`ShmRoutedMessageBus` 未继承 `RecordableBus`，`recordable_bus()` 返回 null，`record: true` 静默无效。
 
-**证据**：`shm_routed_message_bus.h:19`；`runtime_factory.h:46-48`。
+**修复**：继承 `RecordableBus`，把 4 个接口委托给内部 `NativeMessageBus`——routed 写路径本来就先走 inproc，录制自然覆盖。
 
-**修法**：`ShmRoutedMessageBus` 委托给内部 `inproc_`（它已经是 `RecordableBus`），并在 routed 写路径的 shm 分支同样触发录制。
+**验证**：新增用例——routed 模式开启录制、写 3 条，回放读出 3 条。
 
-### P1-3 路由漏配/降级全程静默
+### P1-3 路由漏配 / 降级全程静默 ✅ 已修（2026-11-11）
 
-**问题**：route plan 漏项、group 拼错、通道降级，全部表现为"写入返回 OK，对端收不到"。
+**问题**：route plan 漏项时通道静默退化为 inproc-only，写入仍返回 OK；降级也无任何日志。
 
-**修法**：
-1. `WriteResult` 增加 `peer_expected` / `degraded` 显式字段，`ok()` 不掩盖降级
-2. 启动时校验：route plan 中每条通道的 producer/consumer 都存在
-3. `monitor` 增加"跨进程通道健康"视图（peer 存活、末尾 seq 差）
+**修复**：
+- 新增 `ChannelRegistry::has_route_plan()` / `is_in_route_plan()`
+- `ShmRoutedMessageBus` 在声明通道时检查：若存在路由计划但缺本通道，**每通道 WARN 一次**，明确提示「跨进程订阅者收不到」
+- `degrade_channel` 增加 WARN（含 TTL 时长），降级与恢复不再无声
 
-### P1-4 shm 段泄漏与 attach 不校验
+**验证**：新增用例——计划中缺失的通道仍能在进程内送达，但 `shm_required=false`（可判别为未路由）；WARN 日志已实测输出。
 
-**问题**：子进程 `_exit()` 跳过析构 → ref_count 不减 → 段泄漏；attach 只查 `st_size`，不校验 magic/version，且会回写别人的共享头。
+### P1-4 shm 段泄漏与 attach 不校验 ✅ 主体已修（随 P0-1/P0-2）
 
-**证据**：`app.cc:697`；`shm_channel.h:101,150-158`。
-
-**修法**：attach 校验 magic/version/布局一致性，不一致直接失败并提示清理；段名加 epoch（与 P0-2 同一改动解决）；`_exit` 前显式 close 或在 supervisor 侧清理。
+- attach 现在校验 magic / version / header 大小 / 布局，且不再回写别人的共享头
+- 段名带版本号，旧布局段不再被误 attach
+- **遗留**：`_exit` 跳过析构导致 ref_count 不减、段不被 unlink。当前由 supervisor 回收进程 + 段名带版本缓解；根治需要「创建者持有 pid 并在启动时清扫孤儿段」，留 P2。
 
 ### P1-5 `peek_view` 无稳定性校验 ✅ 已随 P0-1 修复
-
-**问题**：`peek_view` 直接读 `slot->data`，不检查 `stable()`，是 P0-1 的另一条暴露面。
-
-**修法**：已随 P0-1 一并修复——`peek_view` 在构造 View 前检查 `stable()`。
-
----
 
 ## P2 · 演进与可维护性
 

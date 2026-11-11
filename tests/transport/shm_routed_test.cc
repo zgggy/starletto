@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <unistd.h>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -5,6 +7,7 @@
 #include <thread>
 #include <vector>
 
+#include "basement/transport/record/message_replayer.h"
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/shm/shm_routed_message_bus.h"
 
@@ -160,6 +163,56 @@ TEST_CASE("an oversized message does not permanently degrade the channel") {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     REQUIRE(received.load() >= 10);
+}
+
+// P1-2 回归：routed 模式此前未实现 RecordableBus，record:true 完全无效。
+// 现在录制委托给内部 inproc 总线，routed 写路径必须先经过它。
+TEST_CASE("ShmRoutedMessageBus records through the routed write path") {
+    const auto registry = std::make_shared<ChannelRegistry>();
+    const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
+    const auto descriptor = make_descriptor("test.routed.record");
+    bus->configure_route_plan("test.routed.record", "test.routed.record");
+
+    char path[96]{};
+    std::snprintf(path, sizeof(path), "/tmp/starletto_routed_rec_%d.starrec", static_cast<int>(::getpid()));
+
+    bus->enable_recorder(path);
+    bus->enable_record_channel(descriptor.name);
+
+    auto received = std::atomic<int>{0};
+    const auto reader = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+    const auto writer = bus->create_writer(descriptor);
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(writer->write_serialized(make_serialized(i)).ok());
+    }
+    bus->disable_recorder();
+
+    auto replayer = star::transport::MessageReplayer{path};
+    replayer.open();
+    REQUIRE_EQ(replayer.message_count(), 3ULL);
+    replayer.close();
+    std::remove(path);
+}
+
+// P1-3：通道不在路由计划里时只在本进程可达，但写入仍返回 OK——
+// 这是最难排查的静默失效。行为上保持兼容，但必须可判别：
+// inproc_ok=true 且 shm_required=false 即表示「没有跨进程投递」。
+TEST_CASE("a channel missing from the route plan stays inproc and is reported") {
+    const auto registry = std::make_shared<ChannelRegistry>();
+    const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
+    // 计划里只有别的通道
+    bus->configure_route_registry("group_a", "other.channel|group_a|group_b");
+
+    const auto descriptor = make_descriptor("test.routed.notinplan");
+    auto received = std::atomic<int>{0};
+    const auto reader = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+    const auto writer = bus->create_writer(descriptor);
+
+    const auto r = writer->write_serialized(make_serialized(1));
+    REQUIRE(r.ok());
+    REQUIRE(r.inproc_ok);
+    REQUIRE(not r.shm_required);  // 未路由到 shm：跨进程订阅者收不到
+    REQUIRE_EQ(received.load(), 1);
 }
 
 TEST_CASE("ShmRoutedMessageBus rejects an empty reader callback") {

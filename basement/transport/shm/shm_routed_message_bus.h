@@ -16,7 +16,7 @@
 
 namespace star::transport {
 
-class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_from_this<ShmRoutedMessageBus> {
+class ShmRoutedMessageBus final : public MessageBus, public RecordableBus, public std::enable_shared_from_this<ShmRoutedMessageBus> {
   public:
     explicit ShmRoutedMessageBus(std::shared_ptr<ChannelRegistry> channel_registry = nullptr)
         : channel_registry_(channel_registry ? std::move(channel_registry) : std::make_shared<ChannelRegistry>()),
@@ -42,11 +42,20 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
         channel_registry_->configure_route_plan(route_plan);
     }
 
+    // 录制委托给内部 NativeMessageBus：routed 写路径本来就先走 inproc，
+    // 因此录制发生在 inproc 侧即可覆盖全部发布；此前未继承 RecordableBus，
+    // 导致 record:true 在路由模式下静默无效
+    void enable_recorder(const std::string& file_path) override { inproc_->enable_recorder(file_path); }
+    void enable_record_channel(const std::string& channel) override { inproc_->enable_record_channel(channel); }
+    void disable_recorder() override { inproc_->disable_recorder(); }
+    void disable_record_channel(const std::string& channel) override { inproc_->disable_record_channel(channel); }
+
     void declare_channel(const ChannelDescriptor& descriptor) override {
         inproc_->declare_channel(descriptor);
         if (not shm_available_) {
             return;
         }
+        warn_if_missing_from_route_plan(descriptor.name);
         if (should_use_shm_for_channel(descriptor.name)) {
             try {
                 shm_->declare_channel(descriptor);
@@ -264,9 +273,29 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
 
     static constexpr std::chrono::milliseconds kDegradeTtl{5000};
 
+    // 路由计划存在但缺了本通道：跨进程订阅者永远收不到数据，
+    // 而写入仍返回 OK——这是最难排查的一类静默失效，必须在启动时喊出来
+    void warn_if_missing_from_route_plan(const std::string& channel_name) {
+        if (channel_registry_ == nullptr || not channel_registry_->has_route_plan()) {
+            return;
+        }
+        if (channel_registry_->is_in_route_plan(channel_name)) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (not warned_channels_.insert(channel_name).second) {
+                return;
+            }
+        }
+        logW << "ShmRoutedMessageBus: channel not present in route plan, stays inproc-only; cross-process subscribers will NOT receive it. channel=" << channel_name;
+    }
+
     void degrade_channel(const std::string& channel_name) {
         std::lock_guard<std::mutex> lock(mutex_);
         degraded_channels_[channel_name] = std::chrono::steady_clock::now();
+        logW << "ShmRoutedMessageBus: channel degraded to inproc-only for " << std::chrono::duration_cast<std::chrono::milliseconds>(kDegradeTtl).count()
+             << "ms, channel=" << channel_name;
     }
 
     auto is_channel_degraded(const std::string& channel_name) const -> bool {
@@ -301,6 +330,7 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
     // 降级带 TTL：SHM 故障可能是瞬时的（如对端重启），过期后自动重试，
     // 避免一次失败就让该通道永久失去跨进程能力
     mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> degraded_channels_;
+    std::unordered_set<std::string> warned_channels_;
 };
 
 }  // namespace star::transport

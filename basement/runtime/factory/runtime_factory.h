@@ -25,6 +25,7 @@
 #include "basement/runtime/parameter/native_parameter_store.h"
 #include "basement/transport/shm/shm_message_bus.h"
 #include "basement/transport/shm/shm_routed_message_bus.h"
+#include "basement/transport/shm/shm_service_bus.h"
 
 namespace star::runtime {
 
@@ -87,7 +88,17 @@ class RuntimeFactory {
         } else {
             message_bus = std::make_shared<star::transport::NativeMessageBus>(channel_registry);
         }
-        auto service_bus = std::make_shared<star::transport::NativeServiceBus>();
+        // 服务总线跟随传输方式：shm_routed 下跨进程 RPC 必须走 ShmServiceBus，
+        // 否则客户端在 A 进程、服务端在 B 进程时 call() 直接报 unavailable
+        std::shared_ptr<star::transport::ServiceBus> service_bus;
+        if (transport_name == "shm_routed") {
+            if (auto routed = std::dynamic_pointer_cast<star::transport::ShmRoutedMessageBus>(message_bus)) {
+                service_bus = std::make_shared<star::transport::ShmServiceBus>(routed);
+            }
+        }
+        if (not service_bus) {
+            service_bus = std::make_shared<star::transport::NativeServiceBus>();
+        }
         auto parameter_store = std::make_shared<NativeParameterStore>();
         auto scheduler = std::make_shared<star::runtime::NativeScheduler>();
         auto schema_registry = std::make_shared<star::schema::SchemaRegistry>();

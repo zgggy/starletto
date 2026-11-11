@@ -58,6 +58,18 @@ public:
         route_registry_[channel].consumer_groups.insert(process_group);
     }
 
+    // 是否配置了显式路由计划（supervisor 下发的 channel→producer/consumers 映射）
+    auto has_route_plan() const -> bool {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return not route_registry_.empty();
+    }
+
+    // 通道是否出现在路由计划里；缺项意味着该通道只在本进程内可达
+    auto is_in_route_plan(const std::string& channel) const -> bool {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return route_registry_.count(channel) > 0;
+    }
+
     auto local_group() const -> std::string {
         std::lock_guard<std::mutex> lock(mutex_);
         return local_group_;

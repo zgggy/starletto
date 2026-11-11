@@ -14,3 +14,5 @@
 | 2026-09-27 | HealthChecker 按组件自身 `channel_rule` 评估（原实现遍历全局规则，per-component 配置被静默忽略） | runtime/observability | arch_review_20260926 §8.27 |
 | 2026-11-11 | shm 头格式 v3→v4：新增 per-slot 代际 gen[]，读侧改为「解码前后双检」；段名带版本号，attach 校验 magic/version/布局 | transport | remediation_plan P0-1 |
 | 2026-11-11 | shm 写锁增加 owner 追踪与 owner-death 恢复（有界等待 + kill 探测 + 代际奇偶归一化），段名带版本号 | transport | remediation_plan P0-2 |
+| 2026-11-11 | 服务总线随传输方式选择（shm_routed → ShmServiceBus）；服务端口折算进路由计划；parameter 组件改为 commands 声明式 | transport/runtime/modules | remediation_plan P1-1 |
+| 2026-11-11 | ShmRoutedMessageBus 实现 RecordableBus（委托 inproc），routed 模式录制恢复 | transport | remediation_plan P1-2 |

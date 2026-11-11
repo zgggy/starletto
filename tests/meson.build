@@ -107,6 +107,16 @@ test(
 )
 
 test(
+    'runtime_plan',
+    executable(
+        'runtime_plan_test',
+        files('runtime/plan_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep],
+    ),
+)
+
+test(
     'runtime_scheduler',
     executable(
         'runtime_scheduler_test',
