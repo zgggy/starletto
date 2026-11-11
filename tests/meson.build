@@ -196,6 +196,32 @@ test(
     ),
 )
 
+# P2-4：多 root schema 的生成与身份测试（.schema 只用于测试，不参与业务）
+multi_root_schema = custom_target(
+    'gen_test_multi_root_schema',
+    input: files('schema/multi_root.schema'),
+    output: ['multi_root.s.h'],
+    command: [
+        codegen_py,
+        codegen_script,
+        'gen',
+        '--schema-dir', meson.current_source_dir() / 'schema',
+        '--output-dir', meson.current_build_dir(),
+    ],
+    depend_files: codegen_sources,
+    build_by_default: true,
+)
+
+test(
+    'schema_multi_root',
+    executable(
+        'schema_multi_root_test',
+        files('schema/multi_root_test.cc') + test_main + [multi_root_schema],
+        include_directories: test_root_inc,
+        dependencies: [schema_dep, libraries_dep],
+    ),
+)
+
 test(
     'schema_parser',
     executable(

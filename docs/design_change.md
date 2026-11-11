@@ -26,3 +26,4 @@
 | 2026-11-12 | shm 读侧线程模型：每 reader 一个轮询线程 → **每通道一个**（多 reader 共享读取、各按 QoS 分发）；reader 析构停线程并 join，剩余 reader 自动重启 poller | transport | remediation_plan P2-3 |
 | 2026-11-12 | 日志结构化：文本行加 pid/tid、可选 JSON（`STAR_LOG_FORMAT=json`）、`AsyncLogger` 有界队列（文件日志默认异步，stdout 默认同步）、`module.conf` 的 `logging.level` → plan → host → 调度线程 `ModuleLogScope` | core/runtime/apps | remediation_plan P2-5 |
 | 2026-11-12 | 删除 `IClock`（零引用）：仅替换 `now()` 无法驱动 futex/timer/回放节奏，仿真时间需要「统一时钟 + 可唤醒等待 + 回放驱动器」，不是单个接口 | core | remediation_plan P2-6 |
+| 2026-11-12 | codegen 拆层：`codegen/{ir,parser,cpp,text}.py`，CLI 只做编排；支持单文件多 root（身份 `<schema>.<root>`、按 root 可达闭包算哈希）；helper 名加 schema 前缀消除 ODR；meson 依赖 codegen 源码 | schema/build | remediation_plan P2-4 |

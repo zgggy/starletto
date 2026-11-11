@@ -11,6 +11,7 @@ schema_gen_modules_setting_schema = custom_target(
         '--schema-dir', meson.current_source_dir(),
         '--output-dir', meson.current_build_dir(),
     ],
+    depend_files: codegen_sources,
     build_by_default: true,
 )
 

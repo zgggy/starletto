@@ -9,6 +9,14 @@ rt_dep = cpp.find_library('rt', required: false)
 
 codegen_py = find_program('python3', required: true)
 codegen_script = files('schema/schema_codegen.py')
+# CLI 之外的实现模块：改它们也必须触发重新生成，否则生成物会静默过期
+codegen_sources = files(
+    'schema/codegen/__init__.py',
+    'schema/codegen/ir.py',
+    'schema/codegen/parser.py',
+    'schema/codegen/cpp.py',
+    'schema/codegen/text.py',
+)
 
 base_dir = meson.current_source_dir()
 

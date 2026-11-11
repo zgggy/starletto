@@ -146,7 +146,13 @@ dependency {
 
 - `root` 与 `def` 都生成对应的 C++ 类型
 - `root` 是该 `.schema` 的默认 entry 类型
+- **一个 `.schema` 可以有多个 `root`**：每个 root 是独立的消息类型，各有自己的
+  `SchemaTypeId`、descriptor、`encode_binary/from_binary/register_schema`
+  - 单 root：身份名为 `<schema 名>`（保持既有契约）
+  - 多 root：身份名为 `<schema 名>.<root 名>`，避免同名文件内不同类型共用一个身份
+  - 多 root 的哈希按 root 可达的定义闭包计算：改 B 不会让 A 的版本指纹失效
 - `def` 是可复用子类型，也允许在显式指定时作为 entry 类型
+- 跨文件 import 尚未支持（见 12.6）
 
 ### 4.5 词法与类型系统
 
@@ -418,10 +424,13 @@ def TypeName {                   # 结构体定义
 
 3. **struct TypeNameBuilder** — 构造器
 
-4. **_build_fields_TypeName()** — FieldDescriptor 列表
+4. **<schema 前缀>_build_fields_TypeName()** — FieldDescriptor 列表
+   - 函数名带 schema 前缀：多个生成头共享同一 C++ 命名空间时（如
+     `star.setting.planning` 下的 trajectory/motion），同名 def 不会 ODR 冲突
    - map 字段的 `type_name` 统一表示 value 的实际类型名；是否为 map 由 `has_value_kind/value_*` 表达
 
-5. **_schema_type_id()** / **_schema_descriptor()** — 元信息
+5. **<schema 前缀>_type_id_Root()** / **<schema 前缀>_descriptor_Root()** — 元信息
+   （每个 root 一份；非 root def 只生成数据/编解码方法）
 
 6. **辅助模板**：`schema_read<T>()`, `schema_write<T>()`, concept 定义
 
@@ -449,11 +458,31 @@ python3 basement/schema/schema_codegen.py compat <old.schema> <new.schema>
 python3 basement/schema/schema_codegen.py lint --schema <file>
 ```
 
+实现分层（`basement/schema/codegen/`）：
+
+| 模块 | 职责 |
+|---|---|
+| `ir.py` | 语法树、root 可达闭包、内容哈希（无 C++ 依赖） |
+| `parser.py` | `.schema` 文本 → IR |
+| `cpp.py` | IR → C++ 生成头（唯一的 C++ emitter） |
+| `text.py` | IR → 规范化 `.schema` 文本（`fmt`） |
+
+`schema_codegen.py` 只保留 CLI 编排、lint/compat/hash。meson 的 `custom_target`
+把 `codegen_sources` 列为 `depend_files`，改实现模块会触发重新生成。
+
+### 12.6 已知限制
+
+- 跨文件 `import` 尚未支持：一个 `.schema` 不能引用另一个文件的类型。
+  需要的改动：`import "path.schema"` 解析 + 符号表（导入类型的 C++ 限定名与
+  `#include` 路径，由 `--include-root` 换算）+ descriptor children 跨文件引用。
+  多 root 已经覆盖了「一个文件放多个消息类型」的常见需求。
+
 ### 12.5 验收标准
 
 - ✅ **工具实现**（2026-04-06）：
   - `basement/schema/schema_codegen.py` 可执行
   - 支持 schema/root/namespace/version/def 全部语法
+  - 支持单个文件多个 root（各自独立类型身份），见 4.4/12.6
   - 正确处理 string/int/bool/double/object/?/[] 所有类型组合
 - ✅ **全量验证**（2026-04-06）：22 个 .schema 文件均可正确生成对应 .s.h
 - ✅ **集成到 build**（2026-04-06）：
