@@ -1,0 +1,11 @@
+schema test.import_uses
+version 1
+namespace star.test.import_uses
+import "base.schema"
+
+root Shape {
+    1 name : string
+    2 origin : Point
+    3 points : Point[] ?
+    4 labels : {string : Point} ?
+}

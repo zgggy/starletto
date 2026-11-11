@@ -22,6 +22,16 @@ def _cpp_type_for_binary_only(type_name):
     return type_name
 
 
+# 导入符号表：name -> (导入的 schema, C++ 限定类型名)
+ExternalRef = tuple[SchemaDoc, str]
+Externals = dict[str, ExternalRef]
+
+
+def helper_prefix(doc: SchemaDoc) -> str:
+    """生成 helper 的 schema 前缀（跨头文件唯一，避免 ODR）。"""
+    return "star_" + re.sub(r"[^0-9a-zA-Z_]", "_", doc.schema_name.lower())
+
+
 def cpp_namespace(doc: SchemaDoc) -> list[str]:
     raw = doc.namespace_name or f"star.generated.{doc.schema_name.replace('-', '_')}"
     return [part for part in re.split(r"[:.]+", raw) if part]
@@ -32,12 +42,12 @@ def guard_name(schema_name: str) -> str:
     return f"__{text}__"
 
 
-def cpp_type(type_ref: TypeRef, has_default: bool) -> str:
+def cpp_type(type_ref: TypeRef, has_default: bool, externals: Externals | None = None) -> str:
     if type_ref.category == "array":
-        inner = cpp_type(TypeRef(category="simple", name=type_ref.name), False)
+        inner = cpp_type(TypeRef(category="simple", name=type_ref.name), False, externals)
         base = f"std::vector<{inner}>"
     elif type_ref.category == "map":
-        inner = cpp_type(TypeRef(category="simple", name=type_ref.value_name), False)
+        inner = cpp_type(TypeRef(category="simple", name=type_ref.value_name), False, externals)
         base = f"std::map<std::string, {inner}>"
     else:
         mapping = {
@@ -53,7 +63,12 @@ def cpp_type(type_ref: TypeRef, has_default: bool) -> str:
             "float64": "double",
             "object": "star::schema::SchemaObject",
         }
-        base = mapping.get(type_ref.name, type_ref.name)
+        if type_ref.name in mapping:
+            base = mapping[type_ref.name]
+        elif externals is not None and type_ref.name in externals:
+            base = externals[type_ref.name][1]
+        else:
+            base = type_ref.name
     if type_ref.optional and not has_default:
         return f"std::optional<{base}>"
     return base
@@ -90,18 +105,18 @@ def descriptor_default_expr(field: FieldDef) -> str:
     return "{}"
 
 
-def read_expr(field: FieldDef) -> str:
-    base = cpp_type(TypeRef(category="simple", name=field.type_ref.name or field.type_ref.value_name), False)
+def read_expr(field: FieldDef, externals: Externals | None = None) -> str:
+    base = cpp_type(TypeRef(category="simple", name=field.type_ref.name or field.type_ref.value_name), False, externals)
     if field.type_ref.category == "array":
-        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.name), False)
+        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.name), False, externals)
         return f"schema_read<std::vector<{inner}>>(it->second)"
     if field.type_ref.category == "map":
-        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.value_name), False)
+        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.value_name), False, externals)
         return f"schema_read<std::map<std::string, {inner}>>(it->second)"
     return f"schema_read<{base}>(it->second)"
 
 
-def field_kind_expr(type_ref: TypeRef, defs: dict[str, DefBlock]) -> str:
+def field_kind_expr(type_ref: TypeRef, defs: dict[str, DefBlock], externals: Externals | None = None) -> str:
     target = type_ref.name
     if type_ref.category == "map":
         target = type_ref.value_name
@@ -117,30 +132,55 @@ def field_kind_expr(type_ref: TypeRef, defs: dict[str, DefBlock]) -> str:
         "float64": "star::schema::FieldKind::FLOAT64",
         "string": "star::schema::FieldKind::STRING",
     }
-    if target == "object" or target in defs:
+    if target == "object" or target in defs or (externals is not None and target in externals):
         return "star::schema::FieldKind::OBJECT"
     return mapping.get(target, "star::schema::FieldKind::STRING")
 
 
-def field_type_name(type_ref: TypeRef) -> str:
-    if type_ref.category == "map":
-        return type_ref.value_name
-    return type_ref.name
+def scalar_type_name(name: str, externals: Externals | None = None) -> str:
+    if externals is not None and name in externals:
+        return f"{externals[name][0].schema_name}.{name}"
+    return name
 
 
-def view_inner_cpp_type(field: FieldDef) -> str:
+def field_type_name(type_ref: TypeRef, externals: Externals | None = None) -> str:
+    target = type_ref.value_name if type_ref.category == "map" else type_ref.name
+    return scalar_type_name(target, externals)
+
+
+def view_inner_cpp_type(field: FieldDef, externals: Externals | None = None) -> str:
     if field.type_ref.category == "array":
-        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.name), False)
+        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.name), False, externals)
         return f"std::vector<{inner}>"
     if field.type_ref.category == "map":
-        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.value_name), False)
+        inner = cpp_type(TypeRef(category="simple", name=field.type_ref.value_name), False, externals)
         return f"std::map<std::string, {inner}>"
-    return cpp_type(TypeRef(category="simple", name=field.type_ref.name), False)
+    return cpp_type(TypeRef(category="simple", name=field.type_ref.name), False, externals)
 
 
-def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
+def header_text(doc: SchemaDoc, output_path: pathlib.Path, include_root: pathlib.Path | None = None) -> str:
     ns = cpp_namespace(doc)
     defs = {item.name: item for item in doc.defs}
+
+    # 导入符号表：本地 def 之外，import 进来的类型按「导入 schema 的命名空间」限定。
+    # 只做直接 import 的可见性；本地名与导入名冲突直接报错（不静默遮蔽）。
+    externals: Externals = {}
+    include_lines: list[str] = []
+    for imported in doc.imported_docs:
+        imported_ns = "::".join(cpp_namespace(imported))
+        for block in imported.defs:
+            if block.name in defs:
+                raise ValueError(f'import name collision: "{block.name}" is defined both locally and in {imported.source_path}')
+            if block.name in externals:
+                raise ValueError(f'import name collision: "{block.name}" is provided by multiple imports')
+            externals[block.name] = (imported, f"{imported_ns}::{block.name}")
+        if include_root is None:
+            raise ValueError(f'schema "{doc.schema_name}" imports {imported.source_path}, but --include-root is not set')
+        try:
+            relative = pathlib.Path(imported.source_path).resolve().relative_to(pathlib.Path(include_root).resolve())
+        except ValueError as exc:
+            raise ValueError(f"imported schema must live under --include-root ({include_root}): {imported.source_path}") from exc
+        include_lines.append(f'#include "{relative.with_suffix(".s.h").as_posix()}"')
     ordered_defs: list[DefBlock] = []
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -187,6 +227,9 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         "#include <utility>",
         "",
     ])
+    lines.extend(include_lines)
+    if include_lines:
+        lines.append("")
     lines.append(f"namespace {'::'.join(ns)} {{")
     lines.append("")
     lines.extend([
@@ -196,7 +239,13 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
     ])
     # helper 名字带 schema 前缀：多个生成头若共享 C++ 命名空间（如 setting.planning
     # 下的 trajectory/motion），同名 def 不会再撞车（ODR）
-    helper = "star_" + re.sub(r"[^0-9a-zA-Z_]", "_", doc.schema_name.lower())
+    def imported_ns(imported: SchemaDoc) -> str:
+        return "::".join(cpp_namespace(imported))
+
+    def resolved_type(name: str) -> str:
+        return cpp_type(TypeRef(category="simple", name=name), False, externals)
+
+    helper = helper_prefix(doc)
     root_set = set(doc.roots)
     single_root = len(doc.roots) == 1
 
@@ -221,8 +270,8 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         out_lines = [
             f"{prefix}field.id = {field.id};",
             f'{prefix}field.name = "{field.name}";',
-            f"{prefix}field.kind = {field_kind_expr(field.type_ref, defs)};",
-            f'{prefix}field.type_name = "{field_type_name(field.type_ref)}";',
+            f"{prefix}field.kind = {field_kind_expr(field.type_ref, defs, externals)};",
+            f'{prefix}field.type_name = "{field_type_name(field.type_ref, externals)}";',
             f"{prefix}field.optional = {'true' if field.type_ref.optional else 'false'};",
             f"{prefix}field.explicit_required = {'true' if field.type_ref.explicit_required else 'false'};",
             f"{prefix}field.repeated = {'true' if field.type_ref.category == 'array' else 'false'};",
@@ -230,13 +279,20 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         if field.type_ref.category == "map":
             out_lines.extend([
                 f"{prefix}field.has_value_kind = true;",
-                f"{prefix}field.value_kind = {field_kind_expr(TypeRef(category='simple', name=field.type_ref.value_name), defs)};",
-                f'{prefix}field.value_type_name = "{field.type_ref.value_name}";',
+                f"{prefix}field.value_kind = {field_kind_expr(TypeRef(category='simple', name=field.type_ref.value_name), defs, externals)};",
+                f'{prefix}field.value_type_name = "{scalar_type_name(field.type_ref.value_name, externals)}";',
             ])
             if field.type_ref.value_name in defs:
                 out_lines.append(f"{prefix}field.value_children = {helper}_build_fields_{field.type_ref.value_name}();")
+            elif field.type_ref.value_name in externals:
+                imported = externals[field.type_ref.value_name][0]
+                out_lines.append(
+                    f"{prefix}field.value_children = {imported_ns(imported)}::{helper_prefix(imported)}_build_fields_{field.type_ref.value_name}();")
         elif field.type_ref.name in defs:
             out_lines.append(f"{prefix}field.children = {helper}_build_fields_{field.type_ref.name}();")
+        elif field.type_ref.name in externals:
+            imported = externals[field.type_ref.name][0]
+            out_lines.append(f"{prefix}field.children = {imported_ns(imported)}::{helper_prefix(imported)}_build_fields_{field.type_ref.name}();")
         if field.default is not None:
             out_lines.append(f"{prefix}field.default_value = {descriptor_default_expr(field)};")
         return out_lines
@@ -279,9 +335,9 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         for field in block.fields:
             init = default_expr(field)
             if init:
-                lines.append(f"    {cpp_type(field.type_ref, field.default is not None)} {field.name}{{{init}}};")
+                lines.append(f"    {cpp_type(field.type_ref, field.default is not None, externals)} {field.name}{{{init}}};")
             else:
-                lines.append(f"    {cpp_type(field.type_ref, field.default is not None)} {field.name}{{}};")
+                lines.append(f"    {cpp_type(field.type_ref, field.default is not None, externals)} {field.name}{{}};")
         if def_name in root_set:
             lines.append("    star::schema::UnknownFieldSet unknown_fields_{};")
         lines.append("")
@@ -300,9 +356,9 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         for field in block.fields:
             lines.append(f'        if (const auto it = obj->find("{field.name}"); it != obj->end()) {{')
             if field.type_ref.optional and field.default is None:
-                lines.append(f"            out.{field.name} = {read_expr(field)};")
+                lines.append(f"            out.{field.name} = {read_expr(field, externals)};")
             else:
-                lines.append(f"            out.{field.name} = {read_expr(field)};")
+                lines.append(f"            out.{field.name} = {read_expr(field, externals)};")
             lines.append("        } else {")
             if field.type_ref.optional and field.default is None:
                 lines.append(f"            out.{field.name}.reset();")
@@ -615,14 +671,14 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
                     elif _is_binary_only_type(field.type_ref.name):
                         lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_binary_value_array<{_cpp_type_for_binary_only(field.type_ref.name)}>(bytes); }}")
                     else:
-                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_array<{field.type_ref.name}>(bytes); }}")
+                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_array<{resolved_type(field.type_ref.name)}>(bytes); }}")
                 elif field.type_ref.category == "map":
                     if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
                         lines.append(f"    if (view.Has_{field.name}()) {{ out.{field.name} = view.{field.name}(); }}")
                     elif _is_binary_only_type(field.type_ref.value_name):
                         lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_binary_value_map<{_cpp_type_for_binary_only(field.type_ref.value_name)}>(bytes); }}")
                     else:
-                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_map<{field.type_ref.value_name}>(bytes); }}")
+                        lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_map<{resolved_type(field.type_ref.value_name)}>(bytes); }}")
                 elif field.type_ref.name in {"bool", "int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
                     lines.append(f"    if (view.Has_{field.name}()) {{ out.{field.name} = view.{field.name}(); }}")
                 elif _is_binary_only_type(field.type_ref.name):
@@ -630,7 +686,7 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
                 elif _is_schema_text_type(field.type_ref.name):
                     lines.append(f"    if (view.Has_{field.name}()) {{ auto text = view.{field.name}(); auto val = star::schema::parse_schema_text(text); out.{field.name} = val.as_object(); }}")
                 else:
-                    lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {field.type_ref.name}::from_fixed_layout(bytes); }}")
+                    lines.append(f"    if (view.Has_{field.name}()) {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {resolved_type(field.type_ref.name)}::from_fixed_layout(bytes); }}")
             else:
                 if field.type_ref.category == "array":
                     if field.type_ref.name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "bool", "string"}:
@@ -638,14 +694,14 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
                     elif _is_binary_only_type(field.type_ref.name):
                         lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_binary_value_array<{_cpp_type_for_binary_only(field.type_ref.name)}>(bytes); }}")
                     else:
-                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_array<{field.type_ref.name}>(bytes); }}")
+                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_array<{resolved_type(field.type_ref.name)}>(bytes); }}")
                 elif field.type_ref.category == "map":
                     if field.type_ref.value_name in {"int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
                         lines.append(f"    out.{field.name} = view.{field.name}();")
                     elif _is_binary_only_type(field.type_ref.value_name):
                         lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_binary_value_map<{_cpp_type_for_binary_only(field.type_ref.value_name)}>(bytes); }}")
                     else:
-                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_map<{field.type_ref.value_name}>(bytes); }}")
+                        lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = star::schema::decode_object_map<{resolved_type(field.type_ref.value_name)}>(bytes); }}")
                 elif field.type_ref.name in {"bool", "int", "int32", "int64", "uint32", "uint64", "float", "double", "float64", "string"}:
                     lines.append(f"    out.{field.name} = view.{field.name}();")
                 elif _is_binary_only_type(field.type_ref.name):
@@ -653,7 +709,7 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
                 elif _is_schema_text_type(field.type_ref.name):
                     lines.append(f"    {{ auto text = view.{field.name}(); auto val = star::schema::parse_schema_text(text); out.{field.name} = val.as_object(); }}")
                 else:
-                    lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {field.type_ref.name}::from_fixed_layout(bytes); }}")
+                    lines.append(f"    {{ auto bytes = view.{field.name}_bytes(); out.{field.name} = {resolved_type(field.type_ref.name)}::from_fixed_layout(bytes); }}")
         lines.append("    return out;")
         lines.append("}")
         lines.append("")

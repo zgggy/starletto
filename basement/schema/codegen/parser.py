@@ -189,6 +189,10 @@ class Parser:
                     doc.root_name = doc.root_name or root_name
                     doc.roots.append(root_name)
                 continue
+            if keyword == "import":
+                self.skip_ws_and_comments()
+                doc.imports.append(self.parse_string())
+                continue
             if keyword == "namespace":
                 doc.namespace_name = self.parse_identifier()
                 continue

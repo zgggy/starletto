@@ -33,6 +33,8 @@ def format_block(keyword: str, block: DefBlock) -> list[str]:
 
 def format_schema(doc: SchemaDoc) -> str:
     lines: list[str] = [f"schema {doc.schema_name}"]
+    for imported in doc.imports:
+        lines.append(f'import "{imported}"')
     root_set = set(doc.roots)
     by_name = {block.name: block for block in doc.defs}
     emitted_roots = 0

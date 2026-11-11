@@ -8,26 +8,37 @@ import sys
 
 from codegen.cpp import header_text
 from codegen.ir import DefBlock, FieldDef, SchemaDoc, TypeRef, _PRIMITIVE_TYPES, schema_content_hash
+from codegen.loader import load_schema
 from codegen.parser import Parser
 from codegen.text import format_schema
 
-def run_gen(schema: pathlib.Path, output: pathlib.Path) -> int:
-    doc = Parser(schema.read_text(encoding="utf-8")).parse()
+
+def run_gen(schema: pathlib.Path, output: pathlib.Path, include_root: pathlib.Path | None = None) -> int:
+    try:
+        doc = load_schema(schema)
+    except ValueError as exc:
+        print(f"{schema}: {exc}", file=sys.stderr)
+        return 2
     issues = collect_issues(doc)
     if issues:
         for issue in issues:
             print(f"{schema}: {issue}", file=sys.stderr)
         return 2
+    try:
+        header = header_text(doc, output, include_root)
+    except ValueError as exc:
+        print(f"{schema}: {exc}", file=sys.stderr)
+        return 2
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(header_text(doc, output), encoding="utf-8")
+    output.write_text(header, encoding="utf-8")
     return 0
 
 
-def run_gen_dir(schema_dir: pathlib.Path, output_dir: pathlib.Path) -> int:
+def run_gen_dir(schema_dir: pathlib.Path, output_dir: pathlib.Path, include_root: pathlib.Path | None = None) -> int:
     for schema_path in sorted(schema_dir.rglob("*.schema")):
         rel = schema_path.relative_to(schema_dir)
         output_path = output_dir / rel.with_suffix(".s.h")
-        ret = run_gen(schema_path, output_path)
+        ret = run_gen(schema_path, output_path, include_root)
         if ret != 0:
             return ret
     return 0
@@ -197,6 +208,14 @@ def collect_issues(doc: SchemaDoc) -> list[str]:
     避免「能生成但 lint 不过」或反过来的分裂。"""
     issues: list[str] = []
     defs = {block.name: block for block in doc.defs}
+    external_names: set[str] = set()
+    for imported in doc.imported_docs:
+        for block in imported.defs:
+            if block.name in defs:
+                issues.append(f'import name collision: "{block.name}" is defined both locally and in {imported.source_path}')
+            elif block.name in external_names:
+                issues.append(f'import name collision: "{block.name}" is provided by multiple imports')
+            external_names.add(block.name)
     if not doc.roots:
         issues.append("schema has no root block")
     for root_name in doc.roots:
@@ -240,7 +259,7 @@ def collect_issues(doc: SchemaDoc) -> list[str]:
                 target = field.type_ref.value_name
             else:
                 target = field.type_ref.name
-            if target not in _PRIMITIVE_TYPES and target not in defs:
+            if target not in _PRIMITIVE_TYPES and target not in defs and target not in external_names:
                 issues.append(f"{block.name}: field '{field.name}' references undefined type '{target}'")
 
     return issues
@@ -248,7 +267,11 @@ def collect_issues(doc: SchemaDoc) -> list[str]:
 
 def run_lint(schema: pathlib.Path) -> int:
     try:
-        doc = Parser(schema.read_text(encoding="utf-8")).parse()
+        # 用加载器而不是裸 Parser：import 的符号要参与「未定义类型」检查
+        doc = load_schema(schema)
+    except ValueError as exc:
+        print(f"lint import error: {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"lint parse error: {exc}", file=sys.stderr)
         return 2
@@ -278,7 +301,8 @@ def main() -> int:
         parser.add_argument("--schema", required=True)
         parser.add_argument("--output", required=True)
         args = parser.parse_args()
-        return run_gen(pathlib.Path(args.schema), pathlib.Path(args.output))
+        include_root = pathlib.Path(args.include_root) if args.include_root else None
+        return run_gen(pathlib.Path(args.schema), pathlib.Path(args.output), include_root)
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -288,6 +312,7 @@ def main() -> int:
     gen_parser.add_argument("--output", default=None)
     gen_parser.add_argument("--schema-dir", default=None)
     gen_parser.add_argument("--output-dir", default=None)
+    gen_parser.add_argument("--include-root", default=None)
 
     fmt_parser = subparsers.add_parser("fmt")
     fmt_parser.add_argument("--schema", required=True)
@@ -307,8 +332,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "gen":
         if args.schema_dir:
-            return run_gen_dir(pathlib.Path(args.schema_dir), pathlib.Path(args.output_dir))
-        return run_gen(pathlib.Path(args.schema), pathlib.Path(args.output))
+            include_root = pathlib.Path(args.include_root) if args.include_root else None
+            return run_gen_dir(pathlib.Path(args.schema_dir), pathlib.Path(args.output_dir), include_root)
+        include_root = pathlib.Path(args.include_root) if args.include_root else None
+        return run_gen(pathlib.Path(args.schema), pathlib.Path(args.output), include_root)
     if args.command == "fmt":
         return run_fmt(pathlib.Path(args.schema), pathlib.Path(args.output) if args.output else None, args.in_place)
     if args.command == "compat":

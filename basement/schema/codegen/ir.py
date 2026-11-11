@@ -47,6 +47,12 @@ class DefBlock:
 class SchemaDoc:
     schema_name: str = ""
     root_name: str = ""
+    # import "path" 的原始声明（相对当前 .schema 文件），按出现顺序
+    imports: list[str] = field(default_factory=list)
+    # 加载器解析后的直接依赖（只做直接可见，不做传递导入）
+    imported_docs: list["SchemaDoc"] = field(default_factory=list)
+    # 加载器写入：该 schema 文件自身的绝对路径（用于生成 #include 路径）
+    source_path: str = ""
     # 一个 .schema 可以有多个 root（多个消息类型）；roots[0] 兼作默认 root。
     # 类型身份：单 root 用 schema 名，多 root 用 "schema.root"，保证每类型身份唯一。
     roots: list[str] = field(default_factory=list)

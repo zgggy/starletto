@@ -4,6 +4,7 @@
 # 测试框架见 support/star_test.h（Catch2 风格 API 子集）。
 
 test_root_inc = include_directories('..')
+subdir('schema/imports')
 test_main = files('support/test_main.cc')
 
 test(
@@ -205,11 +206,21 @@ multi_root_schema = custom_target(
         codegen_py,
         codegen_script,
         'gen',
-        '--schema-dir', meson.current_source_dir() / 'schema',
-        '--output-dir', meson.current_build_dir(),
+        '--schema', meson.current_source_dir() / 'schema' / 'multi_root.schema',
+        '--output', meson.current_build_dir() / 'multi_root.s.h',
     ],
     depend_files: codegen_sources,
     build_by_default: true,
+)
+
+test(
+    'schema_import',
+    executable(
+        'schema_import_test',
+        files('schema/import_test.cc') + test_main + [import_schemas_gen],
+        include_directories: test_root_inc,
+        dependencies: [schema_dep, libraries_dep],
+    ),
 )
 
 test(
