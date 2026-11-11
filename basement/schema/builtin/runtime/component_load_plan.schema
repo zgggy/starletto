@@ -1,4 +1,5 @@
 schema runtime.component_load_plan
+version 1
 
 root ComponentLoadPlan {
     1 module_name : string

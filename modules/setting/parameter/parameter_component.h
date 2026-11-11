@@ -342,7 +342,7 @@ private:
                 std::span<const uint8_t>(bytes.data(), bytes.size())).to_value();
             return;
         }
-        const auto schema = context()->schema_registry().find_by_name(key);
+        const auto schema = context()->schema_registry().find_latest(key);
         if (not schema) {
             return;
         }
@@ -363,7 +363,7 @@ private:
                         reinterpret_cast<const uint8_t*>(payload_binary.data()),
                         payload_binary.size())).to_value();
             }
-            const auto schema = context()->schema_registry().find_by_name(schema_name);
+            const auto schema = context()->schema_registry().find_latest(schema_name);
             if (not schema) {
                 throw star::excep::RuntimeError("ParameterComponent set request unknown schema: ", schema_name);
             }
@@ -400,7 +400,7 @@ private:
         auto snapshot = star::generated::setting::parameter::snapshot::ParameterSnapshot{};
         snapshot.entries = std::move(entries);
         auto payload = snapshot.to_value();
-        const auto schema = context()->schema_registry().find_by_name(default_snapshot_schema_type_id().name);
+        const auto schema = context()->schema_registry().find_latest(default_snapshot_schema_type_id().name);
         if (schema) {
             star::schema::SchemaValidator::apply_defaults(*schema, &payload);
             star::schema::SchemaValidator::validate(*schema, payload);
@@ -441,7 +441,7 @@ private:
             const auto bytes = typed.encode_binary();
             return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
         }
-        const auto schema = context()->schema_registry().find_by_name(key);
+        const auto schema = context()->schema_registry().find_latest(key);
         if (not schema) {
             return std::nullopt;
         }

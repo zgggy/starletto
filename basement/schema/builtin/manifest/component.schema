@@ -1,4 +1,5 @@
 schema manifest.component
+version 1
 
 root ComponentConf {
     1 global : GlobalInfo ?

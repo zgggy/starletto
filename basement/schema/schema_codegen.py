@@ -18,10 +18,76 @@ def _cpp_type_for_binary_only(type_name):
     if type_name == "object":
         return "star::schema::SchemaValue"
     return type_name
+import json
 import pathlib
 import re
 import sys
 from dataclasses import dataclass, field
+
+# 原始类型集合：schema 里除此以外出现的类型名都必须是已定义的 def/root
+_PRIMITIVE_TYPES = {
+    "string",
+    "bool",
+    "int",
+    "int32",
+    "int64",
+    "uint32",
+    "uint64",
+    "float",
+    "double",
+    "float64",
+    "object",
+}
+
+
+def _fnv1a64(text: str) -> int:
+    """确定性 64 位内容哈希（FNV-1a）。
+
+    必须跨平台、跨 Python 版本稳定：不能用内置 hash()（带随机盐）。
+    SchemaTypeId.hash 由它填充，跨 DSO、跨进程、跨语言都要能独立算出同一个值。
+    """
+    value = 0xCBF29CE484222325
+    for byte in text.encode("utf-8"):
+        value ^= byte
+        value = (value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return value
+
+
+def schema_content_hash(doc: "SchemaDoc") -> int:
+    """对 schema 的语义内容算哈希。
+
+    只覆盖契约本身：类型名/版本/命名空间/root/字段（按 id 排序）。字段在源文件里的
+    书写顺序、注释、空行、fmt 重排都不影响结果——这些不是契约的一部分。
+    """
+    payload = {
+        "schema": doc.schema_name,
+        "version": doc.version,
+        "namespace": doc.namespace_name,
+        "root": doc.root_name,
+        "allow_unknown": doc.allow_unknown,
+        "defs": [
+            {
+                "name": block.name,
+                "fields": [
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "category": item.type_ref.category,
+                        "type": item.type_ref.name,
+                        "key": item.type_ref.key_name,
+                        "value": item.type_ref.value_name,
+                        "optional": item.type_ref.optional,
+                        "required": item.type_ref.explicit_required,
+                        "default": item.default,
+                    }
+                    for item in sorted(block.fields, key=lambda value: (value.id, value.name))
+                ],
+            }
+            for block in sorted(doc.defs, key=lambda value: value.name)
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return _fnv1a64(canonical)
 
 
 @dataclass
@@ -438,12 +504,15 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path) -> str:
         "using star::schema::schema_write;",
         "",
     ])
+    # 哈希由内容算出，不从文件里抄：声明 `hash` 只是「内容指纹钉子」，
+    # gen/lint 会校验它和内容一致；真正写进类型身份的是算出来的值。
+    content_hash = schema_content_hash(doc)
     lines.extend([
         f"inline auto _schema_type_id_{doc.root_name}() -> star::schema::SchemaTypeId {{",
         "    auto out = star::schema::SchemaTypeId{};",
         f'    out.name = "{doc.schema_name}";',
         f"    out.version = {doc.version};",
-        f"    out.hash = static_cast<uint64_t>({doc.hash_value});",
+        f"    out.hash = 0x{content_hash:016x}ULL;",
         "    return out;",
         "}",
         "",
@@ -940,6 +1009,11 @@ def format_schema(doc: SchemaDoc) -> str:
 
 def run_gen(schema: pathlib.Path, output: pathlib.Path) -> int:
     doc = Parser(schema.read_text(encoding="utf-8")).parse()
+    issues = collect_issues(doc)
+    if issues:
+        for issue in issues:
+            print(f"{schema}: {issue}", file=sys.stderr)
+        return 2
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(header_text(doc, output), encoding="utf-8")
     return 0
@@ -1114,17 +1188,23 @@ def run_compat(old_schema: pathlib.Path, new_schema: pathlib.Path) -> int:
     return 0
 
 
-def run_lint(schema: pathlib.Path) -> int:
-    try:
-        doc = Parser(schema.read_text(encoding="utf-8")).parse()
-    except Exception as exc:
-        print(f"lint parse error: {exc}", file=sys.stderr)
-        return 2
-
+def collect_issues(doc: SchemaDoc) -> list[str]:
+    """schema 的结构与契约检查。gen 与 lint 共用同一套规则，
+    避免「能生成但 lint 不过」或反过来的分裂。"""
     issues: list[str] = []
     defs = {block.name: block for block in doc.defs}
     if doc.root_name not in defs:
         issues.append(f"root '{doc.root_name}' not found in root/def blocks")
+
+    if doc.version < 1:
+        issues.append(f"version must be >= 1 (declared {doc.version}); every schema is a versioned contract")
+
+    computed = schema_content_hash(doc)
+    if doc.hash_value and doc.hash_value != computed:
+        issues.append(
+            f"declared hash {doc.hash_value} does not match content hash {computed}; "
+            f"run `star schema hash --schema=<file>` and update the `hash` line"
+        )
 
     for block in doc.defs:
         seen_ids: dict[int, str] = {}
@@ -1144,6 +1224,29 @@ def run_lint(schema: pathlib.Path) -> int:
             else:
                 seen_names.add(field.name)
 
+            if field.type_ref.category == "map":
+                if field.type_ref.key_name != "string":
+                    issues.append(
+                        f"{block.name}: map field '{field.name}' key type must be 'string' "
+                        f"(codegen only supports std::string keys), got '{field.type_ref.key_name}'"
+                    )
+                target = field.type_ref.value_name
+            else:
+                target = field.type_ref.name
+            if target not in _PRIMITIVE_TYPES and target not in defs:
+                issues.append(f"{block.name}: field '{field.name}' references undefined type '{target}'")
+
+    return issues
+
+
+def run_lint(schema: pathlib.Path) -> int:
+    try:
+        doc = Parser(schema.read_text(encoding="utf-8")).parse()
+    except Exception as exc:
+        print(f"lint parse error: {exc}", file=sys.stderr)
+        return 2
+
+    issues = collect_issues(doc)
     if issues:
         for issue in issues:
             print(f"LINT: {issue}")
@@ -1152,8 +1255,18 @@ def run_lint(schema: pathlib.Path) -> int:
     return 0
 
 
+def run_hash(schema: pathlib.Path) -> int:
+    try:
+        doc = Parser(schema.read_text(encoding="utf-8")).parse()
+    except Exception as exc:
+        print(f"hash parse error: {exc}", file=sys.stderr)
+        return 2
+    print(schema_content_hash(doc))
+    return 0
+
+
 def main() -> int:
-    if len(sys.argv) > 1 and sys.argv[1] not in {"gen", "fmt", "compat", "lint"}:
+    if len(sys.argv) > 1 and sys.argv[1] not in {"gen", "fmt", "compat", "lint", "hash"}:
         parser = argparse.ArgumentParser()
         parser.add_argument("--schema", required=True)
         parser.add_argument("--output", required=True)
@@ -1181,6 +1294,9 @@ def main() -> int:
     lint_parser = subparsers.add_parser("lint")
     lint_parser.add_argument("--schema", required=True)
 
+    hash_parser = subparsers.add_parser("hash")
+    hash_parser.add_argument("--schema", required=True)
+
     args = parser.parse_args()
     if args.command == "gen":
         if args.schema_dir:
@@ -1192,6 +1308,8 @@ def main() -> int:
         return run_compat(pathlib.Path(args.old_schema), pathlib.Path(args.new_schema))
     if args.command == "lint":
         return run_lint(pathlib.Path(args.schema))
+    if args.command == "hash":
+        return run_hash(pathlib.Path(args.schema))
     raise ValueError(f"unknown command: {args.command}")
 
 

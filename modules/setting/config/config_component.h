@@ -178,7 +178,7 @@ class ConfigComponent : public star::runtime::Component {
         auto out = star::generated::setting::config::snapshot::ConfigSnapshot{};
         out.entries = std::move(entries);
         auto value = out.to_value();
-        const auto schema = context()->schema_registry().find_by_name(default_snapshot_schema_type_id().name);
+        const auto schema = context()->schema_registry().find_latest(default_snapshot_schema_type_id().name);
         if (schema) {
             star::schema::SchemaValidator::apply_defaults(*schema, &value);
             star::schema::SchemaValidator::validate(*schema, value);
@@ -190,7 +190,7 @@ class ConfigComponent : public star::runtime::Component {
         if (value == nullptr) {
             return;
         }
-        const auto schema = context()->schema_registry().find_by_name(key);
+        const auto schema = context()->schema_registry().find_latest(key);
         if (not schema) {
             return;
         }
@@ -212,7 +212,7 @@ class ConfigComponent : public star::runtime::Component {
     }
 
     auto encode_schema_known_entry(const std::string& key, const star::schema::SchemaValue& value) const -> std::optional<std::string> {
-        const auto schema = context()->schema_registry().find_by_name(key);
+        const auto schema = context()->schema_registry().find_latest(key);
         if (not schema) {
             return std::nullopt;
         }

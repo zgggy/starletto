@@ -1,4 +1,5 @@
 schema runtime.process_plan
+version 1
 
 root ProcessPlan {
     1 groups : ProcessGroupPlan[] ?

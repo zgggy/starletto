@@ -154,8 +154,8 @@
 
 | # | 问题 | 修法方向 |
 |---|---|---|
-| P2-1 | 类型身份靠 `typeid`/mangled name，跨 DSO/插件卸载不成立 | `TypedConstPtr` 改携带 `SchemaTypeId`（name+version+hash）作为唯一身份；`typeid` 仅用于 debug 断言 |
-| P2-2 | schema 演进机制缺失：无 reserved/deprecated、hash 手写、registry 单版本 | 加 `reserved` 关键字与 lint；`schema_hash` 由 codegen 计算写入；registry 支持同 name 多版本并存 |
+| P2-1 ✅ | 类型身份靠 `typeid`/mangled name，跨 DSO/插件卸载不成立 | `TypedConstPtr` 改携带 `SchemaTypeId`（name+version+hash）作为唯一身份；`typeid` 仅用于 debug 断言。**已落地（2026-11-12）**：`basement/core/type_id.h`、写入路径盖章、通道首写采纳 |
+| P2-2 ✅ 部分 | schema 演进机制缺失：无 reserved/deprecated、hash 手写、registry 单版本 | 加 `reserved` 关键字与 lint；`schema_hash` 由 codegen 计算写入；registry 支持同 name 多版本并存。**已落地（2026-11-12）**：registry key=name+version、`lookup` 区分 hash 未知/不一致、FNV-1a 内容哈希、lint 校验 hash/未定义类型/map key/version；`reserved` 与逐通道解码策略见阶段三 |
 | P2-3 | 每个 reader 一个轮询线程（8 相机 × 3 消费者 = 24 线程） | 改为每通道一个 epoll/事件线程，或共享一个轮询池 |
 | P2-4 | codegen 单文件单 root、跨文件无引用、helper 可能 ODR | 拆 IR + per-language emitter；先支持跨文件 import 与多 root；helper 加文件级前缀 |
 | P2-5 | 日志无 pid、同步写、无结构化 | 加 pid/异步队列/JSON；per-module 级别接线 |

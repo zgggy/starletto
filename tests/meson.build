@@ -195,3 +195,13 @@ test(
         dependencies: [schema_dep, libraries_dep],
     ),
 )
+
+test(
+    'schema_registry',
+    executable(
+        'schema_registry_test',
+        files('schema/schema_registry_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [schema_dep, libraries_dep],
+    ),
+)

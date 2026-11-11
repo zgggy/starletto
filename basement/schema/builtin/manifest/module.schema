@@ -1,4 +1,5 @@
 schema manifest.module
+version 1
 
 def ModuleInfo {
     1 name : string

@@ -195,7 +195,7 @@ auto encode_parameter_value(
         const auto bytes = typed.encode_binary();
         return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
     }
-    const auto schema = context.schema_registry().find_by_name(schema_name);
+    const auto schema = context.schema_registry().find_latest(schema_name);
     if (not schema) {
         return std::nullopt;
     }
@@ -217,7 +217,7 @@ auto decode_parameter_value_to_text(
                 payload_binary.size()));
         return star::schema::dump_schema_text(typed.to_value());
     }
-    const auto schema = context.schema_registry().find_by_name(schema_name);
+    const auto schema = context.schema_registry().find_latest(schema_name);
     if (not schema) {
         return "<unknown schema payload>";
     }

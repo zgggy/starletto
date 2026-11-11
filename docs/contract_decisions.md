@@ -139,6 +139,11 @@ flowchart LR
     D --> E["阶段五：服务并入通道<br/>（决策四，见下）"]
 ```
 
+**进度（2026-11-12）**：阶段一 ✅、阶段二 ✅。
+
+- 阶段一：`basement/core/type_id.h`；`TypedConstPtr`/`TypedPtr` 携带 `schema_type_id`；`make_serialized_message` 自动盖章；两个 message bus 首写采纳、后续不一致拒绝。
+- 阶段二：registry 以 `name+version` 为 key，同名多版本共存，同 key 不同内容报错；`lookup()` 返回 `kExact`/`kHashUnknown`/`kHashMismatch`/`kNotFound`；codegen 用 FNV-1a 对语义内容算确定性哈希（字段按 id 排序，重排/fmt 不改哈希）；声明的 `hash` 行由 gen/lint 校验；lint 新增 version≥1、未定义类型、map key 必须 string；`star schema hash` 可打印内容哈希用于钉住契约；四个内置 schema 补 `version 1`。
+
 ---
 
 ## 决策四：服务是否并入通道 ✅ 已确认：是
