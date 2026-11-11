@@ -12,3 +12,4 @@
 | 2026-09-26 | 错误处理模型统一：运行时状况用状态码返回，编程错误用异常；调度层增加 failed_invocations 计数 | runtime/modules | arch_review_20260926 §8.21 |
 | 2026-09-26 | correlation id 引入 DSO 命名空间：多 DSO 唯一性不再依赖「函数内 static 被符号统一」 | transport | arch_review_20260926 §8.19 |
 | 2026-09-27 | HealthChecker 按组件自身 `channel_rule` 评估（原实现遍历全局规则，per-component 配置被静默忽略） | runtime/observability | arch_review_20260926 §8.27 |
+| 2026-11-11 | shm 头格式 v3→v4：新增 per-slot 代际 gen[]，读侧改为「解码前后双检」；段名带版本号，attach 校验 magic/version/布局 | transport | remediation_plan P0-1 |

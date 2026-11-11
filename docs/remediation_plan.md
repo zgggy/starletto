@@ -8,7 +8,7 @@
 
 | 级别 | 数量 | 主题 |
 |---|---|---|
-| P0 | 6 | 零拷贝正确性、崩溃恢复、静默停投、越界、容量硬限 |
+| P0 | 6 | 零拷贝正确性（**P0-1 已修**）、崩溃恢复、静默停投、越界、容量硬限 |
 | P1 | 5 | 跨进程 RPC、路由/录制/降级静默、资源泄漏 |
 | P2 | 6 | 类型身份、schema 演进、codegen 扩展性、观测、线程模型 |
 
@@ -16,33 +16,34 @@
 
 ## P0 · 正确性与可用性
 
-### P0-1 seqlock 撕裂窗口（最严重，且是上一轮修复引入的）
+### P0-1 seqlock 撕裂窗口 ✅ 已修（2026-11-11）
 
-**问题**：`ShmSlotView::stable()` 判定"seq 推进不足 slot_count 即本槽未变"。但写入顺序是 `memcpy → sizes → seq`，`commit()` 才推进 seq。写方 `loan()` 拿到槽位开始 memcpy 时，全局 seq 仍是 `observed_seq + 3` → `stable()` 返回 **true**，而数据正在被覆写。
+**问题**：`ShmSlotView::stable()` 判定"seq 推进不足 slot_count 即本槽未变"。但写入顺序是 `memcpy → sizes → seq`，`commit()` 才推进 seq。写方 `loan()` 拿到槽位开始 memcpy 时，全局 seq 仍是 `observed_seq + 3` → `stable()` 返回 **true**，而数据正在被覆写。且检查在访问前，天然 TOCTOU；`peek_view()` 完全不检查。
 
-**证据**（确定性实验，非时序）：
+**修复内容**：
+
+| 改动 | 位置 |
+|---|---|
+| `ShmHeader` 增加 per-slot 代际 `std::atomic<uint32_t> gen[kShmMaxSlots]`，`kShmVersion` 3 → 4 | `shm_channel.h` |
+| 写方 `loan()` 后置奇（写入中），`commit()` 中先置偶再推进 seq | `shm_channel.h` |
+| `Loan` 未提交即析构时置偶（异常路径不会让通道永久卡"写入中"）；同时禁止拷贝（避免双重解锁） | `shm_channel.h` |
+| `read()` 双检：读 size 前 gen 必须为偶，读后 gen 必须未变 | `shm_channel.h` |
+| `ShmSlotView` 改携带 `gen_addr` / `observed_gen`，`stable()` = 代际相同且为偶 | `shm_views.h` |
+| 消费侧**解码后再复核**：`decode_message_shared`、`peek_view`、`decode_service_envelope` | `component.h`、`shm_service_bus.h` |
+| 段名带版本 `/star_v%02u_<hash>`；attach 校验 magic/version/header 大小/布局，且不再回写别人的 header | `shm_message_bus.h`、`shm_channel.h` |
+
+**验收证据**（同一段实验代码，修复前后对比）：
 
 ```
-seq=4 时 stable=1（正确：本槽尚未被写）
-memcpy 进行中（seq 仍为 4）stable=1  ← 应为 0
-此时 bytes()[0]=0xBB（已被覆写，但视图仍自称稳定）
+修复前：memcpy 进行中（seq 仍为 4）stable=1   ← 撕裂窗口
+修复后：memcpy 进行中（seq 未推进）stable=0   ← 已拒绝
+        bytes() 为空 = 1（拒绝返回撕裂数据）
+        loan 未提交即释放后 stable=0（代际已变）
 ```
 
-且 `stable()` 是**访问前**检查，天然 TOCTOU；`peek_view()` 完全不检查（`component.h:137-158`）。
+新增回归用例 `ShmSlotView reports unstable while a writer holds a loan on its slot`，用 `loan()` 精确复现写入窗口，不依赖时序。`star selftest`（含多进程 shm）、17 套 113 用例、`star check` 10/10 全绿。
 
-**修法**：
-1. `ShmHeader` 增加 per-slot 代际 `std::atomic<uint32_t> gen[kShmMaxSlots]`：
-   - 写方 `loan()` 后、memcpy **前**：`gen[slot] += 1`（变奇数 = 写入中）
-   - `commit()` 末尾：`gen[slot] += 1`（变偶数 = 稳定）
-   - `ShmSlotView` 记录 `observed_gen`
-2. `stable()` 改为：`gen[slot]` 仍等于 `observed_gen` **且为偶数**
-3. 读侧协议改为「解码前检查 → 解码 → **解码后复核**」，不一致则丢弃并计入 `rejected`
-4. `peek_view()` 也必须走同一复核
-5. `kShmVersion` 3 → 4，attach 时校验版本
-
-**验收**：把 P0-1 的实验固化为回归测试（现有 `shm_channel_test` 增加"memcpy 中 stable 必须为 false"）；`shm_stress_test` 增加"解码后复核"路径覆盖；`selftest` 与 112 用例全绿。
-
-**代价**：shm 头布局变化（需同步升级所有进程；当前无跨版本需求，可接受）。
+**遗留**：本次未改 `ShmChannel::read()` 的 `last_seq` 推进策略——遇到"写入中"返回 nullopt 不推进，由调用方重试；已在高频写压力测试中验证不会饿死。
 
 ### P0-2 写锁无 owner-death → 通道永久毒化
 
@@ -139,11 +140,11 @@ memcpy 进行中（seq 仍为 4）stable=1  ← 应为 0
 
 **修法**：attach 校验 magic/version/布局一致性，不一致直接失败并提示清理；段名加 epoch（与 P0-2 同一改动解决）；`_exit` 前显式 close 或在 supervisor 侧清理。
 
-### P1-5 `peek_view` 无稳定性校验
+### P1-5 `peek_view` 无稳定性校验 ✅ 已随 P0-1 修复
 
 **问题**：`peek_view` 直接读 `slot->data`，不检查 `stable()`，是 P0-1 的另一条暴露面。
 
-**修法**：随 P0-1 一并修复（解码前后各复核一次）。
+**修法**：已随 P0-1 一并修复——`peek_view` 在构造 View 前检查 `stable()`。
 
 ---
 

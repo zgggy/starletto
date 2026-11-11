@@ -150,6 +150,10 @@ class Component {
         }
         if (const auto slot = view.payload.as<star::transport::ShmSlotView>()) {
             if (slot->size > 0) {
+                // 视图直接引用共享内存：构造 View 前必须确认本槽未被覆写
+                if (not slot->stable()) {
+                    return std::nullopt;
+                }
                 auto v = _MsgView(slot->data, slot->size);
                 if (v.valid()) {
                     return v;
@@ -377,7 +381,14 @@ class Component {
                         return nullptr;
                     }
                     try {
-                        return std::make_shared<_Msg>(_Msg::from_binary(slot->bytes()));
+                        auto decoded = std::make_shared<_Msg>(_Msg::from_binary(slot->bytes()));
+                        // seqlock 后置复核：解码期间写方可能已开始覆写本槽，
+                        // 此时解码结果可能来自撕裂数据，必须丢弃
+                        if (not slot->stable()) {
+                            logW << "decode_message dropped: channel=" << msg.schema_type_id.name << ", source=shm_slot, reason=slot overwritten during decode";
+                            return nullptr;
+                        }
+                        return decoded;
                     } catch (const std::exception& ex) {
                         logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=shm_slot, size=" << slot->size << ", error=" << ex.what();
                         return nullptr;

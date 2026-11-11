@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <utility>
 
 #include "basement/core/exception.h"
 #include "basement/core/fd_guard.h"
@@ -20,7 +21,9 @@ namespace star::transport {
 
 static constexpr uint32_t kShmMaxSlots = 16;
 static constexpr uint64_t kShmMagic = 0x535441524c455454ULL;
-static constexpr uint32_t kShmVersion = 3;
+// v4：新增 per-slot 代际 gen[]，用于正确的 seqlock 复核（v3 的全局 seq 判定
+// 无法覆盖「写方正在 memcpy、seq 尚未推进」的窗口）
+static constexpr uint32_t kShmVersion = 4;
 static constexpr uint32_t kShmCapacity = 4 * 1024 * 1024;
 static constexpr uint32_t kShmSlotCount = 4;
 static constexpr uint32_t kShmSlotSize = kShmCapacity / kShmSlotCount;
@@ -63,6 +66,9 @@ struct ShmHeader {
     uint32_t reserved{0};
     std::atomic<uint32_t> sizes[kShmMaxSlots];
     std::atomic<uint64_t> write_ns[kShmMaxSlots];
+    // per-slot seqlock 代际：写方在 memcpy 前置奇（写入中）、提交时置偶（稳定）。
+    // 读方据此判断「本槽是否正在被覆写」，而不是靠全局 seq 推进量推断。
+    std::atomic<uint32_t> gen[kShmMaxSlots];
 };
 
 class ShmChannel {
@@ -131,6 +137,7 @@ class ShmChannel {
             for (uint32_t i = 0; i < kShmMaxSlots; ++i) {
                 header_->sizes[i].store(0, std::memory_order_relaxed);
                 header_->write_ns[i].store(0, std::memory_order_relaxed);
+                header_->gen[i].store(0, std::memory_order_relaxed);
             }
             header_->ref_count.fetch_add(1, std::memory_order_acq_rel);
             header_->init_state.store(1, std::memory_order_release);
@@ -144,18 +151,24 @@ class ShmChannel {
             if (header_->init_state.load(std::memory_order_acquire) != 1) {
                 throw star::excep::RuntimeError("ShmChannel init timeout: ", name_);
             }
+            // attach 前校验段布局：旧版本/损坏段若继续使用，会按错误布局解析内存
+            // （越界或静默读错）。校验失败时不得回写别人的 header。
+            if (header_->magic != kShmMagic) {
+                throw star::excep::RuntimeError("ShmChannel attach failed, bad magic: ", name_);
+            }
+            if (header_->version != kShmVersion) {
+                throw star::excep::RuntimeError("ShmChannel attach failed, version mismatch: ", name_, ", segment=", header_->version, ", expected=", kShmVersion,
+                                                "（旧版本段残留，请清理该段或更换段名）");
+            }
+            if (header_->header_bytes != sizeof(ShmHeader)) {
+                throw star::excep::RuntimeError("ShmChannel attach failed, header size mismatch: ", name_, ", segment=", header_->header_bytes, ", expected=", sizeof(ShmHeader));
+            }
+            if (header_->slot_count == 0 || header_->slot_count > kShmMaxSlots || header_->slot_size == 0) {
+                throw star::excep::RuntimeError("ShmChannel attach failed, invalid layout: ", name_);
+            }
             header_->ref_count.fetch_add(1, std::memory_order_acq_rel);
         }
 
-        if (header_->slot_count == 0 || header_->slot_count > kShmMaxSlots) {
-            header_->slot_count = slot_count;
-        }
-        if (header_->slot_size == 0) {
-            header_->slot_size = slot_size;
-        }
-        if (header_->capacity == 0) {
-            header_->capacity = cap;
-        }
         slot_size_ = header_->slot_size;
         slot_count_ = header_->slot_count;
         capacity_ = header_->capacity;
@@ -181,6 +194,25 @@ class ShmChannel {
         uint32_t capacity{0};
         uint64_t seq{0};
 
+        Loan() = default;
+        // 不可拷贝：拷贝会导致两个析构各自解锁一次（双重解锁）
+        Loan(const Loan&) = delete;
+        auto operator=(const Loan&) -> Loan& = delete;
+        Loan(Loan&& other) noexcept
+            : header(std::exchange(other.header, nullptr)), slot_ptr(other.slot_ptr), slot(other.slot), capacity(other.capacity), seq(other.seq) {}
+        auto operator=(Loan&& other) noexcept -> Loan& {
+            if (this != &other) {
+                release();
+                header = std::exchange(other.header, nullptr);
+                slot_ptr = other.slot_ptr;
+                slot = other.slot;
+                capacity = other.capacity;
+                seq = other.seq;
+            }
+            return *this;
+        }
+        ~Loan() { release(); }
+
         auto data() const -> uint8_t* { return slot_ptr; }
 
         void commit(uint32_t size) {
@@ -188,6 +220,9 @@ class ShmChannel {
                 return;
             }
             header->sizes[slot].store(size, std::memory_order_relaxed);
+            // 先让本槽代际变偶（稳定），再推进全局 seq：
+            // 读方看到 seq=N 时必然也能看到 gen 为偶、数据完整
+            header->gen[slot].fetch_add(1, std::memory_order_release);
             header->seq.store(seq, std::memory_order_release);
             header->notify_seq.fetch_add(1, std::memory_order_release);
             ShmChannel::wake_waiters(header);
@@ -195,9 +230,14 @@ class ShmChannel {
             header = nullptr;
         }
 
-        ~Loan() {
+      private:
+        void release() {
             if (header != nullptr) {
+                // 未提交就释放（异常/提前返回）：把代际恢复为偶，
+                // 否则读方会永久把本槽判为「写入中」而停止收消息
+                header->gen[slot].fetch_add(1, std::memory_order_release);
                 spin_unlock(&header->write_lock);
+                header = nullptr;
             }
         }
     };
@@ -212,6 +252,8 @@ class ShmChannel {
         spin_lock(&header_->write_lock);
         const auto next_seq = header_->seq.load(std::memory_order_relaxed) + 1;
         const auto idx = static_cast<uint32_t>(next_seq % slot_count_);
+        // 进入写入窗口：代际置奇，读方据此拒绝本槽（含 memcpy 进行中的整个区间）
+        header_->gen[idx].fetch_add(1, std::memory_order_release);
         auto* slot = static_cast<uint8_t*>(mapping_.get()) + sizeof(ShmHeader) + static_cast<size_t>(idx) * slot_size_;
         Loan out;
         out.header = header_;
@@ -243,6 +285,7 @@ class ShmChannel {
         uint32_t slot{0};
         uint64_t dropped{0};
         uint64_t write_ns{0};
+        uint32_t gen{0};
     };
 
     auto read(uint64_t* last_seq) const -> std::optional<ReadResult> {
@@ -258,9 +301,19 @@ class ShmChannel {
             return std::nullopt;
         }
         const auto slot = static_cast<uint32_t>(seq % slot_count_);
+        // seqlock 前置检查：写方正在覆盖本槽时不推进 last_seq，等下次再读
+        const auto gen1 = header_->gen[slot].load(std::memory_order_acquire);
+        if ((gen1 & 1u) != 0u) {
+            return std::nullopt;
+        }
         const auto size = header_->sizes[slot].load(std::memory_order_relaxed);
         if (size > slot_size_) {
             *last_seq = seq;
+            return std::nullopt;
+        }
+        // 后置检查：读取 size 期间若发生过一次完整覆写，本帧作废
+        const auto gen2 = header_->gen[slot].load(std::memory_order_acquire);
+        if (gen2 != gen1) {
             return std::nullopt;
         }
         const auto dropped = seq > (*last_seq + 1) ? (seq - *last_seq - 1) : 0;
@@ -271,7 +324,16 @@ class ShmChannel {
         out.slot = slot;
         out.dropped = dropped;
         out.write_ns = header_->write_ns[slot].load(std::memory_order_relaxed);
+        out.gen = gen1;
         return out;
+    }
+
+    // 供读侧构造 ShmSlotView：视图必须持有本槽代际地址，才能在解码前后复核
+    auto gen_addr(uint32_t slot) const -> const std::atomic<uint32_t>* {
+        if (header_ == nullptr || slot >= kShmMaxSlots) {
+            return nullptr;
+        }
+        return &header_->gen[slot];
     }
 
     auto mapping() const -> std::shared_ptr<void> { return mapping_; }
@@ -313,7 +375,6 @@ class ShmChannel {
     }
 
     // 供读侧做 seqlock 复核：槽位会被 seq % slot_count 覆写，视图必须带代际信息
-    auto seq_addr() const -> const std::atomic<uint64_t>* { return header_ != nullptr ? &header_->seq : nullptr; }
 
     static auto now_steady_ns() -> uint64_t { return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
 

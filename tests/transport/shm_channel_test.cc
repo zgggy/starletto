@@ -63,7 +63,7 @@ TEST_CASE("ShmChannel read reports nothing new when the sequence is unchanged") 
     REQUIRE(not channel->read(&last_seq).has_value());
 }
 
-// P0-1 回归测试：槽位按 seq % slot_count 覆写，延迟解码必须被拒绝而非读到撕裂数据
+// P0-1 回归：槽位被复用时必须判定失效（per-slot 代际）
 TEST_CASE("ShmSlotView rejects payload overwritten before decode") {
     const auto channel = make_channel();
     const auto first = std::vector<uint8_t>(64, 0x11);
@@ -76,9 +76,8 @@ TEST_CASE("ShmSlotView rejects payload overwritten before decode") {
     auto view = ShmSlotView{};
     view.data = channel->payload_ptr(result->slot);
     view.size = result->size;
-    view.seq_addr = channel->seq_addr();
-    view.observed_seq = result->seq;
-    view.slot_count = channel->slot_count();
+    view.gen_addr = channel->gen_addr(result->slot);
+    view.observed_gen = result->gen;
 
     // 未被覆写时视图稳定且内容完整
     REQUIRE(view.stable());
@@ -98,8 +97,43 @@ TEST_CASE("ShmSlotView rejects payload overwritten before decode") {
     REQUIRE(not view.as_fixed_layout().valid());
 }
 
-// 回归测试：槽位按 seq % slot_count 分配，写入其它槽不得误判本视图失效
-// （曾导致 service 调用超时：全局 seq 判等会把同通道并发写的无关视图集体作废）
+// P0-1 核心回归：写方持有 loan（memcpy 进行中、全局 seq 尚未推进）时，
+// 本槽必须判为不稳定。旧实现按「全局 seq 推进量 < slot_count」推断，
+// 在这个窗口会误判为稳定，从而读到被覆写的撕裂数据。
+TEST_CASE("ShmSlotView reports unstable while a writer holds a loan on its slot") {
+    const auto channel = make_channel();
+    const auto payload = std::vector<uint8_t>(64, 0xAA);
+    channel->write(payload.data(), static_cast<uint32_t>(payload.size()));
+
+    uint64_t last_seq = 0;
+    const auto result = channel->read(&last_seq);
+    REQUIRE(result.has_value());
+
+    auto view = ShmSlotView{};
+    view.data = channel->payload_ptr(result->slot);
+    view.size = result->size;
+    view.gen_addr = channel->gen_addr(result->slot);
+    view.observed_gen = result->gen;
+    REQUIRE(view.stable());
+
+    // 写满一圈里的其余槽，使下一次 loan 正好落在本视图的槽位
+    for (uint32_t i = 1; i < channel->slot_count(); ++i) {
+        channel->write(payload.data(), static_cast<uint32_t>(payload.size()));
+    }
+    REQUIRE(view.stable());  // 本槽尚未被触碰
+
+    {
+        // loan 会先把本槽代际置奇（进入写入窗口），但 seq 仍未推进
+        const auto loaned = channel->loan(static_cast<uint32_t>(payload.size()));
+        REQUIRE_EQ(loaned.slot, result->slot);
+        REQUIRE(not view.stable());
+        REQUIRE(view.bytes().empty());
+    }
+    // 未提交即释放：代际恢复为偶，但已是新代际，旧视图必须永久失效
+    REQUIRE(not view.stable());
+}
+
+// 回归：写入其它槽不得误判本视图失效（同通道并发写不应集体作废）
 TEST_CASE("ShmSlotView survives writes to other slots") {
     const auto channel = make_channel();
     const auto first = std::vector<uint8_t>(64, 0x55);
@@ -112,10 +146,9 @@ TEST_CASE("ShmSlotView survives writes to other slots") {
     auto view = ShmSlotView{};
     view.data = channel->payload_ptr(result->slot);
     view.size = result->size;
-    view.seq_addr = channel->seq_addr();
-    view.observed_seq = result->seq;
-    view.slot_count = channel->slot_count();
-    REQUIRE(view.slot_count > 1U);
+    view.gen_addr = channel->gen_addr(result->slot);
+    view.observed_gen = result->gen;
+    REQUIRE(channel->slot_count() > 1U);
 
     const auto other = std::vector<uint8_t>(64, 0x66);
     for (uint32_t i = 1; i < channel->slot_count(); ++i) {
