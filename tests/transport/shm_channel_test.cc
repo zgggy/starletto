@@ -321,3 +321,64 @@ TEST_CASE("shm reader receives messages published immediately after subscribe") 
 }
 
 }  // namespace
+
+namespace {
+
+auto make_binary_serialized(const std::string& value) -> SerializedMessage {
+    auto owner = std::make_shared<const std::vector<uint8_t>>(value.begin(), value.end());
+    auto message = SerializedMessage{};
+    message.view.payload = TypedConstPtr::from(owner);
+    message.serializer.payload_size_hint = owner->size();
+    message.serializer.encode_binary = [owner]() { return *owner; };
+    return message;
+}
+
+}  // namespace
+
+// P2-3：轮询线程属于通道而不是 reader——8 相机 × 3 消费者从 24 线程降到 8 线程
+TEST_CASE("readers on the same channel share a single polling thread") {
+    const auto bus = std::make_shared<ShmMessageBus>();
+    auto descriptor = ChannelDescriptor{};
+    descriptor.name = "test.poller.same_channel";
+
+    auto received = std::atomic<int>{0};
+    auto reader1 = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+    auto reader2 = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+    auto reader3 = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+    REQUIRE_EQ(bus->poller_count(), size_t{1});
+
+    const auto writer = bus->create_writer(descriptor);
+    // 每次写完等 3 个 reader 都收到再写下一帧：环形缓冲会合并连续写入，
+    // 一次性写 3 帧时读侧只能看到最新一帧（这是通道语义，不是 poller 的问题）
+    for (int i = 1; i <= 3; ++i) {
+        REQUIRE(writer->write_serialized(make_binary_serialized("payload")).ok());
+        for (int wait = 0; wait < 100 && received.load() < 3 * i; ++wait) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    REQUIRE_EQ(received.load(), 9);
+
+    // 最后一个 reader 退出后线程必须回收
+    reader1.reset();
+    reader2.reset();
+    reader3.reset();
+    REQUIRE_EQ(bus->poller_count(), size_t{0});
+}
+
+TEST_CASE("each channel with readers owns exactly one polling thread") {
+    const auto bus = std::make_shared<ShmMessageBus>();
+    auto first = ChannelDescriptor{};
+    first.name = "test.poller.channel_a";
+    auto second = ChannelDescriptor{};
+    second.name = "test.poller.channel_b";
+
+    auto reader_a1 = bus->create_reader(first, [](const MessageView&) {});
+    auto reader_a2 = bus->create_reader(first, [](const MessageView&) {});
+    auto reader_b = bus->create_reader(second, [](const MessageView&) {});
+    REQUIRE_EQ(bus->poller_count(), size_t{2});
+
+    reader_a1.reset();
+    reader_a2.reset();
+    reader_b.reset();
+    REQUIRE_EQ(bus->poller_count(), size_t{0});
+}

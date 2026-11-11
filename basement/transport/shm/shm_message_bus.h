@@ -59,26 +59,17 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         std::string channel_name_;
     };
 
+    // 只持有 (channel, reader_id) 注册关系；轮询线程属于通道，不是每个 reader 一个。
+    // 8 个相机 × 3 个消费者时，线程数从 24 降到 8。
     class ShmReader final : public Reader {
       public:
-        ShmReader(std::shared_ptr<ShmMessageBus> bus, std::string channel_name, uint64_t id, std::shared_ptr<ShmChannel> channel)
-            : bus_(std::move(bus)), channel_name_(std::move(channel_name)), id_(id), channel_(std::move(channel)), baseline_seq_(channel_ ? channel_->current_seq() : 0) {
-            // 基线必须在启动轮询线程之前捕获：若放到 poll_loop 里取，
-            // 订阅建立后、线程跑起来前发布的消息会被误判为「已见过」而丢失
-            poll_thread_ = std::thread([this]() { poll_loop(); });
-        }
+        ShmReader(std::shared_ptr<ShmMessageBus> bus, std::string channel_name, uint64_t id)
+            : bus_(std::move(bus)), channel_name_(std::move(channel_name)), id_(id) {}
 
         ~ShmReader() override {
-            stop_.store(true, std::memory_order_relaxed);
-            if (channel_) {
-                channel_->wake_waiters();
-            }
-            if (poll_thread_.joinable()) {
-                poll_thread_.join();
-            }
             auto bus = bus_.lock();
             if (bus) {
-                bus->erase_reader(channel_name_, id_);
+                bus->remove_reader(channel_name_, id_);
             }
         }
 
@@ -95,54 +86,33 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
 
       private:
-        void poll_loop() {
-            if (not channel_) {
-                return;
-            }
-            const auto wait_ms = resolve_wait_ms();
-            uint64_t last_seq = baseline_seq_;
-            while (not stop_.load(std::memory_order_relaxed)) {
-                const auto r = channel_->read(&last_seq);
-                if (r.has_value()) {
-                    auto bus = bus_.lock();
-                    if (bus) {
-                        if (r->dropped > 0) {
-                            bus->record_drop(channel_name_, r->dropped);
-                        }
-                        bus->record_latency(channel_name_, r->write_ns);
-                        bus->deliver_to_reader(channel_name_, id_, r->slot, r->size, r->gen);
-                    }
-                    continue;
-                }
-                channel_->wait_for_update(last_seq, wait_ms);
-            }
-        }
-
-        static auto resolve_wait_ms() -> int64_t {
-            static const int64_t cached = []() -> int64_t {
-                if (const auto* v = std::getenv("STAR_SHM_WAIT_MS"); v != nullptr && std::string(v).size() > 0) {
-                    try {
-                        return std::max<int64_t>(1, std::stoll(v));
-                    } catch (...) {
-                    }
-                }
-                return 100;
-            }();
-            return cached;
-        }
-
         std::weak_ptr<ShmMessageBus> bus_;
         std::string channel_name_;
         uint64_t id_{0};
-        std::shared_ptr<ShmChannel> channel_;
-        uint64_t baseline_seq_{0};
-        std::atomic<bool> stop_{false};
-        std::thread poll_thread_;
     };
 
   public:
     explicit ShmMessageBus(std::shared_ptr<ChannelRegistry> channel_registry = nullptr) : channel_registry_(std::move(channel_registry)) {}
-    ~ShmMessageBus() override = default;
+    ~ShmMessageBus() override {
+        auto pollers = std::vector<std::shared_ptr<ChannelPoller>>{};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& [_, state] : channels_) {
+                if (state.poller) {
+                    pollers.push_back(std::exchange(state.poller, nullptr));
+                }
+            }
+        }
+        for (auto& poller : pollers) {
+            poller->stop.store(true, std::memory_order_relaxed);
+            if (poller->channel) {
+                poller->channel->wake_waiters();
+            }
+            if (poller->thread.joinable()) {
+                poller->thread.join();
+            }
+        }
+    }
 
     void declare_channel(const ChannelDescriptor& descriptor) override {
         if (descriptor.name.empty()) {
@@ -193,14 +163,13 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         declare_channel(descriptor);
         maybe_register_reader(descriptor.name);
         const auto id = next_reader_id_.fetch_add(1, std::memory_order_relaxed);
-        std::shared_ptr<ShmChannel> channel;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto& channel_state = channels_[descriptor.name];
-            channel_state.readers.emplace(id, callback);
-            channel = channel_state.channel;
+            channel_state.readers.emplace(id, std::move(callback));
+            ensure_poller_locked(descriptor.name, channel_state);
         }
-        return std::make_shared<ShmReader>(this->shared_from_this(), descriptor.name, id, std::move(channel));
+        return std::make_shared<ShmReader>(this->shared_from_this(), descriptor.name, id);
     }
 
     auto create_delivery_writer(const ChannelDescriptor& descriptor) -> std::shared_ptr<DeliveryWriter> override {
@@ -271,6 +240,18 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         return out;
     }
 
+    // 当前活跃的通道轮询线程数（每通道至多一个）
+    auto poller_count() const -> size_t {
+        std::lock_guard<std::mutex> lock(mutex_);
+        size_t count = 0;
+        for (const auto& [_, state] : channels_) {
+            if (state.poller) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     auto reader_history_size(const std::string& channel_name) const -> size_t {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = channels_.find(channel_name);
@@ -285,12 +266,35 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
     }
 
   private:
+    // 每个通道一个轮询线程，多个 reader 共享：读取一次、按各 reader 的 QoS 分发。
+    // 之前每个 reader 一个线程（每线程各自 attach 同一段并各自读），
+    // 8 相机 × 3 消费者就是 24 个线程轮询 8 个段。
+    struct ChannelPoller {
+        std::shared_ptr<ShmChannel> channel;
+        // 基线必须在启动线程之前捕获：若放到线程里取，订阅建立后、线程跑起来前
+        // 发布的消息会被误判为「已见过」而丢失
+        uint64_t baseline_seq{0};
+        std::atomic<bool> stop{false};
+        std::thread thread;
+
+        ~ChannelPoller() {
+            stop.store(true, std::memory_order_relaxed);
+            if (channel) {
+                channel->wake_waiters();
+            }
+            if (thread.joinable()) {
+                thread.join();
+            }
+        }
+    };
+
     struct ChannelState {
         ChannelDescriptor descriptor;
         std::shared_ptr<ShmChannel> channel;
         std::unordered_map<uint64_t, Reader::Callback> readers;
         std::unordered_map<uint64_t, std::deque<MessageView>> reader_history;
         ChannelStats stats;
+        std::shared_ptr<ChannelPoller> poller;
     };
 
     auto write_internal(const std::string& channel_name, const MessageView& message, const MessageSerializer* serializer) -> WriteResult {
@@ -409,38 +413,36 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
     }
 
-    void deliver_to_reader(const std::string& channel_name, uint64_t reader_id, uint32_t slot, uint32_t size, uint32_t gen) {
-        Reader::Callback cb;
-        MessageView msg;
-        bool should_deliver = false;
+    // 一次读取分发给该通道的所有 reader；QoS 历史按 reader 各自维护。
+    void deliver_to_all(const std::string& channel_name, uint32_t slot, uint32_t size, uint32_t gen) {
+        auto callbacks = std::vector<std::pair<uint64_t, Reader::Callback>>{};
+        MessageView message;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = channels_.find(channel_name);
-            if (it == channels_.end()) {
+            if (it == channels_.end() or it->second.readers.empty()) {
                 return;
             }
-            auto cb_it = it->second.readers.find(reader_id);
-            if (cb_it == it->second.readers.end()) {
-                return;
-            }
-            cb = cb_it->second;
-
+            build_shm_message_view(channel_name, slot, size, gen, it, message);
             const auto& options = it->second.descriptor.options;
-            build_shm_message_view(channel_name, slot, size, gen, it, msg);
-            if (options.depth > 0) {
-                auto& history = it->second.reader_history[reader_id];
-                auto result = apply_qos(history, msg, options, it->second.stats);
-                if (!result.should_deliver) {
-                    return;
+            callbacks.reserve(it->second.readers.size());
+            for (const auto& [reader_id, callback] : it->second.readers) {
+                if (options.depth > 0) {
+                    auto& history = it->second.reader_history[reader_id];
+                    auto result = apply_qos(history, message, options, it->second.stats);
+                    if (not result.should_deliver) {
+                        continue;
+                    }
                 }
+                callbacks.emplace_back(reader_id, callback);
             }
-            it->second.stats.record_deliver(1);
-            should_deliver = true;
+            it->second.stats.record_deliver(callbacks.size());
         }
-        if (should_deliver) {
-            // 订阅回调运行在轮询线程上：异常若逃逸会 terminate 整个进程
+
+        for (const auto& [_, callback] : callbacks) {
+            // 订阅回调运行在通道轮询线程上：异常若逃逸会 terminate 整个进程
             try {
-                cb(msg);
+                callback(message);
             } catch (const std::exception& e) {
                 record_callback_failure(channel_name);
                 logE << "ShmMessageBus: reader callback threw: channel=" << channel_name << ", err=" << e.what();
@@ -449,6 +451,39 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                 logE << "ShmMessageBus: reader callback threw unknown exception: channel=" << channel_name;
             }
         }
+    }
+
+    void poll_channel(const std::string& channel_name, const std::shared_ptr<ChannelPoller>& poller) {
+        const auto wait_ms = resolve_wait_ms();
+        uint64_t last_seq = poller->baseline_seq;
+        while (not poller->stop.load(std::memory_order_relaxed)) {
+            if (not poller->channel) {
+                return;
+            }
+            const auto r = poller->channel->read(&last_seq);
+            if (r.has_value()) {
+                if (r->dropped > 0) {
+                    record_drop(channel_name, r->dropped);
+                }
+                record_latency(channel_name, r->write_ns);
+                deliver_to_all(channel_name, r->slot, r->size, r->gen);
+                continue;
+            }
+            poller->channel->wait_for_update(last_seq, wait_ms);
+        }
+    }
+
+    static auto resolve_wait_ms() -> int64_t {
+        static const int64_t cached = []() -> int64_t {
+            if (const auto* v = std::getenv("STAR_SHM_WAIT_MS"); v != nullptr && std::string(v).size() > 0) {
+                try {
+                    return std::max<int64_t>(1, std::stoll(v));
+                } catch (...) {
+                }
+            }
+            return 100;
+        }();
+        return cached;
     }
 
     void record_callback_failure(const std::string& channel_name) {
@@ -480,14 +515,53 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         msg.payload = star::base::TypedConstPtr::from(std::move(view));
     }
 
-    void erase_reader(const std::string& channel_name, uint64_t id) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = channels_.find(channel_name);
-        if (it == channels_.end()) {
+    // reader 析构必须等到在途回调结束：轮询线程可能正持有一份 callback 拷贝。
+    // 做法是停掉该通道的 poller 并 join（锁外），若还有其它 reader 再重启。
+    // 重启的基线取当前 seq，teardown 窗口内到达的消息会跳过——reader 销毁不是热路径。
+    void remove_reader(const std::string& channel_name, uint64_t id) {
+        std::shared_ptr<ChannelPoller> poller;
+        bool need_restart = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = channels_.find(channel_name);
+            if (it == channels_.end()) {
+                return;
+            }
+            it->second.readers.erase(id);
+            it->second.reader_history.erase(id);
+            if (it->second.poller) {
+                poller = std::exchange(it->second.poller, nullptr);
+                need_restart = not it->second.readers.empty();
+            }
+        }
+        if (poller) {
+            // join 必须在锁外：轮询线程可能正等待 mutex 派发回调
+            poller->stop.store(true, std::memory_order_relaxed);
+            if (poller->channel) {
+                poller->channel->wake_waiters();
+            }
+            if (poller->thread.joinable()) {
+                poller->thread.join();
+            }
+        }
+        if (need_restart) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = channels_.find(channel_name);
+            if (it != channels_.end()) {
+                ensure_poller_locked(channel_name, it->second);
+            }
+        }
+    }
+
+    void ensure_poller_locked(const std::string& channel_name, ChannelState& state) {
+        if (state.poller or state.readers.empty() or not state.channel) {
             return;
         }
-        it->second.readers.erase(id);
-        it->second.reader_history.erase(id);
+        auto poller = std::make_shared<ChannelPoller>();
+        poller->channel = state.channel;
+        poller->baseline_seq = state.channel->current_seq();
+        poller->thread = std::thread([this, channel_name, poller]() { poll_channel(channel_name, poller); });
+        state.poller = std::move(poller);
     }
 
     void record_drop(const std::string& channel_name, uint64_t dropped) {
