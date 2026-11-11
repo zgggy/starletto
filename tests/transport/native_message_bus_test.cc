@@ -1,4 +1,5 @@
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -201,6 +202,42 @@ TEST_CASE("write_serialized accounts for the payload size hint") {
     REQUIRE(snapshot.has_value());
     REQUIRE_EQ(snapshot->payload_bytes_total, 128ULL);
     REQUIRE_EQ(snapshot->payload_bytes_last, 128ULL);
+}
+
+// P0-3 回归：回调抛异常不得杀死进程，也不得中断后续投递；
+// 失败必须计数可见（callback_failures）
+TEST_CASE("a throwing reader callback does not abort delivery or the process") {
+    const auto bus = make_bus();
+    const auto descriptor = make_descriptor("chan");
+
+    auto received = 0;
+    const auto bad = bus->create_reader(descriptor, [](const MessageView&) { throw std::runtime_error("boom"); });
+    const auto good = bus->create_reader(descriptor, [&](const MessageView&) { received += 1; });
+
+    const auto writer = bus->create_writer(descriptor);
+    REQUIRE(writer->write(make_message(1)).ok());
+    REQUIRE(writer->write(make_message(2)).ok());
+
+    REQUIRE_EQ(received, 2);
+    const auto stats = bus->channel_stats("chan");
+    REQUIRE(stats.has_value());
+    REQUIRE_EQ(stats->callback_failures, 2ULL);
+}
+
+// P0-5 回归：DROP_NEWEST 没有消费/背压信号，无法正确实现——声明时明确拒绝，
+// 而不是接受配置后在队列填满时永久丢弃所有新消息
+TEST_CASE("declare_channel rejects DROP_NEWEST as unimplemented") {
+    const auto bus = make_bus();
+    auto descriptor = make_descriptor("chan");
+    descriptor.options = ChannelOptions{1, DropPolicy::DROP_NEWEST, false};
+
+    auto threw = false;
+    try {
+        bus->declare_channel(descriptor);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
 }
 
 TEST_CASE("write on a mismatched schema type reports EXCEPTION") {

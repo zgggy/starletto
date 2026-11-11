@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -263,6 +264,32 @@ TEST_CASE("shm delivered view becomes unstable after the slot is overwritten") {
 
     REQUIRE(not held->stable());
     REQUIRE(held->bytes().empty());
+}
+
+// P0-3 回归：回调在轮询线程上抛异常，不得 terminate 进程；
+// 失败的 reader 只影响自己，其他 reader 照常收消息
+TEST_CASE("a throwing reader callback on the poll thread does not kill the process") {
+    const auto bus = std::make_shared<ShmMessageBus>();
+    auto descriptor = ChannelDescriptor{};
+    descriptor.name = "test.shm.throwing";
+    descriptor.type_name = "test.Msg";
+
+    const auto bad = bus->create_reader(descriptor, [](const MessageView&) { throw std::runtime_error("boom"); });
+    auto received = std::atomic<int>{0};
+    const auto good = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+
+    const auto writer = bus->create_writer(descriptor);
+    auto message = SerializedMessage{};
+    message.view.payload = TypedConstPtr::from(std::make_shared<const std::vector<uint8_t>>(32, 0x5A));
+    message.serializer = MessageSerializer{};
+    message.serializer.payload_size_hint = 32;
+    message.serializer.encode_binary = []() { return std::vector<uint8_t>(32, 0x5A); };
+    REQUIRE(writer->write_serialized(message).ok());
+
+    for (int i = 0; i < 200 && received.load() == 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(received.load() > 0);
 }
 
 // P1-8 回归测试：订阅后立即发布的消息不得因轮询线程启动竞态而丢失

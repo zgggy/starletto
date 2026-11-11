@@ -20,6 +20,7 @@ using star::transport::MessageView;
 using star::transport::Reader;
 using star::transport::SerializedMessage;
 using star::transport::ShmRoutedMessageBus;
+using star::transport::WriteStatus;
 
 struct RoutedMsg {
     int value{0};
@@ -125,6 +126,40 @@ TEST_CASE("ShmRoutedMessageBus delivers each message exactly once with shm routi
         REQUIRE(not seen[static_cast<size_t>(value)]);
         seen[static_cast<size_t>(value)] = true;
     }
+}
+
+// P0-4 回归：单帧超限是「这一帧太大」，不是通道故障。
+// 旧实现会把它当 EXCEPTION 永久降级整条通道，后续正常帧再也发不出去。
+TEST_CASE("an oversized message does not permanently degrade the channel") {
+    const auto registry = std::make_shared<ChannelRegistry>();
+    const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
+    const auto descriptor = make_descriptor("test.routed.oversize");
+    bus->configure_route_plan("test.routed.oversize", "test.routed.oversize");
+
+    auto received = std::atomic<int>{0};
+    const auto reader = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
+    const auto writer = bus->create_writer(descriptor);
+
+    // 超过单槽上限（1MiB）一帧
+    constexpr size_t kOversize = 1024U * 1024U + 1U;
+    auto huge = SerializedMessage{};
+    huge.view.payload = TypedConstPtr::from(std::make_shared<const std::vector<uint8_t>>(kOversize, 0xAA));
+    huge.serializer = MessageSerializer{};
+    huge.serializer.payload_size_hint = kOversize;
+    huge.serializer.encode_binary = []() { return std::vector<uint8_t>(kOversize, 0xAA); };
+    const auto big = writer->write_serialized(huge);
+
+    REQUIRE(not big.ok());
+    REQUIRE(big.status == WriteStatus::ENCODE_FAILED);  // 单帧编码失败，不是通道异常
+
+    // 后续正常帧必须仍然成功且能被收到
+    for (int i = 0; i < 10; ++i) {
+        REQUIRE(writer->write_serialized(make_serialized(i)).ok());
+    }
+    for (int i = 0; i < 200 && received.load() < 10; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(received.load() >= 10);
 }
 
 TEST_CASE("ShmRoutedMessageBus rejects an empty reader callback") {

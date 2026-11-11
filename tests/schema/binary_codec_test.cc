@@ -136,6 +136,33 @@ TEST_CASE("validate rejects a missing required field") {
     REQUIRE(threw);
 }
 
+// P0-6：长度前缀接近 SIZE_MAX 时 cur->pos + need 会回绕，使边界检查失效。
+// 用例断言的是「必须抛 RuntimeError」这一行为。
+// 注意：本用例**无法区分修复前后**——旧实现因 libc++ subspan 会把 count 截断到 0、
+// 随后 cur->pos 回绕并在下一轮边界检查中抛同一异常而「碰巧安全」；
+// 修复消除的是那条路径上的未定义行为（越界指针运算 + pos 回绕），而非可观测结果。
+TEST_CASE("decode rejects a length prefix that would overflow the buffer") {
+    const auto schema = load(kSchemaText);
+    // field 2（name, string）：tag = (2<<3)|2 = 0x12，随后是超长 varint 长度
+    auto bytes = std::vector<uint8_t>{0x12};
+    for (int i = 0; i < 9; ++i) {
+        bytes.push_back(0xFF);
+    }
+    bytes.push_back(0x01);
+
+    // 必须是「边界检查」抛出的 RuntimeError，而不是越界后由巨大分配偶然抛出的
+    // length_error/bad_alloc——后者说明越界已经发生，只是碰巧没崩
+    auto threw_runtime_error = false;
+    try {
+        (void)BinaryCodec::decode(schema, bytes);
+    } catch (const star::excep::RuntimeError&) {
+        threw_runtime_error = true;
+    } catch (...) {
+        threw_runtime_error = false;
+    }
+    REQUIRE(threw_runtime_error);
+}
+
 TEST_CASE("decode keeps unknown fields from a newer schema") {
     const auto schema_v2 = load(kSchemaTextV2);
     auto obj = SchemaObject{};

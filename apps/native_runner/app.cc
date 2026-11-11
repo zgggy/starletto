@@ -457,16 +457,17 @@ namespace star::native_runner {
                 return 4;
             }
 
+            // P0-4：单帧编码失败只是「这一帧太大」，不得永久降级整条通道。
+            // 旧实现会在此处把通道降级，之后的正常消息永远发不出去。
             auto good = msg;
             good.view.payload = star::base::TypedConstPtr::from(std::make_shared<const int64_t>(3));
-            const auto degraded_r = degrade_writer->write_serialized(good);
-            if (degraded_r.status != star::transport::WriteStatus::SHM_DEGRADED || !degraded_r.shm_required || !degraded_r.inproc_ok) {
-                logE << "selftest_transport degrade write_serialized(good) unexpected: status=" << star::transport::write_status_string(degraded_r.status)
-                     << ", shm_required=" << degraded_r.shm_required << ", inproc_ok=" << degraded_r.inproc_ok
-                     << ", err=" << degraded_r.error_message;
+            const auto after_bad_r = degrade_writer->write_serialized(good);
+            if (after_bad_r.status != star::transport::WriteStatus::OK || !after_bad_r.shm_ok) {
+                logE << "selftest_transport encode-failure isolation unexpected: status=" << star::transport::write_status_string(after_bad_r.status)
+                     << ", shm_ok=" << after_bad_r.shm_ok << ", err=" << after_bad_r.error_message;
                 return 4;
             }
-            logI << "selftest_transport ok: degrade fallback ENCODE_FAILED->SHM_DEGRADED";
+            logI << "selftest_transport ok: encode failure isolated (channel stays healthy)";
         } else {
             logW << "selftest_transport: shm not available, skipping legacy(shm_read_write)/degrade checks";
         }

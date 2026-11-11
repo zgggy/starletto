@@ -466,7 +466,9 @@ private:
     }
 
     static void ensure_remaining(Cursor* cur, size_t need) {
-        if (cur == nullptr || cur->pos + need > cur->bytes.size()) {
+        // 先减后比：cur->pos + need 在 need 接近 SIZE_MAX 时会回绕，
+        // 使越界检查失效（损坏/恶意 payload 可借此越界读）
+        if (cur == nullptr || cur->pos > cur->bytes.size() || need > cur->bytes.size() - cur->pos) {
             throw star::excep::RuntimeError("BinaryCodec decode failed, unexpected eof");
         }
     }

@@ -15,6 +15,7 @@ struct ChannelStats {
     uint64_t write_count{0};
     uint64_t deliver_count{0};
     uint64_t dropped_count{0};
+    uint64_t callback_failures{0};
     uint64_t payload_bytes_total{0};
     uint64_t payload_bytes_last{0};
     uint64_t latency_total_us{0};
@@ -47,6 +48,9 @@ struct ChannelStats {
         }
     }
 
+    // 订阅回调抛异常的次数：回调异常不得终止进程，但必须可见
+    void record_callback_failure() { callback_failures += 1; }
+
     void record_drop(uint64_t count) {
         dropped_count += count;
     }
@@ -65,6 +69,7 @@ struct ChannelStatsSnapshot {
     uint64_t write_count{0};
     uint64_t deliver_count{0};
     uint64_t dropped_count{0};
+    uint64_t callback_failures{0};
     uint64_t payload_bytes_total{0};
     uint64_t payload_bytes_last{0};
     uint64_t latency_avg_us{0};
@@ -105,6 +110,7 @@ inline auto make_stats_snapshot(const std::string& channel_name, const ChannelSt
         .write_count = stats.write_count,
         .deliver_count = stats.deliver_count,
         .dropped_count = stats.dropped_count,
+        .callback_failures = stats.callback_failures,
         .payload_bytes_total = stats.payload_bytes_total,
         .payload_bytes_last = stats.payload_bytes_last,
         .latency_avg_us = compute_avg_latency_us(stats),
@@ -121,7 +127,7 @@ inline auto format_stats_line(const std::string& transport_tag, const std::strin
     const auto p99 = compute_percentile(stats.latency_samples, 0.99);
     const auto p999 = compute_percentile(stats.latency_samples, 0.999);
     return "transport." + transport_tag + " channel=" + channel_name + " write=" + std::to_string(stats.write_count) + " deliver=" + std::to_string(stats.deliver_count) +
-           " dropped=" + std::to_string(stats.dropped_count) + " payload_bytes_total=" + std::to_string(stats.payload_bytes_total) +
+           " dropped=" + std::to_string(stats.dropped_count) + " callback_failures=" + std::to_string(stats.callback_failures) + " payload_bytes_total=" + std::to_string(stats.payload_bytes_total) +
            " payload_bytes_last=" + std::to_string(stats.payload_bytes_last) + " latency_avg_us=" + std::to_string(compute_avg_latency_us(stats)) + " latency_p99_us=" + std::to_string(p99) +
            " latency_p999_us=" + std::to_string(p999) + " latency_max_us=" + std::to_string(stats.latency_max_us) + " max_queue_depth=" + std::to_string(stats.max_queue_depth) +
            " avg_hz=" + format_rate(hz);

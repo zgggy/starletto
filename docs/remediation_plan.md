@@ -8,7 +8,7 @@
 
 | 级别 | 数量 | 主题 |
 |---|---|---|
-| P0 | 6 | 零拷贝正确性（**P0-1 已修**）、崩溃恢复（**P0-2 已修**）、静默停投、越界、容量硬限 |
+| P0 | 6 | **全部已修**：seqlock、写锁 owner-death、回调异常、单帧降级、DROP_NEWEST、解码溢出 |
 | P1 | 5 | 跨进程 RPC、路由/录制/降级静默、资源泄漏 |
 | P2 | 6 | 类型身份、schema 演进、codegen 扩展性、观测、线程模型 |
 
@@ -66,48 +66,45 @@
 
 **遗留**：pid 复用窗口（崩溃进程的 pid 被新进程复用）会导致误判为存活；概率低且有 WARN 日志，暂不处理。
 
-### P0-3 订阅回调抛异常 → 进程 terminate
+### P0-3 订阅回调抛异常 → 进程 terminate ✅ 已修（2026-11-11）
 
-**问题**：`poll_loop()` 与 `deliver_to_reader()` 里 `cb(msg)` 裸调，无 try。任何组件回调抛异常 → 异常穿透线程 → `std::terminate`。
+**问题**：`poll_loop()` 与 `deliver_to_reader()` 里 `cb(msg)` 裸调，无 try。任何组件回调抛异常 → 穿透线程 → `std::terminate`。
 
-**证据**：`shm_message_bus.h:98-119`（poll_loop 无 try）、`:410`（`cb(msg)` 无 try）。
+**修复**：`ShmMessageBus` 与 `NativeMessageBus` 的回调派发全部加 try/catch；捕获后 `logE` 并累加 `ChannelStats::callback_failures`（已进入 snapshot 与 `format_stats_line`，`star monitor` 可见）。
 
-**修法**：`deliver_to_reader` 内用 try/catch 包裹 `cb(msg)`，捕获后 `logE` + 计入该 reader 的失败计数（新增 `reader_failures` 指标），不中断轮询。
+**验收**：新增 2 个用例——native 侧「坏回调 + 好回调」同时注册，断言进程存活、好回调仍收到全部消息、`callback_failures == 2`；shm 侧在轮询线程上抛异常，断言进程存活且其他 reader 正常收消息。
 
-**验收**：新增测试——注册一个必抛异常的回调，断言进程存活、失败计数递增、后续消息仍能投递。
+### P0-4 单帧 >1MiB → 永久降级 ✅ 已修（2026-11-11）
 
-### P0-4 单帧 >1MiB → 永久降级
+**问题**：超限返回 `ENCODE_FAILED`（或经 `channel->write` 抛异常变成 `EXCEPTION`），而 routed 写路径对这两种状态一律 `degrade_channel()` + `shm_.reset()` → **通道永久**失去跨进程能力，后续正常帧也发不出去。
 
-**问题**：槽位 4×1MiB 写死（`resolve_capacity/resolve_slot_size` 忽略参数）；超限返回 `ENCODE_FAILED`，而 `shm_routed_message_bus.h:220-223` 一旦异常就 `shm_.reset()` **永久**降级该通道。且本进程订阅者已收到消息、远端从此收不到（部分投递）。
+**修复**：
+- 区分「单帧编码失败」与「通道故障」：`ShmMessageBus` 在编码后显式比对 `bytes.size() > slot_size()`，判为 `ENCODE_FAILED` 并附明确错误信息；routed 写路径只在 `EXCEPTION` 时降级
+- 不再 `shm_.reset()` 销毁 writer；降级改为**带 TTL（5s）**，过期自动重试，支持对端重启后自愈
+- 部分投递语义可判别：`WriteResult.inproc_ok=true` + 非 OK 状态即表示「本进程订阅者已收到、远端没收到」
 
-**证据**：`shm_channel.h:20-27`、`:334-339`；`shm_message_bus.h:321-326`；`shm_routed_message_bus.h:220-223`。
+**验收**：新增用例 `an oversized message does not permanently degrade the channel`——发 1MiB+1 帧断言 `ENCODE_FAILED`，随后 10 帧正常消息全部成功且被收到。双向验证：恢复旧逻辑后该用例失败（后续帧 SHM_DISABLED）。
 
-**修法**：
-1. `ChannelOptions` 增加 `slot_size` / `slot_count`，由 conf 的 `qos_profile` 透传；默认值保持现状
-2. 超限不再永久降级：区分「本次编码失败」与「通道不可用」；连续 N 次失败才降级，且降级可恢复（定时重试）
-3. 部分投递语义要显式：要么先写 shm 再投 inproc，要么在 `WriteResult` 里标明 `partial=true`
+**遗留**：单槽仍写死 1 MiB（`resolve_capacity/resolve_slot_size` 忽略参数），逐通道可配置需要贯通 `ChannelOptions` → conf → plan，留待 P1 阶段。当前应对大帧（原始相机/激光雷达）仍需应用层切块。
 
-**验收**：新增测试——配置 2MiB 槽位的通道，写入 1.5MB 消息成功；写入超限消息只失败本次，后续正常。
+### P0-5 `DROP_NEWEST` 永久停投 ✅ 已修（2026-11-11）
 
-### P0-5 `DROP_NEWEST` 永久停投
+**问题**：`DROP_NEWEST` 分支在 `history` 非空时永远返回 `should_deliver=false`，而 history 没有任何消费者 → 填满后永久丢弃全部消息。
 
-**问题**：`qos_manager.h` 的 `DROP_NEWEST` 分支在 `history` 非空时永远返回 `should_deliver=false`，而 history 没有任何消费者（只有 reader 析构时清理）→ 填满后永久丢全部消息。
+**修复**：该策略需要「消费者已消费」的信号才能实现，而当前通道没有背压/消费通知，语义上无法正确实现。因此：
+- `declare_channel` 明确拒绝 `DROP_NEWEST`，报错提示改用 `KEEP_LAST`（把静默全丢换成启动期可见错误）
+- `apply_qos` 的 `DROP_NEWEST` 分支删除，退化为 `KEEP_LAST`——万一绕过校验也绝不静默停投
 
-**证据**：`qos_manager.h:30-33`（depth==1）、`:44-47`（depth>1）。
+**验收**：新增用例 `declare_channel rejects DROP_NEWEST as unimplemented`，断言声明时抛 `RuntimeError`。
 
-**修法**：明确 history 的语义是「为 `peek_latest` 保留最近 N 条」而非队列；`DROP_NEWEST` 的判定应基于时间窗口或「上次投递时间」，而不是 history 是否非空。最简修法：`DROP_NEWEST` 下不阻塞投递，只更新 history（与 `KEEP_LAST` 的差异体现在 history 更新策略上），或直接禁用该策略并报配置错误。
+### P0-6 `ensure_remaining` 整数溢出 → 越界读 ✅ 已修（2026-11-11）
 
-**验收**：新增测试——`DROP_NEWEST` 通道连续写 100 条，断言各 reader 收到至少 1 条且不出现"第 2 条起全丢"。
+**问题**：`pos + need > size()` 在 `need` 接近 `SIZE_MAX` 时回绕，检查通过后 `subspan(pos, huge)` 触发 UB。
 
-### P0-6 `ensure_remaining` 整数溢出 → 越界读
+**修复**：改为 `need > size() - pos`（先减后比）。
 
-**问题**：`pos + need > size()` 在 `need` 接近 `SIZE_MAX` 时回绕，检查通过后 `subspan(pos, huge)` 触发 UB。损坏/恶意 payload 可直接崩溃进程。
-
-**证据**：`binary_codec.h:467-472`。
-
-**修法**：改为 `need > size() - pos`（先减后比，不会回绕），并给所有 `read_varint` 调用点加同样的保护；补 depth 与 size 上限。
-
-**验收**：新增 fuzz 式测试——构造长度字段为 `0xFFFFFFFFFFFFFFFF` 的 payload，断言抛 `RuntimeError` 而不是崩溃。
+**验收**：新增用例 `decode rejects a length prefix that would overflow the buffer`，构造 tag + 10 字节超长 varint，断言抛 `RuntimeError`。
+**须如实说明**：该用例**无法区分修复前后**——旧实现因 libc++ 的 `subspan` 会把 `count` 截断到 0、随后 `cur->pos` 回绕并在下一轮边界检查抛同一异常而「碰巧安全」。修复消除的是那条路径上的未定义行为（越界指针运算 + pos 回绕），并非可观测结果。
 
 ---
 

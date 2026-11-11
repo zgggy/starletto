@@ -217,9 +217,10 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
             out.shm_ok = r.shm_ok || r.ok();
             out.status = r.status;
             out.error_message = r.error_message;
-            if (r.status == WriteStatus::EXCEPTION || r.status == WriteStatus::ENCODE_FAILED) {
+            // ENCODE_FAILED 是「这一帧太大」的单帧问题，不是通道故障：
+            // 降级整个通道会让后续正常大小的帧也永远发不出去
+            if (r.status == WriteStatus::EXCEPTION) {
                 bus->degrade_channel(channel_name_);
-                shm_.reset();
             }
             return out;
         }
@@ -261,14 +262,24 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
         std::shared_ptr<Reader> shm_;
     };
 
+    static constexpr std::chrono::milliseconds kDegradeTtl{5000};
+
     void degrade_channel(const std::string& channel_name) {
         std::lock_guard<std::mutex> lock(mutex_);
-        degraded_channels_.insert(channel_name);
+        degraded_channels_[channel_name] = std::chrono::steady_clock::now();
     }
 
     auto is_channel_degraded(const std::string& channel_name) const -> bool {
         std::lock_guard<std::mutex> lock(mutex_);
-        return degraded_channels_.count(channel_name) > 0;
+        const auto it = degraded_channels_.find(channel_name);
+        if (it == degraded_channels_.end()) {
+            return false;
+        }
+        if (std::chrono::steady_clock::now() - it->second >= kDegradeTtl) {
+            degraded_channels_.erase(it);  // 过期后自动恢复尝试
+            return false;
+        }
+        return true;
     }
 
     auto shm_route_mode(const std::string& channel) const -> ChannelRegistry::ShmRouteMode {
@@ -287,7 +298,9 @@ class ShmRoutedMessageBus final : public MessageBus, public std::enable_shared_f
     std::shared_ptr<ShmMessageBus> shm_;
     bool shm_available_{true};
     mutable std::mutex mutex_;
-    std::unordered_set<std::string> degraded_channels_;
+    // 降级带 TTL：SHM 故障可能是瞬时的（如对端重启），过期后自动重试，
+    // 避免一次失败就让该通道永久失去跨进程能力
+    mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> degraded_channels_;
 };
 
 }  // namespace star::transport

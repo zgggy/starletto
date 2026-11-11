@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "basement/core/exception.h"
+#include "basement/core/logger/logger.h"
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/common/channel_stats.h"
@@ -38,6 +39,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
         if (descriptor.name.empty()) {
             throw star::excep::RuntimeError("NativeMessageBus declare_channel failed, empty channel name");
         }
+        validate_qos_options(descriptor.options, descriptor.name);
         std::lock_guard<std::mutex> lock(mutex_);
         auto& channel = channels_[descriptor.name];
         if (channel.descriptor.name.empty()) {
@@ -217,7 +219,16 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
         }
 
         for (const auto& [_, cb] : reader_callbacks) {
-            cb(message);
+            // 回调异常不得杀死发布方线程，但必须计数可见
+            try {
+                cb(message);
+            } catch (const std::exception& e) {
+                record_callback_failure(channel_name);
+                logE << "NativeMessageBus: reader callback threw: channel=" << channel_name << ", err=" << e.what();
+            } catch (...) {
+                record_callback_failure(channel_name);
+                logE << "NativeMessageBus: reader callback threw unknown exception: channel=" << channel_name;
+            }
         }
 
         if (should_record) {
@@ -234,6 +245,14 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
             if (it != channels_.end()) {
                 it->second.stats.record_latency(latency_us);
             }
+        }
+    }
+
+    void record_callback_failure(const std::string& channel_name) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = channels_.find(channel_name);
+        if (it != channels_.end()) {
+            it->second.stats.record_callback_failure();
         }
     }
 

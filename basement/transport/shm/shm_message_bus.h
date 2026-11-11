@@ -148,6 +148,7 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         if (descriptor.name.empty()) {
             throw star::excep::RuntimeError("ShmMessageBus declare_channel failed, empty channel name");
         }
+        validate_qos_options(descriptor.options, descriptor.name);
         std::lock_guard<std::mutex> lock(mutex_);
         auto& channel = channels_[descriptor.name];
         if (channel.descriptor.name.empty()) {
@@ -346,6 +347,15 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                     out.shm_required = true;
                     return out;
                 }
+                // 单帧超限是「这条消息太大」而非通道故障：显式判为 ENCODE_FAILED，
+                // 不能让 channel->write 抛异常被记成 EXCEPTION（那会触发通道降级）
+                if (bytes.size() > channel->slot_size()) {
+                    auto out = WriteResult{};
+                    out.status = WriteStatus::ENCODE_FAILED;
+                    out.shm_required = true;
+                    out.error_message = "payload exceeds slot size: " + std::to_string(bytes.size()) + " > " + std::to_string(channel->slot_size());
+                    return out;
+                }
                 channel->write(bytes.data(), static_cast<uint32_t>(bytes.size()));
                 auto out = WriteResult{};
                 out.status = WriteStatus::OK;
@@ -407,7 +417,24 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             should_deliver = true;
         }
         if (should_deliver) {
-            cb(msg);
+            // 订阅回调运行在轮询线程上：异常若逃逸会 terminate 整个进程
+            try {
+                cb(msg);
+            } catch (const std::exception& e) {
+                record_callback_failure(channel_name);
+                logE << "ShmMessageBus: reader callback threw: channel=" << channel_name << ", err=" << e.what();
+            } catch (...) {
+                record_callback_failure(channel_name);
+                logE << "ShmMessageBus: reader callback threw unknown exception: channel=" << channel_name;
+            }
+        }
+    }
+
+    void record_callback_failure(const std::string& channel_name) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = channels_.find(channel_name);
+        if (it != channels_.end()) {
+            it->second.stats.record_callback_failure();
         }
     }
 
