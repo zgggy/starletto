@@ -121,7 +121,7 @@
 
 **验证**：新增 3 个用例——`build_process_plan` 折算出两条通道、`shm_routed` 下工厂返回 `ShmServiceBus`、默认传输仍是 `NativeServiceBus`。多进程 `star run --multi-process setting` 两 worker 正常退出；`star param list/get` 正常。
 
-**遗留**：`parameter_service_demo` 仍走单进程（默认传输），未验证「A 进程客户端 + B 进程服务端」的端到端调用——需要一个双进程 RPC 用例，建议在 P2 阶段随性能优化一起补。
+**遗留（已关闭，2026-11-12）**：新增 `transport_rpc_multiprocess` 用例——fork 出真正独立的两进程，A 进程 RpcServer、B 进程 RpcClient，经 shm 路由完成 request/response；已双向验证（删掉 request 通道路由后调用超时失败）。
 
 ### P1-2 routed 模式录制完全失效 ✅ 已修（2026-11-11）
 

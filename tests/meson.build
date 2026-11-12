@@ -38,6 +38,16 @@ test(
 )
 
 test(
+    'transport_rpc_multiprocess',
+    executable(
+        'transport_rpc_multiprocess_test',
+        files('transport/rpc_multiprocess_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [transport_native_dep],
+    ),
+)
+
+test(
     'transport_service_concurrency',
     executable(
         'transport_service_concurrency_test',
