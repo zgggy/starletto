@@ -649,7 +649,8 @@ run_transport_selftest() {
 # 不可能再发生；此处防止有人把生成物重新提交进仓库，导致源/生成物再次分叉。
 check_schema_generated_untracked() {
     local found
-    found=$(find "${PROJECT_ROOT}" -name '*.s.h' -not -path '*/build/*' -not -path '*/.git/*' 2>/dev/null)
+    # 排除仓库内的任意 meson 构建目录（build、build-ubsan、build-coverage…）
+    found=$(find "${PROJECT_ROOT}" -name '*.s.h' -not -path '*/build/*' -not -path '*/build-*/*' -not -path '*/build_*/*' -not -path '*/.git/*' 2>/dev/null)
     if [ -n "$found" ]; then
         log_error "schema 生成物不应位于源码树（应由 custom_target 生成到 build dir）:"
         printf '%s\n' "$found" | sed 's/^/    /'
@@ -669,7 +670,7 @@ check_schema_lint() {
             python3 "$tool" lint --schema "$f" 2>&1 | sed 's/^/    /'
             failed=1
         fi
-    done < <(find "${PROJECT_ROOT}" -name '*.schema' -not -path '*/build/*' -not -path '*/.git/*' | sort)
+    done < <(find "${PROJECT_ROOT}" -name '*.schema' -not -path '*/build/*' -not -path '*/build-*/*' -not -path '*/build_*/*' -not -path '*/.git/*' | sort)
     return $failed
 }
 

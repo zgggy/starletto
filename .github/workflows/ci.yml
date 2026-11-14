@@ -34,3 +34,16 @@ jobs:
         run: meson compile -C build-ubsan
       - name: Test
         run: meson test -C build-ubsan --print-errorlogs
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install meson ninja
+      - name: Build
+        run: ./star build
+      - name: Unit tests
+        run: ./star test
+      - name: CI guard
+        run: ./star check --skip-build

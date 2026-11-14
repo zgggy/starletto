@@ -155,6 +155,40 @@ cc -std=c11 -O2 -fPIC -shared \
     -I"${INCLUDE_DIR}" \
     "${MODULE}/c_register.c" -o "${MODULE}/liboot_c.so"
 
+# 安装出来的共享库必须能被外部程序 dlopen，并报告正确的插件 ABI 版本
+cat > "${WORK}/check_runtime_abi.c" <<'C'
+#include <dlfcn.h>
+#include <stdio.h>
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        return 2;
+    }
+    void* handle = dlopen(argv[1], RTLD_NOW);
+    if (handle == NULL) {
+        fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        return 3;
+    }
+    typedef unsigned int (*abi_fn)(void);
+    abi_fn abi = (abi_fn)dlsym(handle, "star_runtime_plugin_abi_version");
+    if (abi == NULL) {
+        fprintf(stderr, "missing star_runtime_plugin_abi_version\n");
+        return 4;
+    }
+    const unsigned int version = abi();
+    dlclose(handle);
+    if (version != 1u) {
+        fprintf(stderr, "unexpected plugin ABI version: %u\n", version);
+        return 5;
+    }
+    return 0;
+}
+C
+cc -std=c11 -O2 "${WORK}/check_runtime_abi.c" -o "${WORK}/check_runtime_abi" -ldl
+RUNTIME_LIB="$(compgen -G "${STAGE}/lib/libstar_runtime.*" | head -n 1)"
+"${WORK}/check_runtime_abi" "${RUNTIME_LIB}"
+echo "[i] installed libstar_runtime ABI probe ok"
+
 echo "[i] doctor --deep"
 "${RUNNER}" --doctor --deep "${MODULE}/module.conf" >/dev/null
 
