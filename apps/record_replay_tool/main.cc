@@ -8,12 +8,14 @@
 #include <unordered_set>
 #include <vector>
 
+#include <dlfcn.h>
+
+#include "basement/runtime/component/component_registry.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/schema/native/schema_bootstrap.h"
 #include "basement/transport/record/message_publisher.h"
 #include "basement/transport/record/message_replayer.h"
 #include "basement/transport/shm/shm_routed_message_bus.h"
-#include "modules/setting/schema/schema_bootstrap.h"
 
 namespace {
 
@@ -24,6 +26,7 @@ struct ReplayOptions {
     int64_t repeat{1};
     std::string channel;
     std::string transport{"shm_routed"};
+    std::vector<std::string> plugins;
 };
 
 void print_usage() {
@@ -36,7 +39,8 @@ void print_usage() {
               << "  --channel=<name>     只回放指定通道\n"
               << "  --repeat=<n>         重复次数（默认 1）\n"
               << "  --strict             录制中的 schema 未注册/hash 不一致时失败\n"
-              << "  --transport=<name>   发布用传输（默认 shm_routed）\n";
+              << "  --transport=<name>   发布用传输（默认 shm_routed）\n"
+              << "  --plugin=<lib.so>    加载插件以注册其 schema（可重复；用于回放校验）\n";
 }
 
 auto format_wall_clock(int64_t wall_clock_ns) -> std::string {
@@ -51,6 +55,28 @@ auto format_wall_clock(int64_t wall_clock_ns) -> std::string {
     char buf[32]{};
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm_buf);
     return std::string(buf);
+}
+
+// 回放工具不直接依赖业务模块：需要它们的 schema 时按插件加载（插件入口负责注册）
+auto load_plugin_schemas(star::runtime::ComponentRegistry& registry, const std::vector<std::string>& plugins) -> bool {
+    for (const auto& plugin : plugins) {
+        void* handle = ::dlopen(plugin.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (handle == nullptr) {
+            const auto* error = ::dlerror();
+            std::cerr << "[E] dlopen failed: " << plugin << ", err=" << (error ? error : "unknown") << "\n";
+            return false;
+        }
+        ::dlerror();
+        const auto symbol = ::dlsym(handle, "star_register_components");
+        const auto* error = ::dlerror();
+        if (error != nullptr || symbol == nullptr) {
+            std::cerr << "[E] plugin missing star_register_components: " << plugin << "\n";
+            ::dlclose(handle);
+            return false;
+        }
+        reinterpret_cast<void (*)(star::runtime::ComponentRegistry*)>(symbol)(&registry);
+    }
+    return true;
 }
 
 auto cmd_info(const std::string& file_path) -> int {
@@ -126,7 +152,11 @@ auto cmd_replay(const std::string& file_path, const ReplayOptions& options) -> i
         // 发布模式：先把录制里的 schema 身份和本地注册表比对，未知/不一致要可见
         auto context = star::runtime::RuntimeFactory::create_native_context(options.transport);
         star::schema::native::register_builtin_schemas(context->schema_registry());
-        star::setting::schema::register_setting_schemas(context->schema_registry());
+        auto plugin_registry = star::runtime::ComponentRegistry{};
+        plugin_registry.set_schema_registry(&context->schema_registry());
+        if (not load_plugin_schemas(plugin_registry, options.plugins)) {
+            return 2;
+        }
 
         auto unknown = std::unordered_set<std::string>{};
         auto mismatched = std::unordered_set<std::string>{};
@@ -248,6 +278,8 @@ auto main(int argc, char** argv) -> int {
             options.repeat = std::stoll(arg.substr(std::string("--repeat=").size()));
         } else if (arg.rfind("--transport=", 0) == 0) {
             options.transport = arg.substr(std::string("--transport=").size());
+        } else if (arg.rfind("--plugin=", 0) == 0) {
+            options.plugins.push_back(arg.substr(std::string("--plugin=").size()));
         } else if (arg == "--help" or arg == "-h") {
             print_usage();
             return 0;

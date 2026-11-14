@@ -261,6 +261,20 @@ extern "C" void star_register_components(star::runtime::ComponentRegistry* regis
 - 函数名 `star_register_components` 是**固定约定**，宿主用 `dlsym` 找它。
 - 只需改两处 include 与命名空间。
 
+如果模块自带 schema，插件入口还要负责注册它们（app 不再知道任何模块）：
+
+```cpp
+#include "modules/<module>/schema/schema_bootstrap.h"
+
+extern "C" void star_register_components(star::runtime::ComponentRegistry* registry) {
+    star::<module>::schema::register_<module>_schemas(*registry->schema_registry());
+    star::<module>::register_native_components(*registry);
+}
+```
+
+注册是幂等的；同一模块的多个插件各自注册也没问题。`star check` 的 `app-boundary`
+会阻止 `apps/` 重新 include 模块内部。
+
 ### 2.4 `*_component.h` —— 适配层
 
 最小形态（去掉日志演示后）：

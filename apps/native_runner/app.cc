@@ -33,7 +33,6 @@
 #include "basement/transport/shm/shm_routed_message_bus.h"
 #include "basement/transport/rpc/rpc.h"
 #include "basement/transport/shm/shm_views.h"
-#include "modules/setting/schema/schema_bootstrap.h"
 
 
 namespace star::native_runner {
@@ -47,7 +46,6 @@ namespace star::native_runner {
         auto context = star::runtime::RuntimeFactory::create_native_context(options.transport_name);
         configure_routed_transport_if_needed(*context, options);
         star::schema::native::register_builtin_schemas(context->schema_registry());
-        star::setting::schema::register_setting_schemas(context->schema_registry());
         auto* message_bus = &context->message_bus();
         auto registry = std::make_shared<star::runtime::ComponentRegistry>();
         registry->set_schema_registry(&context->schema_registry());
@@ -725,7 +723,6 @@ namespace star::native_runner {
             }
         }
         star::schema::native::register_builtin_schemas(context->schema_registry());
-        star::setting::schema::register_setting_schemas(context->schema_registry());
 
         using WorkerHealth = star::generated::observability::worker_health::WorkerHealth;
         struct LatestStats {

@@ -18,7 +18,7 @@ install_subdir(
     install_dir: 'modules/setting/parameter',
 )
 
-shared_library(
+parameter_plugin = shared_library(
     'parameter',
     files('register.cc'),
     dependencies: [parameter_dep],
@@ -26,3 +26,5 @@ shared_library(
     install: true,
     install_dir: 'modules/setting/parameter',
 )
+
+subdir('demo')

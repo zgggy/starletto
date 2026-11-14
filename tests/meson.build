@@ -245,6 +245,17 @@ multi_root_schema = custom_target(
 )
 
 test(
+    'runtime_plugin_schema',
+    executable(
+        'runtime_plugin_schema_test',
+        files('runtime/plugin_schema_test.cc') + test_main + [parameter_plugin],
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep, libraries_dep],
+        cpp_args: ['-DSTAR_TEST_PARAMETER_PLUGIN_PATH="@0@"'.format(parameter_plugin.full_path())],
+    ),
+)
+
+test(
     'runtime_wire_identity',
     executable(
         'runtime_wire_identity_test',

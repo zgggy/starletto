@@ -234,3 +234,15 @@ flowchart LR
   已双向验证（去掉跳过逻辑后失败）
 - `star check` 新增 `runtime-smoke`：真实装配并启动/停止一次组件；
   此前单元测试不经过 App::run，漏掉了「context 被 move 后仍被解引用」的装配期崩溃
+
+## 后续整改 P1.2：插件自注册（已完成 2026-11-14）
+
+- 插件入口 `star_register_components(ComponentRegistry*)` 现在同时注册模块 schema
+  （通过 `registry->schema_registry()`）；setting/config 与 setting/parameter 两个
+  插件都注册（幂等），任一被加载即可用
+- `apps/` 删除全部 `#include "modules/..."`：native_runner 不再注册 setting schema；
+  record_replay_tool 改为 `--plugin=<lib.so>` 按需加载插件注册表
+- `parameter_service_demo` 移入 `modules/setting/parameter/demo/`（它本来就是该模块的
+  demo，不应放在 apps）
+- `star check` 新增 `app-boundary`（grep 门禁）；新增 `runtime_plugin_schema` 用例
+  直接 dlopen 插件并断言 schema/组件已注册；30 套 192 用例、14/14

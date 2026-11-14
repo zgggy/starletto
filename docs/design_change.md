@@ -39,3 +39,4 @@
 | 2026-11-14 | shm 帧头 v7：逐帧携带 schema name/version/hash，`MessageView.schema_type_id` 改为发送方身份；解码策略与诊断可感知对端版本 | transport/runtime/schema | P0.1 实时 wire 身份 |
 | 2026-11-14 | schema compat 与版本策略对齐：删字段需 version 递增 + reserved；类型/id 变更保持 breaking；`--allow-breaking` 显式覆盖 | schema/tools | P0.2 |
 | 2026-11-14 | 录制路径隔离：`--record-file`/`--record-dir`，多进程强制逐 worker 文件；init 失败组件不进入调度；star check 增加 runtime-smoke（13/13） | runtime/apps | P0.3/P0.4 |
+| 2026-11-14 | 插件自注册：register.cc 同时注册模块 schema；apps 删除全部 modules include；replay 工具改用 --plugin；demo 移入模块；新增 app-boundary 门禁与 plugin schema 用例（14/14） | runtime/modules/apps | P1.2 |

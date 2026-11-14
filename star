@@ -29,7 +29,7 @@ show_help() {
     echo "  star param [参数...] <命令>         typed parameter service 工具（list/get/set, 支持 --format=json）"
     echo "  star schema <命令>                  schema 工具（fmt/gen/compat/lint）"
     echo "  star record info <文件>             查看录制文件信息（消息数/topics/时间范围）"
-    echo "  star replay <文件> [speed] [--publish] [--channel=] [--repeat=]  回放；--publish 写回通道"
+    echo "  star replay <文件> [speed] [--publish] [--channel=] [--repeat=] [--plugin=]  回放；--publish 写回通道"
     echo "  star monitor [--monitor-ms=<ms>] [--once]  实时查看各 worker 的通道统计（频率/延迟/丢帧/QoS）"
     echo "  star new module <名称>             创建模块骨架（module.conf + meson 接线）"
     echo "  star new component <模块>/<名称>   创建组件骨架（conf/register/component/processor/meson）"
@@ -481,7 +481,7 @@ run_parameter_tool() {
     if [ -n "$install_dir" ]; then
         tool="${install_dir}/bin/parameter_service_demo"
     else
-        tool="${build_dir}/apps/parameter_service_demo/parameter_service_demo"
+        tool="${build_dir}/modules/setting/parameter/demo/parameter_service_demo"
     fi
 
     if [ ! -x "$tool" ]; then
@@ -672,6 +672,18 @@ check_schema_lint() {
     return $failed
 }
 
+# 应用层不得 include 业务模块内部（插件自注册后 app 只认识插件入口）
+check_app_module_boundary() {
+    local found
+    found=$(grep -rn '#include "modules/' "${PROJECT_ROOT}/apps" 2>/dev/null || true)
+    if [ -n "$found" ]; then
+        log_error "apps/ 不得直接依赖业务模块内部:"
+        printf '%s\n' "$found" | sed 's/^/    /'
+        return 1
+    fi
+    return 0
+}
+
 # 运行时冒烟：真的装配一次组件并启动/停止调度器。
 # 单元测试不经过 App::run，曾漏掉「context 被 move 后仍被解引用」这类装配期崩溃。
 check_runtime_smoke() {
@@ -852,6 +864,7 @@ run_ci_guard() {
     log_info "--- CI Guard: Step 3/8 Unit Test ---"
     _check_step "unit-test" meson test -C "$build_dir"
     _check_step "runtime-smoke" check_runtime_smoke "$runner"
+    _check_step "app-boundary" check_app_module_boundary
 
     log_info "--- CI Guard: Step 4/8 Selftest ---"
     # 注意：不能调用 run_transport_selftest，它内部用 exec 会替换当前进程
