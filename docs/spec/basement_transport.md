@@ -618,7 +618,10 @@ header（v5）内维护 `holder_pids[32]` 持有者表，每次 attach 占一个
 - 初始化中途崩溃（`init_state` 未就绪）：只有确认无存活持有者才重建，
   否则报 init timeout。
 
-段名带 `kShmVersion`，升级后旧版本段不再被命中。macOS 的 shm fd 不支持
+段名 = `/star_v<kShmVersion>_<FNV-1a(channel)>`，必须用跨工具链稳定的哈希：
+`std::hash<std::string>` 是实现定义的，不同标准库会算出不同段名，导致两个进程
+各自 attach 到不同段（写入/读取都成功但永远收不到对方的数据）。
+段名带版本号，升级后旧版本段不再被命中。macOS 的 shm fd 不支持
 `flock`（ENOTSUP），因此用 pid 存活性而不是内核文件锁做 liveness。
 
 ## 11. ChannelRegistry 路由表

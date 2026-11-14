@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "basement/core/exception.h"
+#include "basement/core/stable_hash.h"
 #include "basement/transport/api/channel_registry.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/common/channel_stats.h"
@@ -593,7 +594,10 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
     static auto resolve_capacity() -> uint32_t { return kShmCapacity; }
 
     static auto make_shm_name(const std::string& channel) -> std::string {
-        const auto h = std::hash<std::string>{}(channel);
+        // 必须用跨工具链稳定的哈希：std::hash<std::string> 是实现定义的，
+        // libc++ 与 libstdc++ 算出的段名不同 → 两个进程各自 attach 到不同段，
+        // 写入/读取都「成功」但永远收不到对方的数据（静默分裂）
+        const auto h = star::base::fnv1a64(channel);
         char buf[64]{};
         // 段名含版本号：header 布局变更后，旧段名不再被命中（避免按错误布局解析）
         std::snprintf(buf, sizeof(buf), "/star_v%02u_%016lx", kShmVersion, static_cast<unsigned long>(h));

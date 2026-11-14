@@ -24,10 +24,11 @@ namespace star::transport {
 
 static constexpr uint32_t kShmMaxSlots = 16;
 static constexpr uint64_t kShmMagic = 0x535441524c455454ULL;
-// v5：header 增加持有者 pid 表，attach 时清扫「进程已死但段还在」的孤儿段。
-// v4 及更早的段名里带版本号，升级后不会被命中（旧段成为不可达残留，重启可清）。
+// v6：段名改用 FNV-1a（跨工具链稳定），替换实现定义的 std::hash<std::string>。
+// v5：header 增加持有者 pid 表，attach 时清扫孤儿段。
 // v4：新增 per-slot 代际 gen[]，用于正确的 seqlock 复核。
-static constexpr uint32_t kShmVersion = 5;
+// 旧版本的段名都带各自的 kShmVersion，升级后不会被命中（旧段成为不可达残留）。
+static constexpr uint32_t kShmVersion = 6;
 // 每个进程的每个通道占一个槽位；超限说明同一进程开了过多同通道实例
 static constexpr uint32_t kShmMaxHolders = 32;
 static constexpr uint32_t kShmCapacity = 4 * 1024 * 1024;

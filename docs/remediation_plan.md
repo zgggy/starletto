@@ -195,3 +195,4 @@ flowchart LR
 | A3 | 多进程服务通道无法路由 | `build_process_plan` 只知道 server 组；客户端组不在 component.conf 里，`run_multi_process` 推不出 `request` 的生产者，跨进程调用退化为 inproc | 服务通道登记为系统读写通道（始终 shm），supervisor 用 `--system-channels` 广播给所有 worker；`rpc works across processes through system service channels`，已双向验证 |
 | A4 | `replay speed<=0` 除法无防护 | `pace_to` 直接 `elapsed / speed`，0 会产生 inf/UB | 非正值退化为最快回放 |
 | A5 | selftest 用「空编码」当编码失败 | A1 修复后该场景合法，selftest 误报 | 改用 8MB 超槽位帧（真正的单帧过大） |
+| A6 | shm 段名用 `std::hash<std::string>`，实现定义 | libc++ 与 libstdc++ 算法不同 → 跨编译器构建的进程算出不同段名，各自 attach、写入/读取都「成功」但收不到对方数据 | 新增 `core/stable_hash.h`（FNV-1a），段名改用稳定哈希，`kShmVersion` 升到 6；golden 值单测锁定算法 |

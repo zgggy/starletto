@@ -9,6 +9,7 @@
 #include "basement/core/logger/async_logger.h"
 #include "basement/core/logger/file_logger.h"
 #include "basement/core/logger/logger.h"
+#include "basement/core/stable_hash.h"
 
 #include "tests/support/star_test.h"
 
@@ -172,4 +173,11 @@ TEST_CASE("log level strings parse case-insensitively") {
     REQUIRE(star::base::parse_level("ERROR", &level));
     REQUIRE_EQ(level, Level::ERROR);
     REQUIRE(not star::base::parse_level("verbose", &level));
+}
+
+// 段名等跨进程标识必须用稳定哈希：std::hash<std::string> 在不同标准库实现下不同。
+// golden 值按 FNV-1a 规范独立计算；改动算法会让所有 shm 段名变化，必须显式升级版本。
+TEST_CASE("stable hash matches the FNV-1a specification") {
+    REQUIRE_EQ(star::base::fnv1a64("test.channel"), uint64_t{0x30b16c7ffe4bb2d8ULL});
+    REQUIRE_EQ(star::base::fnv1a64(""), uint64_t{0xcbf29ce484222325ULL});
 }

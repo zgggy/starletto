@@ -35,3 +35,4 @@
 | 2026-11-14 | 新增 `star new module/component` 脚手架：生成 6 个文件并自动登记父 module.conf/meson，三处命名一次写对；脚手架自检进 CI（12/12） | tools/docs | component_guide 易用性路线 |
 | 2026-11-14 | HealthChecker 接线：component.conf 新增 `health` 块（通道频率 + 资源阈值），经 plan 到 host 启动周期评估；严重度变化写日志并发布 `starletto.health`，monitor 展示未健康组件 | runtime/schema/apps | 能力盘点：HealthChecker 零接线 |
 | 2026-11-14 | 底层复审修复：① shm 允许空载荷（全 optional 消息的合法编码）；② NativeMessageBus reader 析构等待在途回调（含 cv 丢唤醒）；③ 服务通道升级为系统读写通道，跨进程 RPC 不再依赖路由计划推断客户端组；④ replay speed<=0 防护 | core/transport/runtime/apps | 2026-11-14 复审 |
+| 2026-11-14 | shm 段名改用跨工具链稳定的 FNV-1a（替换实现定义的 std::hash），`kShmVersion`→6；golden 单测锁定算法 | core/transport | 2026-11-14 复审 A6 |
