@@ -25,6 +25,7 @@
 #include "basement/runtime/observability/resource_monitor.h"
 #include "basement/schema/builtin/observability/worker_health.s.h"
 #include "basement/schema/builtin/observability/worker_stats.s.h"
+#include "basement/runtime/plan/plan_diagnostics.h"
 #include "basement/runtime/plan/plan_loader.h"
 #include "basement/runtime/process/path_resolver.h"
 #include "basement/runtime/process/process_orchestrator.h"
@@ -501,6 +502,7 @@ namespace star::native_runner {
     auto App::doctor(const std::vector<std::string>& module_conf_paths, bool deep) -> int  {
         star::runtime::plan::PlanLoader loader;
         bool ok = true;
+        auto all_plans = std::vector<star::runtime::plan::ComponentLoadPlan>{};
         for (const auto& module_conf : module_conf_paths) {
             const auto module_conf_data = loader.load_module(module_conf);
             if (not module_conf_data) {
@@ -521,6 +523,7 @@ namespace star::native_runner {
                     ok = false;
                     continue;
                 }
+                all_plans.push_back(*component_plan);
                 if (component_plan->component_class.empty()) {
                     logE << "doctor: empty component_class: " << component_conf;
                     ok = false;
@@ -568,6 +571,10 @@ namespace star::native_runner {
                     }
                 }
             }
+        }
+        for (const auto& issue : star::runtime::plan::find_channel_type_conflicts(all_plans)) {
+            logE << "doctor: " << issue;
+            ok = false;
         }
         return ok ? 0 : 1;
     }

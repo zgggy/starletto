@@ -9,6 +9,7 @@
 #include "basement/schema/schema_value.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/plan/plan_builder.h"
+#include "basement/runtime/plan/plan_diagnostics.h"
 #include "basement/runtime/plan/plan_loader.h"
 #include "basement/transport/rpc/rpc.h"
 
@@ -198,4 +199,37 @@ parameters {
     REQUIRE(opaque.ok());
 
     std::remove(path);
+}
+
+// P2.2：通道两端类型不一致应在启动期发现，而不是等首次写入/解码
+TEST_CASE("plan diagnostics detect conflicting channel types") {
+    const auto make = [](const std::string& component, const std::string& port, const std::string& channel, const std::string& type, bool output) {
+        auto plan = star::runtime::plan::ComponentLoadPlan{};
+        plan.module_name = "test";
+        plan.component_name = component;
+        plan.component_class = "test::X";
+        auto item = star::runtime::plan::PortPlan{};
+        item.name = port;
+        item.channel = channel;
+        item.type_name = type;
+        if (output) {
+            plan.outputs = std::vector<star::runtime::plan::PortPlan>{item};
+        } else {
+            plan.inputs = std::vector<star::runtime::plan::PortPlan>{item};
+        }
+        return plan;
+    };
+
+    const auto mismatch = star::runtime::plan::find_channel_type_conflicts({
+        make("producer", "out", "shared.channel", "test.TypeA", true),
+        make("consumer", "in", "shared.channel", "test.TypeB", false),
+    });
+    REQUIRE_EQ(mismatch.size(), 1U);
+    REQUIRE(mismatch.front().find("shared.channel") != std::string::npos);
+
+    const auto matched = star::runtime::plan::find_channel_type_conflicts({
+        make("producer", "out", "shared.channel", "test.TypeA", true),
+        make("consumer", "in", "shared.channel", "test.TypeA", false),
+    });
+    REQUIRE(matched.empty());
 }

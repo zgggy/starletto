@@ -44,3 +44,4 @@
 | 2026-11-14 | supervisor：ready 握手（STAR_READY_FD）+ on-failure 重启/指数退避/预算；重启录制加 .attemptN 保留现场 | runtime/apps | P1.3 |
 | 2026-11-14 | 安全基线：shm 0600 + 属主校验、插件路径限制在模块目录、录制 0600、新增 security_model.md | transport/runtime/docs | P1.4 |
 | 2026-11-14 | conf 严格校验：PlanLoader 在 from_value 前跑 SchemaValidator（未知键/缺失/类型），object 容器保持不透明；拼错 readers 不再静默 | runtime/schema | P2.1 |
+| 2026-11-14 | 文档/拓扑修正：README 不再宣称 shm 零拷贝（明确跨进程编码+拷贝、View 当前不适用）；资产状态说明；doctor 增加通道两端类型一致性检查 | docs/runtime | P2.2 |

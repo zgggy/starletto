@@ -319,6 +319,13 @@ class MotionComponent : public star::runtime::Component {
 | `shutdown()` | 释放外部资源 |
 | `declare_reader<T>(name, cb)` | 想用**回调**而非轮询取最新值时（注意：回调在独立线程） |
 
+#### 零拷贝读取（`peek_view`，当前不推荐）
+
+`peek_view<XxxView>("port")` 可以直接在共享内存上构造只读视图，不拷贝、不解码。
+但它要求生产者写入**固定布局帧**；当前 shm 默认写二进制 TLV（为跨版本演进），
+所以普通 `write()` 产生的帧不能被 View 读取。等 per-channel `encoding=fixed`
+配置落地后再在业务中使用；现在请用 `read_latest<T>`。
+
 ### 2.5 `*_processor.h` —— 纯算法（算法工程师的主战场）
 
 ```cpp

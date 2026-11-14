@@ -2,7 +2,7 @@
 
 ## 介绍
 
-Starletto 是一个自动驾驶开放平台，核心是一套 **Native-first** 的自研运行时底座：统一类型体系（Schema）、零拷贝通信（Transport）、可预测的组件运行时（Runtime），以及配套的构建/诊断/录制回放工具链。
+Starletto 是一个自动驾驶开放平台，核心是一套 **Native-first** 的自研运行时底座：统一类型体系（Schema）、进程内零拷贝 / 跨进程共享内存通信（Transport）、可预测的组件运行时（Runtime），以及配套的构建/诊断/录制回放工具链。
 
 平台对标 Apollo CyberRT（强类型 + 零拷贝 + 工具闭环）、Autoware（模块边界与组件实践）与 ROS2（生态可扩展性）的能力子集，但**主线不依赖 ROS2**：主路径完全自研，与 ROS2 的 bridge 需作为独立工程接入。
 
@@ -36,11 +36,26 @@ data/        标定与地图数据
 - **C++20**：主要开发语言，主体为 header-only，统一 `.clang-format` 风格
 - **Meson / Ninja**：构建系统（`star` 脚本是统一入口）
 - **Python3**：schema 代码生成与工具链（构建期自动执行）
-- **POSIX**：`dl`（插件动态加载）、`rt` + shm/mmap/futex（跨进程零拷贝）
+- **POSIX**：`dl`（插件动态加载）、`rt` + shm/mmap/futex（跨进程共享内存）
 - **vendored 第三方**：`nlohmann/json`、`toml++`（单头，位于 `libraries/third_party/`）
 - **OSQP**：仅 `libraries/method/algorithm/piecewise_jerk/` 使用，尚未接入构建目标
 
 > 说明：不依赖 ROS2、colcon 或 Eigen。`libraries/element` 的领域类型（Frenet、ST 图、ReferenceLine 等）与 `libraries/method` 的规划算法（A* / Hybrid A* / piecewise jerk）为纯 C++ 实现。
+
+### 性能事实（避免误解）
+
+- **进程内**：`TypedConstPtr` 指针直传，无序列化、无拷贝。
+- **跨进程**：写方把消息编码进共享内存槽位（一次序列化 + 一次写入），读方解码成结构体；
+  共享内存省掉的是进程间 IPC 拷贝，不是编解码本身。
+- **固定布局 `View`（可选）**：生成类型带 `XxxView`，可以零拷贝读取固定布局帧；
+  但当前 shm 默认写二进制 TLV（为了跨版本演进），要使用 View 需要按通道启用
+  固定布局编码（尚未提供配置开关），因此暂不推荐在业务里依赖 View。
+
+## 资产状态
+
+`libraries/` 以及 `modules/planning/motion/{machine,frame}` 是**保留但尚未接线**的
+算法资产（作者自有），不是死代码；构建当前不包含它们，后续接入 planning/perception
+时直接使用。清理代码时不要按「零引用」删除这些目录。
 
 ## 快速开始
 

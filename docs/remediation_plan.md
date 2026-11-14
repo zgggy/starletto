@@ -283,3 +283,13 @@ flowchart LR
   - `object` 类型（如 `parameters`）保持不透明，不限制内部键
 - 错误经 `build_component_load_plan` 返回，`star run`/`doctor` 直接显示
 - 回归：plan 测试新增 1 用例（typo 拒绝 + parameters 通过）；30 套 201 用例
+
+## 后续整改 P2.2：表述修正 + 拓扑类型检查（已完成 2026-11-14）
+
+- README 不再宣称「shm 零拷贝」：明确进程内指针直传、跨进程一次编码+写入、
+  固定布局 View 可选但当前默认 TLV 下不适用；component_guide 同步说明
+- 新增「资产状态」：`libraries/` 与 motion 的 machine/frame 是保留的算法资产，
+  不是死代码；清理时不得按零引用删除
+- 新增 `plan_diagnostics.h`：同一通道两端声明的类型不一致在 `doctor` 启动期报错；
+  新增 plan 测试（冲突/一致）
+- 30 套 202 用例、star check 14/14
