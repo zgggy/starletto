@@ -59,7 +59,8 @@ TEST_CASE("NativeParameterStore set overwrites the previous value") {
     store.set("k", SchemaValue{int64_t{1}});
     store.set("k", SchemaValue{int64_t{42}});
 
-    REQUIRE_EQ(std::get<int64_t>(store.get("k").as_scalar()), int64_t{42});
+    const auto value = store.get("k");
+    REQUIRE_EQ(std::get<int64_t>(value.as_scalar()), int64_t{42});
     REQUIRE_EQ(store.list("").size(), 1U);
 }
 
