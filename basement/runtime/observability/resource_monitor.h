@@ -2,8 +2,15 @@
 #define __RESOURCE_MONITOR_H__
 
 #include <dirent.h>
-#include <sys/syscall.h>
 #include <unistd.h>
+
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <mach/mach_time.h>
+#include <sys/resource.h>
+#else
+#include <sys/syscall.h>
+#endif
 
 #include <chrono>
 #include <cstdint>
@@ -50,6 +57,10 @@ class ResourceMonitor {
         snap.pid = pid;
         snap.timestamp_ns = clock_fn_();
 
+#if defined(__APPLE__)
+        sample_macos(pid, snap);
+        return snap;
+#else
         const auto stat = read_proc_stat(pid);
         if (not stat.has_value()) {
             return snap;
@@ -61,6 +72,7 @@ class ResourceMonitor {
         snap.thread_count = read_thread_count(pid);
         snap.name = read_comm(pid);
         return snap;
+#endif
     }
 
     auto dump_stats_lines() const -> std::vector<std::string> {
@@ -92,6 +104,60 @@ class ResourceMonitor {
     }
 
   private:
+#if defined(__APPLE__)
+    struct MacCpuCache {
+        uint64_t cpu_ns{0};
+        int64_t wall_ns{0};
+    };
+
+    // proc_pid_rusage 的 ri_user_time/ri_system_time 是 mach 绝对时钟 tick，
+    // 不是纳秒（Apple Silicon 上 24MHz，直接当 ns 会低报 24 倍）
+    static auto mach_ticks_to_ns(uint64_t ticks) -> uint64_t {
+        static const auto timebase = [] {
+            auto info = mach_timebase_info_data_t{};
+            ::mach_timebase_info(&info);
+            return info;
+        }();
+        return ticks * timebase.numer / timebase.denom;
+    }
+
+    // macOS 没有 /proc：用 libproc 的 taskinfo/rusage 采样
+    static void sample_macos(int64_t pid, ResourceSnapshot& snap) {
+        auto info = proc_taskinfo{};
+        const auto info_size = ::proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, sizeof(info));
+        if (info_size == static_cast<int>(sizeof(info))) {
+            snap.rss_kb = info.pti_resident_size / 1024;
+            snap.thread_count = info.pti_threadnum;
+        }
+        const auto fd_bytes = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
+        if (fd_bytes > 0) {
+            snap.fd_count = fd_bytes / static_cast<int>(sizeof(struct proc_fdinfo));
+        }
+        char name_buf[128]{};
+        if (::proc_name(pid, name_buf, sizeof(name_buf)) > 0) {
+            snap.name = name_buf;
+        }
+
+        auto rusage = rusage_info_v2{};
+        if (::proc_pid_rusage(pid, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&rusage)) == 0) {
+            static std::mutex cache_mutex;
+            static std::unordered_map<int64_t, MacCpuCache> cache;
+            const auto cpu_ns = mach_ticks_to_ns(rusage.ri_user_time + rusage.ri_system_time);
+            const auto wall_ns = steady_now_ns();
+            std::lock_guard<std::mutex> lock(cache_mutex);
+            auto& previous = cache[pid];
+            if (previous.wall_ns != 0 and wall_ns > previous.wall_ns and cpu_ns >= previous.cpu_ns) {
+                const auto d_cpu = static_cast<double>(cpu_ns - previous.cpu_ns);
+                const auto d_wall = static_cast<double>(wall_ns - previous.wall_ns);
+                if (d_wall > 0.0) {
+                    snap.cpu_percent = d_cpu / d_wall * 100.0;
+                }
+            }
+            previous = MacCpuCache{cpu_ns, wall_ns};
+        }
+    }
+#endif
+
     struct CpuTimes {
         uint64_t utime{0};
         uint64_t stime{0};

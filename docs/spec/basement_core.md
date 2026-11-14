@@ -208,17 +208,24 @@ class ResourceMonitor {
 
 ### 9.3 数据来源
 
-| 指标 | /proc 路径 | 解析方式 |
-|------|-----------|---------|
-| CPU% | `/proc/pid/stat` 字段 14(utime)+15(stime) + `/proc/stat` 首行 | delta / total_tick × 100 |
-| RSS | `/proc/pid/status` → `VmRSS:` 行 | 直接读取 kB |
-| FD 数量 | `/proc/pid/fd/` 目录项计数 - 2（排除 . 和 ..） | opendir |
-| 线程数 | `/proc/pid/stat` 字段 20 (num_threads) | 直接读取 |
-| 进程名 | `/proc/pid/comm` | 直接读取 |
+| 指标 | Linux（`/proc`） | macOS（libproc） |
+|------|-----------------|-----------------|
+| CPU% | `/proc/pid/stat` 字段 14(utime)+15(stime) + `/proc/stat` 首行 | `proc_pid_rusage(RUSAGE_INFO_V2)` 的 `ri_user_time + ri_system_time` 差分 / 墙钟差分 |
+| RSS | `/proc/pid/status` → `VmRSS:` 行 | `proc_pidinfo(PROC_PIDTASKINFO)` → `pti_resident_size` |
+| FD 数量 | `/proc/pid/fd/` 目录项计数 - 2（排除 . 和 ..） | `proc_pidinfo(PROC_PIDLISTFDS)` 返回字节数 / `sizeof(proc_fdinfo)` |
+| 线程数 | `/proc/pid/stat` 字段 20 (num_threads) | `proc_pidinfo(PROC_PIDTASKINFO)` → `pti_threadnum` |
+| 进程名 | `/proc/pid/comm` | `proc_name()` |
+
+macOS 的时间字段是 **mach 绝对时钟 tick，不是纳秒**（Apple Silicon 上 24 MHz）；
+必须经 `mach_timebase_info` 的 `numer/denom` 换算，否则 CPU 占用会低报 24 倍。
+对照 `getrusage` 实测：满核忙循环 94.6%，sleep 0.0%。
 
 ### 9.4 CPU% 计算细节
 
-首次采样返回 0%（需要两次采样计算 delta）。使用 `static` 缓存存储上次 `CpuTimes`（utime/stime/total_tick），保证 `compute_cpu_percent()` 作为 static 方法可正确工作。
+首次采样返回 0%（需要两次采样计算 delta）。使用 `static` 缓存存储上次计数
+（Linux：utime/stime/total_tick；macOS：cpu_ns/wall_ns），保证 `compute_cpu_percent()`
+与 `sample_macos()` 作为 static 方法可正确工作。采样其他进程时若权限不足，
+libproc 对应字段保持 0，不影响进程自身采样。
 
 ### 9.5 集成点
 

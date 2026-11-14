@@ -328,3 +328,16 @@ flowchart LR
   生成模块 schema → 源码树外编译插件 → `doctor --deep` → 运行
 - `star check` 新增 `install-smoke` 门禁（15/15）
 - **待做（B2）**：抽 `libstar_runtime.so` + C ABI 插件入口，放宽跨编译器约束
+
+## 后续整改 P2.5：ResourceMonitor 跨平台（已完成 2026-11-14）
+
+- 原先只有 `/proc` 实现，macOS 上 `sample()` 在 `read_proc_stat` 失败后直接返回全 0：
+  `star monitor`/健康检查里的 CPU、RSS、fd、线程数实际是空转。
+- macOS 改用 libproc：`PROC_PIDTASKINFO`（RSS/线程）、`PROC_PIDLISTFDS`（fd 数）、
+  `proc_name`、`proc_pid_rusage`（CPU 差分）；Linux `/proc` 路径不变。
+- 关键坑：`ri_user_time`/`ri_system_time` 是 mach 绝对时钟 tick（本机 24 MHz），
+  不是纳秒；直接当 ns 会让 CPU 低报 24 倍，用 `mach_timebase_info` 换算。
+  对照 `getrusage` 实测：满核忙循环 94.6%，sleep 0.0%，RSS/fd/线程/name 与 `ps` 一致。
+- 首次采样 CPU=0（需两次差分），与 Linux 一致；无权限采样的字段保持 0。
+- 回归：新增 `runtime_resource_monitor` 2 用例（自身采样四项非零、未知 pid 全零）；
+  33 套 208 用例、`star check` 15/15。

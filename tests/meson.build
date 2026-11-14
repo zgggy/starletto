@@ -120,6 +120,16 @@ test(
 )
 
 test(
+    'runtime_resource_monitor',
+    executable(
+        'runtime_resource_monitor_test',
+        files('runtime/resource_monitor_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep],
+    ),
+)
+
+test(
     'runtime_stats_publisher',
     executable(
         'runtime_stats_publisher_test',
