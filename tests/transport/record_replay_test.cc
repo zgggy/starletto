@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "basement/transport/record/message_recorder.h"
@@ -309,5 +310,18 @@ TEST_CASE("replayer still reads v1 recordings without schema identity") {
     REQUIRE_EQ(replayer.wall_clock_ns(entries[0]), entries[0].timestamp_ns);
 
     replayer.close();
+    std::remove(path.c_str());
+}
+
+TEST_CASE("recordings are created owner-only") {
+    const auto path = make_record_path("perms");
+    {
+        auto recorder = MessageRecorder{path};
+        recorder.open();
+    }
+    struct stat st{};
+    REQUIRE(::stat(path.c_str(), &st) == 0);
+    REQUIRE_EQ(st.st_uid, ::geteuid());
+    REQUIRE_EQ(st.st_mode & 0777, 0600);
     std::remove(path.c_str());
 }

@@ -468,3 +468,33 @@ TEST_CASE("host refuses to start when every component fails initialization") {
     REQUIRE(threw);
     REQUIRE_EQ(FailingInitComponent::calls.load(), 0);
 }
+
+// 安全基线：conf 不能把宿主指向任意 .so
+TEST_CASE("host rejects absolute or escaping plugin library paths") {
+    const auto context = RuntimeFactory::create_native_context();
+    auto registry = std::make_shared<star::runtime::ComponentRegistry>();
+
+    auto host = star::runtime::NativeComponentHost{context, registry};
+    auto plan = make_host_plan("evil", "test::Evil");
+    plan.static_link = false;
+    plan.component_library = std::string("/tmp/evil.so");
+
+    auto threw = false;
+    try {
+        host.load(plan);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+
+    auto plan_escape = make_host_plan("escape", "test::Escape");
+    plan_escape.static_link = false;
+    plan_escape.component_library = std::string("../../../tmp/evil.so");
+    threw = false;
+    try {
+        host.load(plan_escape);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+}

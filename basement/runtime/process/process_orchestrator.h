@@ -1,9 +1,12 @@
 #ifndef __STAR_RUNTIME_PROCESS_PROCESS_ORCHESTRATOR_H__
 #define __STAR_RUNTIME_PROCESS_PROCESS_ORCHESTRATOR_H__
 
+#include <poll.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -30,6 +33,22 @@ struct ProcessResult {
     bool ok{true};
     std::vector<std::pair<std::string, int>> exited_workers;
 };
+
+enum class RestartPolicy {
+    kNever = 0,
+    kOnFailure = 1,
+};
+
+struct LaunchedWorker {
+    pid_t pid{-1};
+    int ready_fd{-1};
+};
+
+// 指数退避：base, 2*base, 4*base...，最多放大 32 倍
+inline auto restart_delay_ms(int attempt, int64_t base_ms) -> int64_t {
+    const auto shift = std::min(std::max(attempt, 0), 5);
+    return std::max<int64_t>(0, base_ms) * (int64_t{1} << shift);
+}
 
 class ProcessOrchestrator {
   public:
@@ -68,7 +87,7 @@ class ProcessOrchestrator {
         return out;
     }
 
-    auto launch_worker(const WorkerLaunchConfig& config) const -> pid_t {
+    auto launch_worker(const WorkerLaunchConfig& config) const -> LaunchedWorker {
         auto argv = std::vector<std::string>{};
         argv.emplace_back(argv0_.empty() ? "native_runner" : argv0_);
         argv.emplace_back("--worker");
@@ -101,16 +120,49 @@ class ProcessOrchestrator {
         }
         cargv.push_back(nullptr);
 
+        // ready 管道：worker 在 host.start() 成功后写一个字节；supervisor 据此
+        // 区分「启动完成」与「进程活着但初始化卡住/失败」
+        int ready_pipe[2]{};
+        if (::pipe(ready_pipe) != 0) {
+            logE << "ProcessOrchestrator pipe failed for group: " << config.group;
+            return LaunchedWorker{};
+        }
+
         const auto pid = fork();
         if (pid == 0) {
+            ::close(ready_pipe[0]);
+            const auto fd_text = std::to_string(ready_pipe[1]);
+            ::setenv("STAR_READY_FD", fd_text.c_str(), 1);
             execv(cargv[0], cargv.data());
             _exit(127);
         }
+        ::close(ready_pipe[1]);
         if (pid < 0) {
+            ::close(ready_pipe[0]);
             logE << "ProcessOrchestrator fork failed for group: " << config.group;
-            return -1;
+            return LaunchedWorker{};
         }
-        return pid;
+        return LaunchedWorker{pid, ready_pipe[0]};
+    }
+
+    // 等待 worker 就绪。返回 false 表示：超时、子进程退出、或管道关闭。
+    // 不回收子进程（由 supervisor 的 waitpid 负责）。
+    static auto wait_ready(LaunchedWorker& worker, int timeout_ms) -> bool {
+        if (worker.ready_fd < 0) {
+            return false;
+        }
+        struct pollfd pfd {};
+        pfd.fd = worker.ready_fd;
+        pfd.events = POLLIN;
+        const auto ready = ::poll(&pfd, 1, timeout_ms);
+        auto ok = false;
+        if (ready > 0) {
+            char value = 0;
+            ok = (::read(worker.ready_fd, &value, 1) == 1) and value == 'R';
+        }
+        ::close(worker.ready_fd);
+        worker.ready_fd = -1;
+        return ok;
     }
 
     auto wait_all(const std::vector<pid_t>& pids, const std::unordered_map<pid_t, std::string>& pid_group) const -> ProcessResult {

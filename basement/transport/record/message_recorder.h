@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -111,6 +112,8 @@ class MessageRecorder final {
         if (not fp_) {
             throw star::excep::RuntimeError("MessageRecorder failed to open file: ", file_path_);
         }
+        // 录制可能含业务数据：只允许属主读写
+        (void)::chmod(file_path_.c_str(), 0600);
         header_ = RecordHeader{};
         header_.wall_clock_anchor_ns = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                                                   std::chrono::system_clock::now().time_since_epoch())

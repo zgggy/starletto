@@ -255,3 +255,22 @@ flowchart LR
   改为 `--deep`，每次门禁都验证插件 ABI
 - `docs/plugin_abi.md` 写明当前模型、必须一致项、指纹不覆盖项与后续共享库路线
 - **待做（第二阶段）**：抽 `libstar_runtime.so` + C ABI 入口 + 安装头文件/pkg-config
+
+## 后续整改 P1.3：supervisor 重启/退避/readiness（已完成 2026-11-14）
+
+- worker 启动后通过 `STAR_READY_FD` 管道在 host.start() 成功后写 ready 字节；
+  supervisor 超时/提前退出判为启动失败（`--ready-timeout-ms`，默认 3000）
+- `--restart=on-failure`（默认 never）+ `--max-restarts`（默认 3）+
+  `--restart-backoff-ms`（默认 500，指数退避，封顶 32x）
+- 重启不覆盖上一次尝试的录制：文件名插 `.attempt<N>`，保留崩溃现场
+- 回归：orchestrator 新增 4 用例（退避、ready 成功/无写入/超时）；实测 worker
+  超时后按策略重启、预算耗尽后整体失败；正常启动 ready 握手无告警
+
+## 后续整改 P1.4：安全基线（已完成 2026-11-14）
+
+- shm 段 `0600` + attach 时校验属主 uid（`fstat`），拒绝其它用户预建同名段
+- 插件库路径只允许模块内相对路径；绝对路径、`..` 越界直接拒绝（host 与 doctor
+  共用同一校验）
+- 录制文件创建后 `chmod 0600`
+- 新增 `docs/security_model.md`：资产、信任边界、威胁/缓解、非目标、部署建议
+- 回归：shm 权限、录制权限、插件路径拒绝 3 用例；30 套 199 用例、14/14

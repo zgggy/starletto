@@ -383,6 +383,7 @@ Transport 层当前不提供独立的 ACK 通道与 reader 确认语义；可靠
 
 **特性**：
 
+- 段模式 `0600`，attach 校验属主 uid（见 `docs/security_model.md`）
 - 4 个 Slot，循环使用
 - 每个 Slot 1MB（默认 4MB 总容量）
 - Futex 等待/唤醒实现高效同步

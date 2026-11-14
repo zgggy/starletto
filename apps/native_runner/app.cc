@@ -119,6 +119,11 @@ namespace star::native_runner {
 
         host.configure();
         host.start();
+        if (options.ready_fd >= 0) {
+            const char ready = 'R';
+            (void)::write(options.ready_fd, &ready, 1);
+            ::close(options.ready_fd);
+        }
         auto timeout_ms = int64_t{0};
         if (sleep_ms > 0 && options.frames > 0) {
             timeout_ms = sleep_ms * options.frames + 500;
@@ -237,9 +242,7 @@ namespace star::native_runner {
 
         const auto route_plan = orchestrator.build_route_plan(channel_producers, channel_consumers);
 
-        auto pids = std::vector<pid_t>{};
-        auto pid_group = std::unordered_map<pid_t, std::string>{};
-
+        auto configs = std::unordered_map<std::string, star::runtime::process::WorkerLaunchConfig>{};
         for (auto& [group, paths] : groups) {
             std::sort(paths.begin(), paths.end());
             paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
@@ -259,16 +262,120 @@ namespace star::native_runner {
             } else if (not options.log_file.empty()) {
                 config.log_file = options.log_file;
             }
-
-            const auto pid = orchestrator.launch_worker(config);
-            if (pid < 0) {
-                return 5;
-            }
-            pids.push_back(pid);
-            pid_group.emplace(pid, group);
+            configs.emplace(group, std::move(config));
         }
 
-        const auto result = orchestrator.wait_all(pids, pid_group);
+        const auto policy = options.restart_on_failure ? star::runtime::process::RestartPolicy::kOnFailure
+                                                       : star::runtime::process::RestartPolicy::kNever;
+        const auto max_restarts = std::max<int64_t>(0, options.max_restarts);
+        const auto backoff_ms = std::max<int64_t>(0, options.restart_backoff_ms);
+        const auto ready_timeout_ms = std::max<int64_t>(100, options.ready_timeout_ms);
+
+        auto attempts = std::unordered_map<std::string, int>{};
+        auto running = std::unordered_map<pid_t, std::string>{};
+        auto result = star::runtime::process::ProcessResult{};
+
+        // 启动一个 group；ready 超时/未就绪也走失败与重启策略
+        std::function<void(const std::string&)> start_group = [&](const std::string& group) {
+            const auto config_it = configs.find(group);
+            if (config_it == configs.end()) {
+                result.ok = false;
+                result.exited_workers.emplace_back(group, -1);
+                return;
+            }
+            // 重启不覆盖上一次尝试的录制：崩溃现场要保留
+            auto launch_config = config_it->second;
+            const auto attempt_index = attempts[group];
+            if (attempt_index > 0 and not launch_config.record_file.empty()) {
+                const auto dot = launch_config.record_file.find_last_of('.');
+                const auto suffix = ".attempt" + std::to_string(attempt_index + 1);
+                if (dot == std::string::npos) {
+                    launch_config.record_file += suffix;
+                } else {
+                    launch_config.record_file.insert(dot, suffix);
+                }
+            }
+            auto launched = orchestrator.launch_worker(launch_config);
+            if (launched.pid <= 0) {
+                logE << "[Supervisor] launch failed: group=" << group;
+                result.ok = false;
+                result.exited_workers.emplace_back(group, -1);
+                return;
+            }
+            if (star::runtime::process::ProcessOrchestrator::wait_ready(launched, static_cast<int>(ready_timeout_ms))) {
+                running.emplace(launched.pid, group);
+                return;
+            }
+            logE << "[Supervisor] worker not ready within " << ready_timeout_ms << "ms: group=" << group;
+            ::kill(launched.pid, SIGKILL);
+            int status = 0;
+            (void)::waitpid(launched.pid, &status, 0);
+            const auto used = ++attempts[group];
+            if (policy == star::runtime::process::RestartPolicy::kOnFailure and used <= max_restarts) {
+                const auto delay = star::runtime::process::restart_delay_ms(used, backoff_ms);
+                logW << "[Supervisor] restarting group=" << group << " in " << delay << "ms (attempt "
+                     << used << "/" << max_restarts << ")";
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                start_group(group);
+                return;
+            }
+            result.ok = false;
+            result.exited_workers.emplace_back(group, -1);
+        };
+
+        for (const auto& [group, _] : groups) {
+            start_group(group);
+        }
+
+        while (not running.empty()) {
+            int status = 0;
+            const auto pid = ::waitpid(-1, &status, 0);
+            if (pid < 0) {
+                logE << "[Supervisor] waitpid failed";
+                result.ok = false;
+                break;
+            }
+            const auto group_it = running.find(pid);
+            if (group_it == running.end()) {
+                continue;
+            }
+            const auto group = group_it->second;
+            running.erase(group_it);
+
+            const auto exited_ok = WIFEXITED(status) and WEXITSTATUS(status) == 0;
+            if (exited_ok) {
+                logI << "[Supervisor] worker exited ok: group=" << group;
+                result.exited_workers.emplace_back(group, 0);
+                continue;
+            }
+
+            int code = -1;
+            if (WIFEXITED(status)) {
+                code = WEXITSTATUS(status);
+                logE << "[Supervisor] worker exited non-zero: group=" << group << ", code=" << code;
+            } else if (WIFSIGNALED(status)) {
+                code = -WTERMSIG(status);
+                logE << "[Supervisor] worker killed by signal: group=" << group << ", sig=" << WTERMSIG(status);
+            }
+
+            const auto used = ++attempts[group];
+            if (policy == star::runtime::process::RestartPolicy::kOnFailure and used <= max_restarts) {
+                const auto delay = star::runtime::process::restart_delay_ms(used, backoff_ms);
+                logW << "[Supervisor] restarting group=" << group << " in " << delay << "ms (attempt "
+                     << used << "/" << max_restarts << ")";
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                start_group(group);
+                continue;
+            }
+            result.ok = false;
+            result.exited_workers.emplace_back(group, code);
+        }
+
+        if (not result.ok) {
+            logE << "[Supervisor] run failed, restart-policy="
+                 << (policy == star::runtime::process::RestartPolicy::kOnFailure ? "on-failure" : "never")
+                 << ", max-restarts=" << max_restarts;
+        }
         return result.ok ? 0 : 10;
     }
     auto App::list(const std::vector<std::string>& module_conf_paths) -> int  {
@@ -1061,12 +1168,8 @@ namespace star::native_runner {
         if (lib.empty()) {
             return {};
         }
-        if (lib.find('/') != std::string::npos || lib.find('\\') != std::string::npos) {
-            const auto& module_dir = plan.module_dir.value_or("");
-            if (not module_dir.empty() && lib.size() > 0 && lib.front() != '/') {
-                return module_dir + "/" + lib;
-            }
-            return lib;
+        if (const auto validated = star::runtime::validate_declared_library(lib, plan.module_dir.value_or("")); not validated.empty()) {
+            return validated;
         }
         if (auto resolved = resolve_component_dir_library(plan, lib)) {
             return *resolved;

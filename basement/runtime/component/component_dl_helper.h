@@ -45,6 +45,42 @@ struct DlHandle {
     }
 };
 
+// 插件路径策略：conf 里允许「纯库名」（由构建/安装目录解析）或模块内相对路径；
+// 拒绝绝对路径与 `..` 越界，防止 conf 把宿主指向任意 .so。
+inline auto validate_declared_library(const std::string& lib, const std::string& module_dir) -> std::string {
+    if (lib.empty()) {
+        return {};
+    }
+    const auto has_separator = lib.find('/') != std::string::npos or lib.find('\\') != std::string::npos;
+    if (not has_separator) {
+        return {};
+    }
+    if (lib.front() == '/' or lib.front() == '\\') {
+        throw star::excep::RuntimeError("plugin library must be relative to the module directory, got absolute path: ", lib);
+    }
+    if (lib.find("..") != std::string::npos) {
+        throw star::excep::RuntimeError("plugin library path must not contain '..': ", lib);
+    }
+    if (module_dir.empty()) {
+        throw star::excep::RuntimeError("plugin library path requires a module directory: ", lib);
+    }
+    std::error_code ec;
+    const auto root = std::filesystem::weakly_canonical(std::filesystem::path(module_dir), ec);
+    if (ec) {
+        throw star::excep::RuntimeError("cannot resolve module directory: ", module_dir);
+    }
+    const auto candidate = std::filesystem::weakly_canonical(root / lib, ec);
+    if (ec) {
+        throw star::excep::RuntimeError("cannot resolve plugin library: ", lib);
+    }
+    const auto root_text = root.string();
+    const auto candidate_text = candidate.string();
+    if (candidate_text.rfind(root_text, 0) != 0) {
+        throw star::excep::RuntimeError("plugin library escapes module directory: ", lib);
+    }
+    return candidate_text;
+}
+
 class ComponentDlHelper {
   public:
     auto resolve_library_key(const star::runtime::plan::ComponentLoadPlan& plan) const -> std::string {
@@ -52,12 +88,8 @@ class ComponentDlHelper {
         if (lib.empty()) {
             return {};
         }
-        if (lib.find('/') != std::string::npos || lib.find('\\') != std::string::npos) {
-            const auto& module_dir = plan.module_dir.value_or("");
-            if (not module_dir.empty() && lib.size() > 0 && lib.front() != '/') {
-                return module_dir + "/" + lib;
-            }
-            return lib;
+        if (const auto validated = validate_declared_library(lib, plan.module_dir.value_or("")); not validated.empty()) {
+            return validated;
         }
         if (auto resolved = resolve_component_dir_library(plan, lib)) {
             return *resolved;

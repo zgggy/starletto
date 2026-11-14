@@ -1,3 +1,4 @@
+#include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -70,9 +71,13 @@ TEST_CASE("ProcessOrchestrator launches a worker and reports a zero exit") {
 
     auto config = WorkerLaunchConfig{};
     config.group = "smoke";
-    const auto pid = orchestrator.launch_worker(config);
-    REQUIRE(pid > 0);
+    auto launched = orchestrator.launch_worker(config);
+    REQUIRE(launched.pid > 0);
+    if (launched.ready_fd >= 0) {
+        ::close(launched.ready_fd);
+    }
 
+    const auto pid = launched.pid;
     const auto result = orchestrator.wait_all({pid}, {{pid, "smoke"}});
     REQUIRE(result.ok);
     REQUIRE_EQ(result.exited_workers.size(), 1U);
@@ -85,9 +90,13 @@ TEST_CASE("ProcessOrchestrator surfaces a non-zero worker exit") {
 
     auto config = WorkerLaunchConfig{};
     config.group = "broken";
-    const auto pid = orchestrator.launch_worker(config);
-    REQUIRE(pid > 0);
+    auto launched = orchestrator.launch_worker(config);
+    REQUIRE(launched.pid > 0);
+    if (launched.ready_fd >= 0) {
+        ::close(launched.ready_fd);
+    }
 
+    const auto pid = launched.pid;
     const auto result = orchestrator.wait_all({pid}, {{pid, "broken"}});
     REQUIRE(not result.ok);
     REQUIRE_EQ(result.exited_workers.front().second, 1);
@@ -98,11 +107,15 @@ TEST_CASE("ProcessOrchestrator aggregates multiple workers") {
 
     auto config = WorkerLaunchConfig{};
     config.group = "a";
-    const auto pid_a = orchestrator.launch_worker(config);
+    auto launched_a = orchestrator.launch_worker(config);
     config.group = "b";
-    const auto pid_b = orchestrator.launch_worker(config);
-    REQUIRE(pid_a > 0);
-    REQUIRE(pid_b > 0);
+    auto launched_b = orchestrator.launch_worker(config);
+    REQUIRE(launched_a.pid > 0);
+    REQUIRE(launched_b.pid > 0);
+    if (launched_a.ready_fd >= 0) { ::close(launched_a.ready_fd); }
+    if (launched_b.ready_fd >= 0) { ::close(launched_b.ready_fd); }
+    const auto pid_a = launched_a.pid;
+    const auto pid_b = launched_b.pid;
 
     const auto result = orchestrator.wait_all({pid_a, pid_b}, {{pid_a, "a"}, {pid_b, "b"}});
     REQUIRE(result.ok);
@@ -110,3 +123,63 @@ TEST_CASE("ProcessOrchestrator aggregates multiple workers") {
 }
 
 }  // namespace
+
+TEST_CASE("restart backoff grows exponentially and caps") {
+    REQUIRE_EQ(star::runtime::process::restart_delay_ms(0, 500), int64_t{500});
+    REQUIRE_EQ(star::runtime::process::restart_delay_ms(1, 500), int64_t{1000});
+    REQUIRE_EQ(star::runtime::process::restart_delay_ms(2, 500), int64_t{2000});
+    REQUIRE_EQ(star::runtime::process::restart_delay_ms(10, 500), int64_t{16000});
+}
+
+TEST_CASE("wait_ready reports a worker that writes the ready byte") {
+    int fds[2]{};
+    REQUIRE(::pipe(fds) == 0);
+    const auto pid = ::fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        ::close(fds[0]);
+        const char ready = 'R';
+        (void)::write(fds[1], &ready, 1);
+        ::close(fds[1]);
+        ::_exit(0);
+    }
+    ::close(fds[1]);
+    auto worker = star::runtime::process::LaunchedWorker{pid, fds[0]};
+    REQUIRE(star::runtime::process::ProcessOrchestrator::wait_ready(worker, 1000));
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+}
+
+TEST_CASE("wait_ready reports failure when the worker exits without ready") {
+    int fds[2]{};
+    REQUIRE(::pipe(fds) == 0);
+    const auto pid = ::fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        ::close(fds[0]);
+        ::_exit(0);
+    }
+    ::close(fds[1]);
+    auto worker = star::runtime::process::LaunchedWorker{pid, fds[0]};
+    REQUIRE(not star::runtime::process::ProcessOrchestrator::wait_ready(worker, 1000));
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+}
+
+TEST_CASE("wait_ready times out when the worker neither writes nor exits") {
+    int fds[2]{};
+    REQUIRE(::pipe(fds) == 0);
+    const auto pid = ::fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        ::close(fds[0]);
+        ::sleep(1);
+        ::_exit(0);
+    }
+    ::close(fds[1]);
+    auto worker = star::runtime::process::LaunchedWorker{pid, fds[0]};
+    REQUIRE(not star::runtime::process::ProcessOrchestrator::wait_ready(worker, 50));
+    ::kill(pid, SIGKILL);
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+}

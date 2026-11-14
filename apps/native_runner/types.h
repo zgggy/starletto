@@ -22,6 +22,11 @@ struct RunOptions {
     std::string system_channels;
     std::string record_file;
     std::string record_dir;
+    bool restart_on_failure{false};
+    int64_t max_restarts{3};
+    int64_t restart_backoff_ms{500};
+    int64_t ready_timeout_ms{3000};
+    int ready_fd{-1};
     bool deep{false};
     std::string log_file;
     std::string log_dir;

@@ -86,6 +86,14 @@ static auto parse_args(int argc, char** argv) -> Inputs {
             inputs.options.record_dir = a.substr(std::string("--record-dir=").size());
             continue;
         }
+        if (a.rfind("--restart=", 0) == 0) {
+            const auto value = a.substr(std::string("--restart=").size());
+            inputs.options.restart_on_failure = value == "on-failure";
+            continue;
+        }
+        if (auto v = parse_i64_arg(a, "--max-restarts=")) { inputs.options.max_restarts = *v; continue; }
+        if (auto v = parse_i64_arg(a, "--restart-backoff-ms=")) { inputs.options.restart_backoff_ms = *v; continue; }
+        if (auto v = parse_i64_arg(a, "--ready-timeout-ms=")) { inputs.options.ready_timeout_ms = *v; continue; }
         if (a == "--worker") { inputs.options.worker = true; continue; }
         if (a == "--multi-process") { inputs.options.multi_process = true; continue; }
         if (auto v = parse_i64_arg(a, "--frames=")) { inputs.options.frames = *v; continue; }
@@ -137,6 +145,13 @@ auto main(int argc, char** argv) -> int {
         }
         if (not inputs.options.log_file.empty()) {
             ::setenv("STAR_LOG_FILE", inputs.options.log_file.c_str(), 1);
+        }
+        if (const auto* ready_fd = std::getenv("STAR_READY_FD"); ready_fd != nullptr) {
+            try {
+                inputs.options.ready_fd = std::stoi(ready_fd);
+            } catch (...) {
+                inputs.options.ready_fd = -1;
+            }
         }
         star::native_runner::App app;
         if (inputs.options.mode == "list") {

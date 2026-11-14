@@ -65,6 +65,16 @@ flowchart LR
 - **RuntimeContext**：一个"能力包"，组件通过它拿到总线、调度器、参数表等 7 样东西。组件不知道这些东西怎么实现的。
 - **NativeComponentHost**：把上面两者组装起来，负责"加载→实例化→接线→调度"。
 
+## 2.5 多进程监督
+
+`star run --multi-process` 由 supervisor 按 process_group fork/exec worker：
+
+- **ready 握手**：worker 在 `host.start()` 成功后通过继承的 `STAR_READY_FD` 写一个
+  字节；超时或提前退出判为启动失败（`--ready-timeout-ms`，默认 3000ms）。
+- **重启策略**：`--restart=on-failure`（默认 never）、`--max-restarts`（默认 3）、
+  `--restart-backoff-ms`（默认 500，指数退避、封顶 32 倍）。预算耗尽则整体失败。
+- **录制现场**：重启尝试的录制文件带 `.attempt<N>` 后缀，不覆盖上一次现场。
+
 ## 3. 两种加载方式
 
 `component.conf` 里的 `component_library` 与 `static_link` 决定走哪条路：

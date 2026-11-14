@@ -20,6 +20,7 @@ show_help() {
     echo "  star clean [参数...]               清理 Meson build 目录"
     echo "  star install [参数...]             安装产物到本地目录（DESTDIR 方式）"
     echo "  star run [参数...] <目标...>       运行 native runner（build 产物或安装产物）"
+    echo "    - 多进程监督: --restart=on-failure --max-restarts=N --restart-backoff-ms=N --ready-timeout-ms=N"
     echo "  star list [参数...] [目标...]      列出模块与组件"
     echo "  star graph [参数...] [目标...]     输出模块依赖图（dot）"
     echo "  star graph --components [目标...]  输出组件/Topic 拓扑图（dot）"

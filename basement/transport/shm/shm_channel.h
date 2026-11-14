@@ -288,16 +288,29 @@ class ShmChannel {
         const auto map_size = static_cast<size_t>(sizeof(ShmHeader)) + static_cast<size_t>(cap);
 
         bool created = false;
-        int fd = ::shm_open(name_.c_str(), O_CREAT | O_EXCL | O_RDWR, 0666);
+        // 0600：同机其它用户不能读写/伪造通道数据；跨用户部署需要显式方案（见 docs/security_model.md）
+        int fd = ::shm_open(name_.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
         if (fd >= 0) {
             created = true;
         } else {
-            fd = ::shm_open(name_.c_str(), O_CREAT | O_RDWR, 0666);
+            fd = ::shm_open(name_.c_str(), O_CREAT | O_RDWR, 0600);
             if (fd < 0) {
                 throw star::excep::RuntimeError("shm_open failed: ", name_, ", errno=", errno);
             }
         }
         fd_guard_ = star::base::FdGuard(fd);
+
+        // 段必须属于当前用户：防止同机其它用户预先创建同名段并注入数据
+        {
+            struct stat st{};
+            if (::fstat(fd_guard_.get(), &st) != 0) {
+                throw star::excep::RuntimeError("fstat failed: ", name_, ", errno=", errno);
+            }
+            if (st.st_uid != ::geteuid()) {
+                throw star::excep::RuntimeError("shm segment owner mismatch: ", name_, ", owner_uid=", st.st_uid,
+                                                ", current_uid=", ::geteuid());
+            }
+        }
 
         if (created) {
             if (::ftruncate(fd_guard_.get(), static_cast<off_t>(map_size)) != 0) {

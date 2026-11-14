@@ -2,6 +2,7 @@
 #include <chrono>
 #include <csignal>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <cstdint>
 #include <cstring>
@@ -467,4 +468,18 @@ TEST_CASE("shm segment with a live holder is never treated as orphan") {
     const auto* data = third->payload_ptr(result->slot);
     REQUIRE(data != nullptr);
     REQUIRE(std::memcmp(data, payload.data(), payload.size()) == 0);
+}
+
+// 安全基线：段必须由属主创建/可读写，其它用户不能注入
+TEST_CASE("shm segments are created owner-only") {
+    const auto name = make_name();
+    auto channel = std::make_shared<ShmChannel>(name, 1024 * 1024);
+
+    const auto fd = ::shm_open(name.c_str(), O_RDWR, 0600);
+    REQUIRE(fd >= 0);
+    struct stat st{};
+    REQUIRE(::fstat(fd, &st) == 0);
+    REQUIRE_EQ(st.st_uid, ::geteuid());
+    REQUIRE_EQ(st.st_mode & 0777, 0600);
+    ::close(fd);
 }
