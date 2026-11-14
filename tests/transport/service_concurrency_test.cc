@@ -55,12 +55,6 @@ auto make_serialized_request(int value) -> SerializedServiceRequest {
     return SerializedServiceRequest{request, serializer};
 }
 
-auto echo_value(const ServiceRequest& request) -> int {
-    if (const auto binary = request.body.payload.as<BinaryPayloadView>()) {
-        return EchoMsg::from_binary(binary->bytes()).value;
-    }
-    return -1;
-}
 
 // 每个测试起一条普通 MessageBus + 一个 RpcServer；客户端直接用普通通道
 struct EchoServer {

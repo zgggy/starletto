@@ -195,7 +195,11 @@ class FixedLayoutView {
         if (header->magic != 0x5354 or header->version != kFixedLayoutVersion) {
             return false;
         }
-        if (header->fixed_section_size < sizeof(FixedLayoutHeader) or header->total_size > size_) {
+        if (header->fixed_section_size < sizeof(FixedLayoutHeader) or header->total_size < header->fixed_section_size or header->total_size > size_) {
+            return false;
+        }
+        // 槽位区必须是整槽：否则 field_count 向下取整会接受截断帧
+        if ((header->fixed_section_size - sizeof(FixedLayoutHeader)) % sizeof(FixedFieldSlot) != 0) {
             return false;
         }
         return true;
@@ -257,14 +261,11 @@ class FixedLayoutView {
     }
 
     auto get_string(size_t index) const -> std::optional<std::string_view> {
-        const auto slot = read_slot(index);
-        if (not slot.has_value() || slot->type_tag != FixedFieldSlot::kTagString) return std::nullopt;
-        const auto fixed_size = reinterpret_cast<const FixedLayoutHeader*>(data_)->fixed_section_size;
-        const auto var_base = data_ + fixed_size;
-        if (slot->data.var_ref.offset + slot->data.var_ref.length > size_ - fixed_size) {
+        const auto bytes = get_var_ref_bytes(index, FixedFieldSlot::kTagString);
+        if (not bytes.has_value()) {
             return std::nullopt;
         }
-        return std::string_view(reinterpret_cast<const char*>(var_base + slot->data.var_ref.offset), slot->data.var_ref.length);
+        return std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size());
     }
 
     auto get_object_bytes(size_t index) const -> std::optional<std::span<const uint8_t>> { return get_var_ref_bytes(index, FixedFieldSlot::kTagObject); }
@@ -301,11 +302,14 @@ class FixedLayoutView {
         const auto slot = read_slot(index);
         if (not slot.has_value() || slot->type_tag != expected_tag) return std::nullopt;
         const auto fixed_size = reinterpret_cast<const FixedLayoutHeader*>(data_)->fixed_section_size;
-        const auto var_base = data_ + fixed_size;
-        if (slot->data.var_ref.offset + slot->data.var_ref.length > size_ - fixed_size) {
+        // valid() 已保证 fixed_size <= size_；偏移用 size_t 相加，避免 32 位回绕
+        const auto available = size_ - fixed_size;
+        const auto offset = static_cast<size_t>(slot->data.var_ref.offset);
+        const auto length = static_cast<size_t>(slot->data.var_ref.length);
+        if (offset > available or length > available - offset) {
             return std::nullopt;
         }
-        return std::span<const uint8_t>(var_base + slot->data.var_ref.offset, slot->data.var_ref.length);
+        return std::span<const uint8_t>(data_ + fixed_size + offset, length);
     }
 
     const uint8_t* data_{nullptr};

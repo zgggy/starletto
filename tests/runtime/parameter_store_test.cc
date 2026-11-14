@@ -19,9 +19,14 @@ TEST_CASE("NativeParameterStore roundtrips typed values") {
     store.set("planning.name", SchemaValue{std::string{"lattice"}});
     store.set("control.enable", SchemaValue{true});
 
-    REQUIRE_EQ(std::get<int64_t>(store.get("planning.cycle_ms").as_scalar()), int64_t{100});
-    REQUIRE_EQ(std::get<std::string>(store.get("planning.name").as_scalar()), std::string{"lattice"});
-    REQUIRE_EQ(std::get<bool>(store.get("control.enable").as_scalar()), true);
+    // 必须先把 SchemaValue 存下来：as_scalar() 返回内部引用，直接对临时对象取值
+    // 会在 REQUIRE_EQ 比较前销毁临时对象（ASan: stack-use-after-scope）
+    const auto cycle_ms = store.get("planning.cycle_ms");
+    const auto name = store.get("planning.name");
+    const auto enable = store.get("control.enable");
+    REQUIRE_EQ(std::get<int64_t>(cycle_ms.as_scalar()), int64_t{100});
+    REQUIRE_EQ(std::get<std::string>(name.as_scalar()), std::string{"lattice"});
+    REQUIRE_EQ(std::get<bool>(enable.as_scalar()), true);
 }
 
 TEST_CASE("NativeParameterStore get of a missing key returns null") {

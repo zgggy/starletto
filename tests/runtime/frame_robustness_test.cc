@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <span>
 #include <string>
 #include <vector>
@@ -80,5 +81,50 @@ TEST_CASE("fixed layout decoder survives fully random frames") {
             }
         } catch (const std::exception&) {
         }
+    }
+}
+
+// ASan 回归：fixed_section_size 与 total_size 不一致、变长偏移越界都必须在
+// 解码前被拒绝，不能靠 size_ - fixed_size 无符号回绕「通过」检查。
+TEST_CASE("fixed layout rejects inconsistent section sizes and out-of-range refs") {
+    const auto make_header = [](const std::vector<uint8_t>& frame) {
+        auto header = star::schema::FixedLayoutHeader{};
+        std::memcpy(&header, frame.data(), sizeof(header));
+        return header;
+    };
+
+    auto frame = make_valid_frame();
+    auto header = make_header(frame);
+    header.total_size = static_cast<uint32_t>(sizeof(star::schema::FixedLayoutHeader));
+    header.fixed_section_size = static_cast<uint16_t>(frame.size() + 16);
+    std::memcpy(frame.data(), &header, sizeof(header));
+    REQUIRE(not star::schema::is_fixed_layout_frame(frame));
+    try {
+        (void)Plan::from_fixed_layout(frame);
+    } catch (const std::exception&) {
+    }
+
+    frame = make_valid_frame();
+    header = make_header(frame);
+    header.fixed_section_size = static_cast<uint16_t>(sizeof(star::schema::FixedLayoutHeader) + 1);
+    std::memcpy(frame.data(), &header, sizeof(header));
+    REQUIRE(not star::schema::is_fixed_layout_frame(frame));
+    try {
+        (void)Plan::from_fixed_layout(frame);
+    } catch (const std::exception&) {
+    }
+
+    // 帧头合法但第一个槽位的字符串引用指向帧外
+    frame = make_valid_frame();
+    auto slot = star::schema::FixedFieldSlot{};
+    std::memcpy(&slot, frame.data() + sizeof(star::schema::FixedLayoutHeader), sizeof(slot));
+    slot.type_tag = star::schema::FixedFieldSlot::kTagString;
+    slot.data.var_ref.offset = 0xFFFFFF00U;
+    slot.data.var_ref.length = 0x100U;
+    std::memcpy(frame.data() + sizeof(star::schema::FixedLayoutHeader), &slot, sizeof(slot));
+    REQUIRE(star::schema::is_fixed_layout_frame(frame));
+    try {
+        (void)Plan::from_fixed_layout(frame);
+    } catch (const std::exception&) {
     }
 }

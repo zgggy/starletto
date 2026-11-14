@@ -369,8 +369,11 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 34 套 212 用例全绿；`star check` 15/15；install-smoke 用安装树 runner 实跑；
+- 34 套 213 用例全绿；`star check` 15/15；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
-- UBSan 构建 34/34 全绿（连续 3 次全量复跑）。
+- UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
+- Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用
+  （stack-use-after-scope）；固定布局帧 `fixed_section_size > total_size` 时
+  `size_ - fixed_size` 无符号回绕导致越界读。新增 `fixed_layout rejects...` 回归。
 
 详见 `docs/plugin_abi.md`。

@@ -49,7 +49,7 @@ flowchart LR
 | 项 | 状态 |
 |---|---|
 | 构建 | 0 错误 0 警告（5 类告警提为 `-Werror`） |
-| 测试 | 34 套 212 用例 |
+| 测试 | 34 套 213 用例 |
 | CI 门禁 | `star check` 15/15 |
 | 业务模块 | setting/config、setting/parameter、planning/motion（示例）、control/pid |
 | 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 收口；P1.1 B1 安装面、B2 插件 ABI 终态、P2.5 macOS 资源采样已完成 |
