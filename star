@@ -29,7 +29,7 @@ show_help() {
     echo "  star param [参数...] <命令>         typed parameter service 工具（list/get/set, 支持 --format=json）"
     echo "  star schema <命令>                  schema 工具（fmt/gen/compat/lint）"
     echo "  star record info <文件>             查看录制文件信息（消息数/topics/时间范围）"
-    echo "  star replay <文件> [speed]          回放录制文件（支持速率控制）"
+    echo "  star replay <文件> [speed] [--publish] [--channel=] [--repeat=]  回放；--publish 写回通道"
     echo "  star monitor [--monitor-ms=<ms>] [--once]  实时查看各 worker 的通道统计（频率/延迟/丢帧/QoS）"
     echo "  star check [参数...] [目标...]      CI Guard: 构建后自动化验证（build + doctor + smoke）"
     echo "  star test [参数...]                 运行单元测试（Meson test）"

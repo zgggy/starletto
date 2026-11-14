@@ -121,6 +121,12 @@ class MessageReplayer final {
         return header_.wall_clock_anchor_ns + (entry.timestamp_ns - header_.steady_anchor_ns);
     }
 
+    // 一次性快照（回放前校验、发布器预扫描通道都要用）
+    auto entries() const -> std::vector<RecordEntry> {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return entries_;
+    }
+
     auto summaries() const -> std::vector<ChannelSummary> {
         std::lock_guard<std::mutex> lock(mutex_);
         return build_summaries(entries_);

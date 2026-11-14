@@ -30,3 +30,4 @@
 | 2026-11-12 | codegen 支持跨文件 `import "path"`：直接可见符号表、重名报错、加载器循环检测、`--include-root` 换算 #include；descriptor children 与固定布局引用导入类型 | schema/build | remediation_plan P2-4 |
 | 2026-11-12 | schema 支持 `reserved 2, 4;`：禁止复用已删除字段的 id，lint 校验冲突，reserved 集合参与内容哈希；`star check` 增加 codegen 自检步骤（11/11） | schema | remediation_plan P2-2 |
 | 2026-11-12 | 新增跨进程 RPC 端到端测试：fork 两进程经 shm 路由完成 request/response（P1-1 遗留的最后验证缺口） | tests/transport | remediation_plan P1-1 遗留 |
+| 2026-11-14 | 回放写回通道：新增 `MessagePublisher` 与 `star replay --publish/--channel/--repeat/--strict`，录制字节原样发布、schema 身份随行；回放前用 registry 校验身份 | transport/apps | record v2 收口 |

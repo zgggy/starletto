@@ -533,7 +533,7 @@ pending 并返回 `ok=false`。因为两条都是普通通道，路由计划、�
 
 ## 9. Record & Replay
 
-### 10.1 MessageRecorder
+### 9.1 MessageRecorder（格式 v2）
 
 录制指定通道的消息到二进制文件：
 
@@ -543,32 +543,57 @@ bus->enable_recorder("/tmp/record.bin");
 
 // 仅录制特定通道
 bus->enable_record_channel("/sensor/lidar");
-
-// 录制服务请求/响应（自动支持）
-bus->enable_record_channel("/parameter/get/request");
-bus->enable_record_channel("/parameter/get/response");
 ```
 
-**录制格式**：`STARREC` + RecordEntry[]
+格式 v2 头部带墙钟/单调时钟双锚点，条目携带 schema 身份：
 
 ```cpp
 struct RecordEntry {
-    int64_t timestamp_ns;
-    std::string topic_name;      // 通道名称（包括 service 通道）
-    std::string type_name;       // 类型名称
-    std::vector<uint8_t> payload; // 二进制 payload
+    int64_t timestamp_ns;          // 单调时钟（回放节奏用）
+    std::string channel_name;
+    std::string type_name;
+    schema::SchemaTypeId schema_type_id;  // name + version + hash
+    std::vector<uint8_t> payload;  // 当时写出的字节，原样保存
 };
 ```
 
-**Service 通道录制**：Recorder 自动支持录制任何已声明的 channel，包括：
-- Stream 通道：`/sensor/lidar`, `/cmd/velocity`
-- Service 请求通道：`/parameter/get/request`
-- Service 响应通道：`/parameter/get/response`
-- ACK 通道：`/sensor/lidar/ack`
+墙钟换算：`wall = wall_anchor + (entry.timestamp_ns - steady_anchor)`。
+v1 文件仍可读（无身份、无锚点）。录制条目自带身份比「头部通道表」更强：
+同通道运行中重新声明版本也不会被后来的声明覆盖。
 
-### 10.2 MessageReplayer
+### 9.2 MessageReplayer
 
-回放录制的消息，用于仿真和回测。
+```cpp
+MessageReplayer replayer(path);
+replayer.open();
+replayer.summaries();                              // 按通道聚合版本/消息数/时间范围
+replayer.validate_against(expected_ids);           // 回放前比对本地编译身份
+replayer.play_all_entries(fn, speed);              // 完整条目（含 schema 身份）
+```
+
+### 9.3 MessagePublisher（回放写回通道）
+
+回放**不重新编码**：录制里存的是当时写出的字节，原样写回才能验证
+「旧数据在新代码里怎么解码」——这正是 per-channel 解码策略生效的场景。
+身份随条目带过去，接收端的类型校验与策略据此工作。
+
+```cpp
+MessagePublisher publisher(bus);
+publisher.publish(entry);   // 懒创建 writer，按 entry.channel_name 路由
+```
+
+CLI：
+
+```bash
+star record info /tmp/rec.starrec
+star replay /tmp/rec.starrec 1.0                      # 只打印
+star replay /tmp/rec.starrec 1.0 --publish            # 写回通道（默认 shm_routed）
+star replay /tmp/rec.starrec --publish --channel=planning.trajectory --repeat=2
+star replay /tmp/rec.starrec --publish --strict       # 录制 schema 未注册/hash 不一致则失败
+```
+
+`--publish` 会先把录制里的 schema 身份与本地注册表（builtin + setting）比对：
+未知或 hash 不一致时告警，`--strict` 下直接拒绝发布。
 
 ***
 

@@ -38,6 +38,16 @@ test(
 )
 
 test(
+    'transport_replay_publish',
+    executable(
+        'transport_replay_publish_test',
+        files('transport/replay_publish_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [transport_native_dep],
+    ),
+)
+
+test(
     'transport_rpc_multiprocess',
     executable(
         'transport_rpc_multiprocess_test',

@@ -42,7 +42,7 @@ flowchart LR
 | 项 | 状态 |
 |---|---|
 | 构建 | 0 错误 0 警告（5 类告警提为 `-Werror`） |
-| 测试 | 26 套 173 用例 |
+| 测试 | 27 套 175 用例 |
 | CI 门禁 | `star check` 11/11 |
 | 业务模块 | setting/config、setting/parameter、planning/motion（示例）、control/pid |
 | 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 已修 P2-1/P2-2/P2-3/P2-5/P2-7/P2-8/P2-9（多版本 schema、解码策略、线程模型、结构化日志、跨进程解码、录制 v2、服务并入通道）；P2-2/P2-4 已完成（多版本 schema、reserved、codegen 拆层/多 root/跨文件 import/ODR）；**P2 全部收口** |
