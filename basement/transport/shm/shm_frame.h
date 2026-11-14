@@ -48,7 +48,6 @@ struct ShmFrameView {
     const uint8_t* payload{nullptr};
     uint32_t payload_size{0};
 };
-#pragma pack(pop)
 
 inline auto parse_shm_frame(std::span<const uint8_t> bytes) -> std::optional<ShmFrameView> {
     if (bytes.size() < sizeof(ShmFrameHeader)) {
