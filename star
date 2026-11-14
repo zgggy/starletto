@@ -672,6 +672,29 @@ check_schema_lint() {
     return $failed
 }
 
+# 运行时冒烟：真的装配一次组件并启动/停止调度器。
+# 单元测试不经过 App::run，曾漏掉「context 被 move 后仍被解引用」这类装配期崩溃。
+check_runtime_smoke() {
+    local runner="$1"
+    local conf="${PROJECT_ROOT}/modules/planning/motion/component.conf"
+    local record_file="/tmp/starletto_smoke_$$.starrec"
+    if [ ! -x "$runner" ]; then
+        log_error "找不到 native runner: ${runner}"
+        return 1
+    fi
+    if [ ! -f "$conf" ]; then
+        log_error "找不到冒烟用组件配置: ${conf}"
+        return 1
+    fi
+    if ! "$runner" --transport=shm_routed --frames=0 --sleep-ms=0 --record-file="$record_file" "$conf" >/dev/null 2>&1; then
+        log_error "运行时冒烟失败: runner 未能完成装配/启动/停止"
+        rm -f "$record_file"
+        return 1
+    fi
+    rm -f "$record_file"
+    return 0
+}
+
 # codegen 自检：reserved/多 root/哈希稳定性/import 循环与缺失、未定义类型
 check_codegen_selftest() {
     local script="${PROJECT_ROOT}/tools/tests/codegen_selftest.py"
@@ -828,6 +851,7 @@ run_ci_guard() {
 
     log_info "--- CI Guard: Step 3/8 Unit Test ---"
     _check_step "unit-test" meson test -C "$build_dir"
+    _check_step "runtime-smoke" check_runtime_smoke "$runner"
 
     log_info "--- CI Guard: Step 4/8 Selftest ---"
     # 注意：不能调用 run_transport_selftest，它内部用 exec 会替换当前进程

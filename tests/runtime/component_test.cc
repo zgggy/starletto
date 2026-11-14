@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "basement/runtime/component/component.h"
+#include "basement/runtime/component/component_registry.h"
+#include "basement/runtime/component/native_component_host.h"
 #include "basement/runtime/factory/runtime_factory.h"
 
 #include "tests/support/star_test.h"
@@ -371,3 +373,98 @@ TEST_CASE("Component auto_configure without plan or context is a no-op") {
 }
 
 }  // namespace
+
+namespace {
+
+class CountingComponent final : public star::runtime::Component {
+  public:
+    void init() override { ++inits; }
+    auto process_once() -> bool override {
+        calls.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    static auto reset() -> void {
+        calls.store(0, std::memory_order_relaxed);
+        inits.store(0, std::memory_order_relaxed);
+    }
+
+    static std::atomic<int> calls;
+    static std::atomic<int> inits;
+};
+
+std::atomic<int> CountingComponent::calls{0};
+std::atomic<int> CountingComponent::inits{0};
+
+class FailingInitComponent final : public star::runtime::Component {
+  public:
+    void init() override { throw star::excep::RuntimeError("intentional init failure"); }
+    auto process_once() -> bool override {
+        calls.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    static auto reset() -> void { calls.store(0, std::memory_order_relaxed); }
+
+    static std::atomic<int> calls;
+};
+
+std::atomic<int> FailingInitComponent::calls{0};
+
+auto make_host_plan(const std::string& name, const std::string& component_class) -> ComponentLoadPlan {
+    auto plan = ComponentLoadPlan{};
+    plan.module_name = "test";
+    plan.component_name = name;
+    plan.component_class = component_class;
+    plan.process_group = std::string("test");
+    auto trigger = star::generated::runtime::component_load_plan::TriggerPlan{};
+    trigger.type = std::string("timer");
+    trigger.cycle_ms = int64_t{10};
+    plan.trigger = std::move(trigger);
+    return plan;
+}
+
+}  // namespace
+
+// P0.4：init 失败的组件不能进入调度；它不应被 process_once，也不应被 shutdown
+TEST_CASE("a component whose init fails is excluded from scheduling") {
+    CountingComponent::reset();
+    FailingInitComponent::reset();
+
+    auto context = RuntimeFactory::create_native_context();
+    auto registry = std::make_shared<star::runtime::ComponentRegistry>();
+    registry->register_component<CountingComponent>("test::Counting");
+    registry->register_component<FailingInitComponent>("test::Failing");
+
+    auto host = star::runtime::NativeComponentHost{context, registry};
+    host.load(make_host_plan("good", "test::Counting"));
+    host.load(make_host_plan("bad", "test::Failing"));
+    host.configure();
+    REQUIRE_EQ(CountingComponent::inits.load(), 1);
+    host.start();
+    REQUIRE(host.wait_for_frames(2, 1000));
+    host.stop();
+
+    REQUIRE(CountingComponent::calls.load() > 0);
+    REQUIRE_EQ(FailingInitComponent::calls.load(), 0);
+}
+
+TEST_CASE("host refuses to start when every component fails initialization") {
+    FailingInitComponent::reset();
+
+    auto context = RuntimeFactory::create_native_context();
+    auto registry = std::make_shared<star::runtime::ComponentRegistry>();
+    registry->register_component<FailingInitComponent>("test::FailingOnly");
+
+    auto host = star::runtime::NativeComponentHost{context, registry};
+    host.load(make_host_plan("bad", "test::FailingOnly"));
+
+    auto threw = false;
+    try {
+        host.configure();
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+    REQUIRE_EQ(FailingInitComponent::calls.load(), 0);
+}

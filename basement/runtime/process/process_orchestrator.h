@@ -20,6 +20,7 @@ struct WorkerLaunchConfig {
     std::vector<std::string> component_conf_paths;
     std::string route_plan;
     std::string system_channels;
+    std::string record_file;
     int64_t frames{0};
     int sleep_ms{0};
     std::string log_file;
@@ -78,6 +79,9 @@ class ProcessOrchestrator {
         }
         if (not config.system_channels.empty()) {
             argv.emplace_back("--system-channels=" + config.system_channels);
+        }
+        if (not config.record_file.empty()) {
+            argv.emplace_back("--record-file=" + config.record_file);
         }
         argv.emplace_back("--frames=" + std::to_string(config.frames));
         if (config.sleep_ms > 0) {

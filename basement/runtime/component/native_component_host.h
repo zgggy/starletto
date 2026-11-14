@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include <unistd.h>
+
 #include "basement/core/exception.h"
 #include "basement/core/logger/logger.h"
 #include "basement/runtime/component/component.h"
@@ -60,13 +62,53 @@ class NativeComponentHost final {
         component->set_load_plan(plan);
         components_.push_back(std::move(component));
         plans_.push_back(plan);
+        component_failed_.push_back(false);
     }
 
     void set_process_plan(const star::runtime::plan::ProcessPlan& plan) { process_plan_ = plan; }
 
     void set_process_group(std::string group) { process_group_ = std::move(group); }
 
+    // 录制文件必须按进程隔离：多进程各自 fopen("wb") 同一路径会互相截断
+    void set_record_file(std::string path) { record_file_ = std::move(path); }
+
+    // 组件初始化必须发生在任务注册之前：init 失败的组件不能进入调度。
+    // 幂等；configure() 与 start() 都会调用它。
+    void prepare_components() {
+        if (components_prepared_) {
+            return;
+        }
+        components_prepared_ = true;
+        size_t initialized = 0;
+        for (size_t i = 0; i < components_.size(); ++i) {
+            auto& component = components_[i];
+            if (not component) {
+                component_failed_[i] = true;
+                continue;
+            }
+            try {
+                component->auto_configure();
+                component->init();
+                ++initialized;
+            } catch (const std::exception& e) {
+                component_failed_[i] = true;
+                const auto name = i < plans_.size() ? plans_[i].component_name : std::string("<unknown>");
+                logE << "component initialization failed, excluded from scheduling: component=" << name
+                     << ", err=" << e.what();
+            } catch (...) {
+                component_failed_[i] = true;
+                const auto name = i < plans_.size() ? plans_[i].component_name : std::string("<unknown>");
+                logE << "component initialization failed, excluded from scheduling: component=" << name
+                     << ", err=unknown exception";
+            }
+        }
+        if (not components_.empty() and initialized == 0) {
+            throw star::excep::RuntimeError("NativeComponentHost start failed, no component initialized");
+        }
+    }
+
     void configure() {
+        prepare_components();
         if (tasks_initialized_) {
             return;
         }
@@ -76,20 +118,8 @@ class NativeComponentHost final {
     }
 
     void start() {
+        prepare_components();
         setup_recorder();
-        for (auto& c : components_) {
-            if (not c) {
-                continue;
-            }
-            try {
-                c->auto_configure();
-                c->init();
-            } catch (const std::exception& e) {
-                logE << "NativeComponentHost start failed: " << e.what();
-            } catch (...) {
-                logE << "NativeComponentHost start failed: unknown exception";
-            }
-        }
         for (auto& [group, scheduler] : schedulers_) {
             if (not scheduler) {
                 continue;
@@ -105,7 +135,11 @@ class NativeComponentHost final {
         // 健康检查：component.conf 的 health 块经 plan 传下来；没配的组件不评估
         auto health_rules = std::vector<star::runtime::observability::HealthMonitor::Rule>{};
         auto health_interval_ms = int64_t{2000};
-        for (const auto& plan : plans_) {
+        for (size_t plan_index = 0; plan_index < plans_.size(); ++plan_index) {
+            const auto& plan = plans_[plan_index];
+            if (plan_index < component_failed_.size() and component_failed_[plan_index]) {
+                continue;
+            }
             if (not plan.health.has_value()) {
                 continue;
             }
@@ -155,8 +189,9 @@ class NativeComponentHost final {
                 logE << "NativeComponentHost scheduler stop failed, group=" << group << ", err: unknown exception";
             }
         }
-        for (auto& c : components_) {
-            if (not c) {
+        for (size_t i = 0; i < components_.size(); ++i) {
+            auto& c = components_[i];
+            if (not c or (i < component_failed_.size() and component_failed_[i])) {
                 continue;
             }
             try {
@@ -245,6 +280,9 @@ class NativeComponentHost final {
         }
 
         for (size_t i = 0; i < components_.size() && i < plans_.size(); ++i) {
+            if (i < component_failed_.size() and component_failed_[i]) {
+                continue;
+            }
             const auto& p = plans_[i];
             auto task_name = resolve_task_name_from_plan(p);
             const auto group = p.process_group.value_or("default");
@@ -405,9 +443,17 @@ class NativeComponentHost final {
             }
         }
         if (auto* recordable = context_->recordable_bus()) {
-            recordable->enable_recorder("/tmp/starletto_record.bin");
+            const auto path = resolve_record_file();
+            recordable->enable_recorder(path);
+            logI << "Recorder enabled, file=" << path << ", channels=" << record_channels.size();
         }
-        logI << "Recorder enabled, file=/tmp/starletto_record.bin, channels=" << record_channels.size();
+    }
+
+    auto resolve_record_file() const -> std::string {
+        if (not record_file_.empty()) {
+            return record_file_;
+        }
+        return "/tmp/starletto_" + std::to_string(static_cast<long>(::getpid())) + ".starrec";
     }
 
     void build_schedulers_by_process_group() {
@@ -485,6 +531,9 @@ class NativeComponentHost final {
     std::vector<std::unique_ptr<Component>> components_;
     std::vector<star::runtime::plan::ComponentLoadPlan> plans_;
     std::string process_group_;
+    std::string record_file_;
+    std::vector<bool> component_failed_;
+    bool components_prepared_{false};
     std::unique_ptr<star::runtime::observability::StatsPublisher> stats_publisher_;
     std::unique_ptr<star::runtime::observability::HealthMonitor> health_monitor_;
     std::optional<star::runtime::plan::ProcessPlan> process_plan_;

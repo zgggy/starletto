@@ -38,3 +38,4 @@
 | 2026-11-14 | shm 段名改用跨工具链稳定的 FNV-1a（替换实现定义的 std::hash），`kShmVersion`→6；golden 单测锁定算法 | core/transport | 2026-11-14 复审 A6 |
 | 2026-11-14 | shm 帧头 v7：逐帧携带 schema name/version/hash，`MessageView.schema_type_id` 改为发送方身份；解码策略与诊断可感知对端版本 | transport/runtime/schema | P0.1 实时 wire 身份 |
 | 2026-11-14 | schema compat 与版本策略对齐：删字段需 version 递增 + reserved；类型/id 变更保持 breaking；`--allow-breaking` 显式覆盖 | schema/tools | P0.2 |
+| 2026-11-14 | 录制路径隔离：`--record-file`/`--record-dir`，多进程强制逐 worker 文件；init 失败组件不进入调度；star check 增加 runtime-smoke（13/13） | runtime/apps | P0.3/P0.4 |

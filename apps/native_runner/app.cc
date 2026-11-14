@@ -75,7 +75,7 @@ namespace star::native_runner {
         }
 
         // 服务通道：本进程声明的 commands + supervisor 广播的服务通道列表
-        if (auto* routed = dynamic_cast<star::transport::ShmRoutedMessageBus*>(&context->message_bus())) {
+        if (auto* routed = dynamic_cast<star::transport::ShmRoutedMessageBus*>(message_bus)) {
             auto mark = [routed](const std::string& channel) {
                 if (not channel.empty()) {
                     routed->register_system_channel(channel);
@@ -109,6 +109,9 @@ namespace star::native_runner {
         const auto process_plan = star::runtime::plan::build_process_plan(component_plans);
         host.set_process_plan(process_plan);
         host.set_process_group(options.process_group);
+        if (not options.record_file.empty()) {
+            host.set_record_file(options.record_file);
+        }
 
         auto sleep_ms = options.sleep_ms;
         if (sleep_ms <= 0) {
@@ -176,6 +179,36 @@ namespace star::native_runner {
             }
         }
 
+        // 多进程录制必须逐 worker 一个文件：同一路径会被各 worker 的 fopen("wb") 互相截断
+        auto recording_requested = false;
+        for (const auto& plan : component_plans) {
+            if (not plan.outputs.has_value()) {
+                continue;
+            }
+            for (const auto& port : *plan.outputs) {
+                if (port.record.value_or(false)) {
+                    recording_requested = true;
+                }
+            }
+        }
+        if (recording_requested and not options.record_file.empty()) {
+            logE << "multi-process recording requires --record-dir=<dir>, not --record-file (one file per worker)";
+            return 4;
+        }
+        if (recording_requested and options.record_dir.empty()) {
+            logE << "multi-process recording is enabled by component.conf but --record-dir is missing; "
+                 << "refusing to start to avoid workers truncating the same file";
+            return 4;
+        }
+        if (not options.record_dir.empty()) {
+            std::error_code ec;
+            std::filesystem::create_directories(options.record_dir, ec);
+            if (ec) {
+                logE << "cannot create record dir: " << options.record_dir << ", err=" << ec.message();
+                return 4;
+            }
+        }
+
         const auto log_dir = resolve_log_dir(options);
         const auto ts = make_timestamp();
         auto orchestrator = star::runtime::process::ProcessOrchestrator(g_argv0);
@@ -217,6 +250,9 @@ namespace star::native_runner {
             config.component_conf_paths = paths;
             config.route_plan = route_plan;
             config.system_channels = system_channels_csv;
+            if (not options.record_dir.empty()) {
+                config.record_file = options.record_dir + "/" + group + "_" + ts + ".starrec";
+            }
             config.frames = options.frames;
             config.sleep_ms = options.sleep_ms;
             if (not log_dir.empty()) {

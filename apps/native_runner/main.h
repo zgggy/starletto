@@ -78,6 +78,14 @@ static auto parse_args(int argc, char** argv) -> Inputs {
             inputs.options.system_channels = a.substr(std::string("--system-channels=").size());
             continue;
         }
+        if (a.rfind("--record-file=", 0) == 0) {
+            inputs.options.record_file = a.substr(std::string("--record-file=").size());
+            continue;
+        }
+        if (a.rfind("--record-dir=", 0) == 0) {
+            inputs.options.record_dir = a.substr(std::string("--record-dir=").size());
+            continue;
+        }
         if (a == "--worker") { inputs.options.worker = true; continue; }
         if (a == "--multi-process") { inputs.options.multi_process = true; continue; }
         if (auto v = parse_i64_arg(a, "--frames=")) { inputs.options.frames = *v; continue; }

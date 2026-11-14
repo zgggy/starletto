@@ -620,6 +620,8 @@ publisher.publish(entry);   // 懒创建 writer，按 entry.channel_name 路由
 CLI：
 
 ```bash
+# 录制文件：单进程 --record-file=<path>（默认 /tmp/starletto_<pid>.starrec）
+#           多进程 --record-dir=<dir>（逐 worker 生成 <group>_<ts>.starrec，缺失则拒绝启动）
 star record info /tmp/rec.starrec
 star replay /tmp/rec.starrec 1.0                      # 只打印
 star replay /tmp/rec.starrec 1.0 --publish            # 写回通道（默认 shm_routed）

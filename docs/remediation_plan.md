@@ -218,3 +218,19 @@ flowchart LR
 - 修复了「注册表支持多版本、但 CI 禁止发布多版本」的矛盾
 - 回归：codegen 自检新增 6 个 compat 用例（同版本删除、升版+reserved、升版无
   reserved、类型变更、allow-breaking、降版本）
+
+## 后续整改 P0.3：录制路径隔离（已完成 2026-11-14）
+
+- `--record-file`（单进程）/ `--record-dir`（多进程，按 `<group>_<ts>.starrec` 生成）；
+  未显式指定时单进程默认 `/tmp/starletto_<pid>.starrec`
+- 多进程录制未给 `--record-dir` 时**拒绝启动**，不再让多个 worker 截断同一文件
+- 实测：planning+control 两个 worker → 两个可 `star record info` 的文件
+
+## 后续整改 P0.4：init 失败语义（已完成 2026-11-14）
+
+- 组件初始化提前到任务注册之前；init/auto_configure 失败 → 标记 failed，不注册任务、
+  不进入调度、不调用 shutdown；全部组件失败时 host 抛错、worker 非零退出
+- 回归：`runtime_component` 新增 2 用例（混合成功/失败、全部失败）；
+  已双向验证（去掉跳过逻辑后失败）
+- `star check` 新增 `runtime-smoke`：真实装配并启动/停止一次组件；
+  此前单元测试不经过 App::run，漏掉了「context 被 move 后仍被解引用」的装配期崩溃
