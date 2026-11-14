@@ -369,7 +369,7 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 34 套 213 用例全绿；`star check` 15/15；install-smoke 用安装树 runner 实跑；
+- 34 套 212 用例全绿；`star check` 16/16；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
 - UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
 - Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用
@@ -377,3 +377,36 @@ flowchart LR
   `size_ - fixed_size` 无符号回绕导致越界读。新增 `fixed_layout rejects...` 回归。
 
 详见 `docs/plugin_abi.md`。
+
+## 后续整改：静态装配与 API/解析器收敛（2026-11-14）
+
+### 静态装配落地
+
+- 每个模块 `register.cc` 增加唯一静态入口
+  `star_static_register_<module>_<component>`；插件入口在
+  `-DSTAR_STATIC_COMPONENTS_ONLY` 下不导出，避免静态链接符号冲突。
+- Meson 把模块 `register.cc` 编成静态库，并由
+  `static_component_symbols` / `static_component_static_libs`
+  生成 `static_components.cc` 聚合 TU；`native_runner_static` 链接它。
+- `static_link=true` 的语义收紧：类未注册时启动失败并提示使用静态 runner，
+  不再静默跳过 dlopen。
+- `star run --static`、安装 `native_runner_static`、`install-smoke` 安装树静态
+  runner 实跑；`star check` 新增 `runtime-smoke-static` 门禁（16/16）。
+- 验证：`native_runner_static` 用 `static_link=true` + 不存在的
+  `component_library` 仍能装配 motion；动态 runner 对同样配置明确报错。
+
+### `declare_*` 删除
+
+- `auto_configure()` 已覆盖 plan 驱动的 reader/writer/QoS/decode_policy/录制/
+  bidirectional/service，因此删除 `declare_reader`/`declare_writer`/
+  `declare_delivery_writer`/`write_with_delivery` 及 `delivery_writers_`。
+- ControlComponent 改为 `process_once()` 里 `read_latest<T>()`；不再有
+  “conf 一套、init 覆盖一套”的双轨装配。
+
+### schema 解析器单一化
+
+- 删除 C++ 定义解析器 `NativeSchemaLoader` / `SchemaSyntaxParser` /
+  `SchemaParserTypes` 及 `schema_codec_demo`；`schema_codegen.py` 是唯一
+  schema 定义解析器。
+- `binary_codec_test` / `robustness_test` 改为程序化构造 `SchemaDescriptor`，
+  覆盖不变；`SchemaParser`（conf/值文本解析）保留。

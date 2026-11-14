@@ -95,139 +95,57 @@ Host 不做：
 - 帧语义（FrameContext）
 - DAG barrier
 
-## 7. auto_configure：conf 驱动的零样板组件（P0 增强）
+## 7. auto_configure：conf 驱动的零样板组件（终态）
 
-### 7.1 目标
+### 7.1 结论
 
-消除用户在 `init()` 中手写 `declare_reader` / `declare_writer` 的样板代码。**component.conf 中声明的 readers/writers 应自动转化为可用的 reader/writer 实例**，用户只需关注业务逻辑。
+`auto_configure()` 已在 `init()` 之前按 `ComponentLoadPlan` 建好全部端口：
 
-### 7.2 设计原则
+- inputs → `read_latest<T>(port)` 的缓存 reader（含 QoS depth/drop_policy、decode_policy）
+- outputs → `write(port, msg)` 的 writer（含 `record=true` 的录制开关、bidirectional）
+- services → `RpcClient`/`RpcServer`
 
-1. **conf 是唯一声明源**：readers/writers 在 component.conf 中定义，不再需要在 C++ 中重复
-2. **向后兼容**：已有的 `declare_reader<T>(name, cb)` / `declare_writer<T>(name)` API 保留，可在 `init()` 中覆盖默认行为
-3. **两种使用模式**：
-   - **轮询模式（默认）**：auto_configure 自动创建"缓存最新消息"的 reader，用户在 `process_once()` 中通过 `read_latest<T>(name)` 获取
-   - **回调模式（高级）**：用户在 `init()` 中调用 `declare_reader<T>(name, cb)` 覆盖默认行为
+因此组件不再需要 `declare_reader`/`declare_writer`。这两个 API 与 Component 层的
+`declare_delivery_writer`/`write_with_delivery` 已删除（2026-11-14），避免“conf 一套、
+init 里再覆盖一套”的双轨装配。
 
-### 7.3 接口设计
-
-```cpp
-class Component {
-public:
-    // Host 调用顺序: set_load_plan() → auto_configure() → init() → [scheduler start]
-
-    // 新增：从 load_plan 自动创建所有 readers/writers
-    void auto_configure();
-
-    // 新增：读取某个 reader endpoint 的最新消息（类型安全）
-    template <typename _Msg>
-    auto read_latest(const std::string& endpoint_name) -> std::shared_ptr<const _Msg>;
-
-    // 新增：发布到某个 writer endpoint（类型安全，write 的别名）
-    template <typename _Msg>
-    void publish(const std::string& endpoint_name, const _Msg& msg);
-
-    // 已有 API（保留不变）
-    template <typename _Msg>
-    void declare_reader(const std::string& name, std::function<void(std::shared_ptr<const _Msg>)> callback);
-
-    template <typename _Msg>
-    void declare_writer(const std::string& name);
-
-    template <typename _Msg>
-    void write(const std::string& name, const _Msg& msg);
-};
-```
-
-### 7.4 auto_configure 行为规范
-
-```
-auto_configure() 执行流程:
-1. 检查 plan_ 是否有效，无效则返回
-2. 遍历 plan_->inputs (readers):
-   a. 对每个 EndpointPlan { name, topic, type_name }:
-      - 创建 TopicDescriptor (topic + type_name)
-      - 创建 Reader，callback = 存储 MessageView 到 latest_messages_[name]
-      - 缓存 reader 到 readers_[name]
-3. 遍历 plan_->outputs (writers):
-   a. 对每个 EndpointPlan { name, topic, type_name, record }:
-      - 创建 TopicDescriptor (topic + type_name)
-      - 创建 Writer，缓存到 writers_[name]
-      - 若 record=true，启用 recorder
-```
-
-**latest_messages_ 存储格式**：
-- key: endpoint name（来自 conf）
-- value: 最新的 `MessageView`（包含 TypedConstPtr + encode_binary 闭包）
-
-**read_latest<T>(name) 行为**：
-1. 从 latest_messages_[name] 取出最新 MessageView
-2. 尝试 `msg.data.as<T>()` （inproc 指针路径）
-3. 若失败且 T 有 `from_binary()`，尝试 SHM 二进制解码路径
-4. 返回 `shared_ptr<const T>` 或 nullptr
-
-### 7.5 用户组件编写指南（新）
-
-#### 模式 A：最小样板（推荐，轮询式）
+### 7.2 组件侧唯一写法
 
 ```cpp
-class MotionComponent : public star::runtime::Component {
+class ControlComponent final : public star::runtime::Component {
   public:
-    // init() 可以为空！auto_configure 自动完成所有 reader/writer 声明
-
-    bool process_once() override {
-        auto param_snap = read_latest<ParameterSnapshot>("parameter_snapshot");
-        auto config_snap = read_latest<ConfigSnapshot>("config_snapshot");
-        auto output = processor_.process({});
-        publish("trajectory", output);       // 类型安全的发布
-        return true;
-    }
-
-  private:
-    MotionProcessor processor_;
-};
-```
-
-#### 模式 B：回调式（需要自定义处理逻辑时）
-
-```cpp
-class ControlComponent : public star::runtime::Component {
-  public:
-    void init() override {
-        // 用自定义 callback 覆盖 auto_configure 的默认"缓存"行为
-        declare_reader<TrajectoryOutput>("planning_trajectory",
-            [this](auto traj) { on_trajectory(traj); });
-        // writer 不需要覆盖，auto_configure 已处理
-    }
-    bool process_once() override {
-        if (not latest_trajectory_) { return true; }
-        auto cmd = controller_.compute(*latest_trajectory_);
-        publish("command", cmd);
+    auto process_once() -> bool override {
+        if (auto traj = read_latest<TrajectoryOutput>("planning_trajectory")) {
+            latest_trajectory_ = std::move(traj);
+        }
+        if (not latest_trajectory_) {
+            return true;
+        }
+        write("command", controller_.compute(*latest_trajectory_));
         return true;
     }
 };
 ```
 
-### 7.6 Host 调用契约变更
+端口名以 `component.conf` 为唯一声明源；`init()` 只做一次性初始化。
+
+### 7.3 Host 调用顺序
 
 ```
-NativeComponentHost::start() 调用顺序变更:
-
-Before:
+NativeComponentHost::prepare_components():
   for each component:
-    c->init()          ← 用户在此手动 declare_reader/declare_writer
-
-After:
-  for each component:
-    c->auto_configure()  ← 新增：自动从 plan 创建 reader/writer
-    c->init()            ← 用户可选覆写或添加额外逻辑
+    set_context() / set_load_plan()   （load 时）
+    auto_configure()                  ← 按 plan 建 reader/writer/service
+    init()                            ← 用户只做非端口初始化
 ```
 
-### 7.7 兼容性规则
+### 7.4 约束
 
-- **不破坏已有组件**：motion_component.h / control_component.h 中现有的 `declare_reader`/`declare_writer` 调用在 `init()` 中执行，会覆盖 `auto_configure` 创建的同名 reader/writer
-- **conf 必须包含有效的 type/type_name/msg_type**：`type` 与 `msg_type` 视为同义字段；若两者同时存在则必须一致。`read_latest<T>()` 依赖运行时类型信息做 decode fallback；若 conf 缺少 type 信息，SHM 路径降级为指针路径
-- **`publish()` 与 `write()` 等价**：`publish` 是 `write` 的别名，语义更清晰
+- `component.conf` 的 `readers`/`writers` 的 `type`/`msg_type` 必须有效；缺失时
+  `read_latest<T>()` 无法在 shm 路径解码。
+- 同一端口不能既在 conf 声明又在代码里重复创建（API 已删除，编译期即阻止）。
+- 需要回调风格的逻辑，在 `process_once()` 里轮询 `read_latest`；reader 回调仍由
+  host 内部持有（只负责缓存最新 view）。
 
 ## 8. 验收标准
 
@@ -241,5 +159,4 @@ After:
   - `./star run --frames=5 motion/component.conf control/pid/component.conf` 单进程闭环正常
   - `./star run --frames=5 --multi-process ...` 双进程 SHM 路由正常（e2e_latency_us: 300~430μs）
   - MotionComponent: **init() 完全删除**，仅保留 process_once() + read_latest<>() + publish()
-  - ControlComponent: init() 仅保留 declare_reader 回调，**declare_writer 被 auto_configure 替代**
-  - 向后兼容：旧式 declare_reader/declare_writer 在 init() 中仍可覆盖 auto_configure 行为
+  - ControlComponent: init() 仅保留日志，读取统一走 read_latest

@@ -105,7 +105,7 @@ P2：
 
 P3（Runtime 增强相关）：
 
-- ✅ Component 基类 API：`declare_reader` / `declare_writer` / `write` / `decode_snapshot_entry`
+- ✅ Component 基类 API：`auto_configure` / `read_latest` / `write` / `decode_snapshot_entry`（declare_* 已于 2026-11-14 删除）
 - ✅ native_runner 瘦身：path_resolver + process_orchestrator + schema_bootstrap 独立模块
 - ✅ Observability：ChannelStats per-topic 统计
 - ✅ TimerTrigger + SyncTrigger 双触发模式

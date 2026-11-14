@@ -128,7 +128,7 @@ Spec 索引： [basement_runtime_index.md](basement_runtime_index.md)
 
 ## 5.6 P0-P6：Runtime 增强与系统清理（✅ 全部完成）
 
-- ✅ **P0 Component 基类增强**：`declare_reader<T>` / `declare_writer<T>` / `write()` / `decode_snapshot_entry<Snap,T>` — 用户代码减少 50%+
+- ✅ **P0 Component 基类增强**：`auto_configure()` / `read_latest<T>` / `write()` / `decode_snapshot_entry<Snap,T>` — 用户代码减少 50%+（`declare_reader/writer` 已于 2026-11-14 删除）
 - ✅ **P1 basement/README.md 重写**：native-first 架构手册
 - ✅ **P2 删除 component_host.h**：合并到 native_component_host.h
 - ✅ **P3 definition.h 迁移**：`basement/core/definition.h` → `libraries/element/math_constants.h`
@@ -152,11 +152,10 @@ Spec 索引： [basement_runtime_index.md](basement_runtime_index.md)
 Spec: [basement_runtime_host.md §7](basement_runtime_host.md)
 
 交付项：
-- ✅ `Component::auto_configure()` — 从 `component.conf` 的 `load_plan` 自动创建所有 reader/writer/delivery_writer/bidirectional_channel/service
+- ✅ `Component::auto_configure()` — 从 `component.conf` 的 `load_plan` 自动创建所有 reader/writer/bidirectional_channel/service（最终唯一装配路径）
 - ✅ `read_latest<T>(name)` — 类型安全轮询 API，inproc 指针路径优先 + SHM from_binary 回退
-- ✅ `publish(name, msg)` / `write(name, msg)` — writer 别名
-- ✅ motion_component.h 重写为 Mode A（零样板，~103 行）
-- ✅ control_component.h 重写为 Mode B（callback + auto_configure writer）
+- ✅ `write(name, msg)` — 发布到 plan 声明的端口
+- ✅ motion/control 均改为零样板轮询（2026-11-14 删除 declare_*）
 
 验收：
 - ✅ `./star run --frames=3 modules/setting/config/component.conf` 正常运行

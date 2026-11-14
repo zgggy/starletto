@@ -37,6 +37,10 @@
 #include "basement/transport/shm/shm_views.h"
 
 
+#if defined(STAR_STATIC_COMPONENTS)
+extern "C" void star_register_static_components(star::runtime::ComponentRegistry* registry);
+#endif
+
 namespace star::native_runner {
 
     auto App::run(const RunOptions& options, const std::vector<std::string>& component_conf_paths) -> int  {
@@ -51,6 +55,12 @@ namespace star::native_runner {
         auto* message_bus = &context->message_bus();
         auto registry = std::make_shared<star::runtime::ComponentRegistry>();
         registry->set_schema_registry(&context->schema_registry());
+#if defined(STAR_STATIC_COMPONENTS)
+        // 静态部署：组件和模块 schema 在加载 plan 前一次性注册；之后 static_link=true
+        // 的组件不会再 dlopen。
+        star_register_static_components(registry.get());
+        logI << "static components registered";
+#endif
 
         star::runtime::plan::PlanLoader loader;
         star::runtime::NativeComponentHost host(std::move(context), std::move(registry));

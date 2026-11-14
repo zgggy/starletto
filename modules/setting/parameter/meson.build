@@ -28,3 +28,12 @@ parameter_plugin = shared_library(
 )
 
 subdir('demo')
+
+parameter_static_lib = static_library(
+    'parameter_static',
+    files('register.cc'),
+    dependencies: [parameter_dep],
+    cpp_args: ['-DSTAR_STATIC_COMPONENTS_ONLY'],
+)
+static_component_symbols += ['setting_parameter']
+static_component_static_libs += [parameter_static_lib]

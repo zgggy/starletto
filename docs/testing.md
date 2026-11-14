@@ -48,12 +48,26 @@ meson test -C build-ubsan
 - 本机用 UBSan 验证；
 - ASan 放到 Linux CI（见 `.github/workflows/ci.yml`）或可用的 clang 环境。
 
+## 5. 覆盖率
+
+CI 的 `coverage` job 用 `-Db_coverage=true` 构建并运行全部用例，再用 gcovr
+打印行/函数/分支摘要（排除 `tests/` 与构建目录）：
+
+```bash
+meson setup build-cov -Db_coverage=true -Dbuildtype=debug
+meson compile -C build-cov && meson test -C build-cov
+gcovr -r . build-cov --exclude '.*/tests/.*' --print-summary
+```
+
+当前不设硬阈值：先把数字稳定下来，再根据核心目录（schema/transport/runtime）
+的基线决定门禁值。
+
 2026-11-14 Linux ASan 首轮抓到两处真实问题：`parameter_store_test` 对
 `SchemaValue` 临时对象取内部引用（stack-use-after-scope），以及固定布局帧
 `fixed_section_size > total_size` 时 `size_ - fixed_size` 无符号回绕导致越界读。
 两处均已修复并加回归；ASan job 常驻 CI。
 
-## 5. CI 模板
+## 6. CI 模板
 
 `.github/workflows/ci.yml` 在 Ubuntu 上跑：
 
@@ -61,3 +75,15 @@ meson test -C build-ubsan
 2. UBSan 构建 + 全量测试
 
 GitHub Actions 尚未实际启用；模板用于把本地门禁搬到 PR。
+
+## 7. 远端 required checks
+
+GitHub 仓库设置里建议把以下 job 设为 required（分支保护）：
+
+- `build-and-test`
+- `ubsan`
+- `macos`
+- `asan`
+- `coverage`
+
+分支保护本身是仓库设置，不在代码里；CI 只保证这些检查可复现。

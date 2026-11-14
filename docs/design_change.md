@@ -50,3 +50,6 @@
 | 2026-11-14 | 安装面：headers/生成头/schema 工具/pkg-config 安装；新增 oot_plugin_smoke 与 install-smoke 门禁（15/15） | build/docs | P1.1 B1 |
 | 2026-11-14 | 共享库 `libstar_runtime` + C ABI v1 试点（同日撤销，见下条） | core/runtime/apps/docs/build | P1.1 B2 |
 | 2026-11-14 | 插件 ABI 收敛为终态：删除 C ABI/双入口与 `libstar_runtime` 过渡库；唯一入口 `star_register_components` + 强制工具链指纹；shm 只接受 v7 带身份帧；明确 registry 先于 dlclose 的生命周期 | core/runtime/apps/docs/build | 架构终态 |
+| 2026-11-14 | 静态装配落地：模块导出唯一 `star_static_register_*`，生成聚合 TU，新增 `native_runner_static`/`star run --static`/静态冒烟；`static_link=true` 未注册即报错 | build/runtime/apps/star | 部署路径 |
+| 2026-11-14 | 删除 `declare_reader/writer`、delivery 组件 API：`auto_configure()` 是唯一端口装配路径；Control 改 `read_latest` | runtime/modules/docs | API 收敛 |
+| 2026-11-14 | 删除 C++ schema 定义解析器与 demo，`schema_codegen.py` 单一解析；测试改程序化 descriptor | schema/tests/apps/docs | 单一实现 |

@@ -25,3 +25,12 @@ shared_library(
     install: true,
     install_dir: 'modules/setting/config',
 )
+
+config_static_lib = static_library(
+    'config_static',
+    files('register.cc'),
+    dependencies: [config_dep],
+    cpp_args: ['-DSTAR_STATIC_COMPONENTS_ONLY'],
+)
+static_component_symbols += ['setting_config']
+static_component_static_libs += [config_static_lib]

@@ -53,7 +53,10 @@ with tempfile.TemporaryDirectory() as tmp:
 
     header_text = (component_dir / "demo_node_component.h").read_text()
     check("registration string matches conf class", 'registry.register_component<DemoNodeComponent>("star::demo_mod::DemoNode")' in header_text)
-    check("plugin entry is fixed signature", "extern \"C\" void star_register_components" in (component_dir / "register.cc").read_text())
+    register_text = (component_dir / "register.cc").read_text()
+    check("plugin entry is fixed signature", "extern \"C\" void star_register_components" in register_text)
+    check("static entry is unique per component", "star_static_register_demo_mod_demo_node" in register_text)
+    check("static library wiring is generated", "static_component_static_libs += [demo_mod_demo_node_static_lib]" in (component_dir / "meson.build").read_text())
 
     check("parent module.conf lists component", "components [demo_node/component.conf]" in module_conf.read_text())
     check("parent meson includes component", "subdir('demo_node')" in (root / "modules" / "demo_mod" / "meson.build").read_text())

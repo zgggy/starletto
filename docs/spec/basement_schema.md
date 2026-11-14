@@ -381,9 +381,6 @@ Schema 运行时至少提供：
 ./star schema gen --schema=modules/setting/schema/planning/motion.schema --output=/tmp/motion.s.h
 ./star schema compat /tmp/compat_old.schema /tmp/compat_new_ok.schema
 ./star schema lint --schema=modules/setting/schema/planning/motion.schema
-./build/apps/schema_codec_demo/schema_codec_demo \
-  basement/schema/builtin/manifest/module.schema \
-  modules/planning/module.conf
 ./star run --frames=2 planning
 ./star run --multi-process --frames=6 planning
 ./star doctor --deep planning
@@ -393,7 +390,9 @@ Schema 运行时至少提供：
 
 ### 12.1 目标
 
-消除手动维护 `.s.h` 文件的痛点。`.schema` 是唯一事实源，`schema_codegen.py` 负责生成完整的 C++ 头文件。
+消除手动维护 `.s.h` 文件的痛点。`.schema` 是唯一事实源，`schema_codegen.py`
+是**唯一** schema 定义解析器（2026-11-14 删除了 C++ 侧 `NativeSchemaLoader`
+及其旧 JSON 语法分支），负责生成完整的 C++ 头文件。
 
 ### 12.2 IDL 语法（完整）
 

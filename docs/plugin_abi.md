@@ -51,6 +51,29 @@ STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 读取不同版本的数据，是滚动升级/历史回放能力；本节删除的是**底层代码的版本双轨**
 （同一功能两套实现/入口）。两者不能混为一谈。
 
+## 3. 静态装配（车上部署）
+
+同一个 `register.cc` 既导出插件入口，也导出唯一的静态注册符号：
+
+```cpp
+extern "C" void star_static_register_<module>_<component>(ComponentRegistry*);
+#ifndef STAR_STATIC_COMPONENTS_ONLY
+extern "C" void star_register_components(ComponentRegistry*);
+STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
+#endif
+```
+
+- 动态构建：编译 `register.cc` → `.so`，导出 `star_register_components` + 指纹；
+- 静态构建：同一份源码加 `-DSTAR_STATIC_COMPONENTS_ONLY` → `.a`，只导出
+  `star_static_register_<module>_<component>`，由 `native_runner_static` 的聚合 TU
+  在启动时逐个调用；
+- `component.conf` 的 `static_link=true` 表示“必须已静态注册”，加载器不会 dlopen；
+- 静态/动态使用同一套 plan/conf/组件代码，不存在两套实现。
+
+聚合 TU 与静态库由 Meson 根据 `modules/meson.build` 的
+`static_component_symbols` / `static_component_static_libs` 生成；
+`star new component` 会自动接线。
+
 ## 3. 必须一致的项
 
 插件与宿主之间传递的是 C++ ABI：虚表布局、`std::string`/`std::function`/

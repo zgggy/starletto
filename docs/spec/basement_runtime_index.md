@@ -13,10 +13,9 @@ Runtime 必须拆分为多个子模块，避免形成一个不可维护的巨型
   - 目标：组件生命周期接口与注册机制、便捷数据访问 API
   - 约束：组件是普通 C++ 对象，不继承任何中间件对象；**不得直接 include 具体传输实现**
   - ✅ 已实现：
-    - `Component` 基类：`declare_reader<T>(name, cb)` / `declare_writer<T>(name)` / `write(name, msg)`
-    - **`auto_configure()`** — 从 conf 自动创建所有 reader/writer（零样板模式）
+    - `Component` 基类：`read_latest<T>(name)` / `write(name, msg)`
+    - **`auto_configure()`** — 从 conf 自动创建所有 reader/writer（唯一装配路径）
     - `read_latest<T>(name)` — 类型安全的最新消息读取（轮询模式）
-    - `publish(name, msg)` — write 的别名，语义更清晰
     - `decode_snapshot_entry<Snap, T>(snap, key, schema)` — 通用 snapshot 条目解码模板方法
     - 自动 inproc/SHM 双路径解码（SFINAE 检测 from_binary）
     - `ComponentRegistry` + `schema_registry()` — 插件注册 + schema 自注册
@@ -101,17 +100,7 @@ class MyComponent : public star::runtime::Component {
 };
 ```
 
-### 模式 B：回调式（需要自定义处理逻辑时）
-
-```cpp
-class MyComponent : public star::runtime::Component {
-  public:
-    void init() override {
-        declare_reader<InputMsg>("input", [this](auto msg) { on_input(msg); });
-        // writer 由 auto_configure 自动创建
-    }
-};
-```
+组件统一在 `process_once()` 里 `read_latest<T>("port")`；conf 是端口唯一声明源。
 
 对比旧版（~250 行样板代码）→ P0 增强（~30 行）→ **auto_configure（~15 行有效代码）**。
 
@@ -122,7 +111,7 @@ class MyComponent : public star::runtime::Component {
 3) ✅ M4 planning→control 最小闭环
 4) ✅ M5 Record/Replay STARREC 格式
 5) ✅ M6 CLI 工具 + 多进程 SHM 隔离验证
-6) ✅ P0 Component 基类增强（declare_reader/write/decode_snapshot_entry）
+6) ✅ P0 Component 基类增强（auto_configure/read_latest/write/decode_snapshot_entry）
 7) ✅ Process 编排模块 + Observability + TimerTrigger
 8) ✅ **P7 auto_configure 零样板模式**（conf 驱动 reader/writer 自动创建 + read_latest/publish）
 9) ⬜ process: health check / restart / 日志策略

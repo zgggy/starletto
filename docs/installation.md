@@ -22,7 +22,8 @@ meson install -C build
 | `share/starletto/schema/schema_codegen.py` | schema 生成器（源码树外可用） |
 | `share/starletto/schema/codegen/*.py` | 生成器实现模块 |
 | `lib/pkgconfig/starletto.pc` | `-I${includedir}/starletto -std=c++20` |
-| `bin/native_runner`、`modules/` | 宿主与内置模块 |
+| `bin/native_runner`、`modules/` | 动态宿主与内置模块插件 |
+| `bin/native_runner_static` | 静态宿主：内置模块已编入可执行文件，不 dlopen |
 
 ## 2. 源码树外插件
 
@@ -80,9 +81,28 @@ tools/tests/oot_plugin_smoke.sh build
 ```
 
 它会在临时 DESTDIR 下安装、生成 schema、编译插件、`doctor --deep` 并运行；
-`star check` 已把它作为 `install-smoke` 门禁（15/15）。
+`star check` 已把它作为 `install-smoke` 门禁（16/16）。
 
-## 3. 注意事项
+## 3. 静态部署（车上）
+
+调试期用 `native_runner` + `.so` 插件；部署到车上用静态编入组件的宿主，
+省掉启动时 dlopen/符号解析：
+
+```bash
+./star build                          # 同时构建 native_runner 与 native_runner_static
+./star run --static planning          # 静态 runner 跑内置模块
+# 或直接：build/apps/native_runner/native_runner_static <module.conf>
+```
+
+组件 conf 用 `static_link = true` 明确声明“必须已静态注册”；此时加载器
+不会尝试 `dlopen`，类未注册会直接报错并提示使用 `native_runner_static`。
+`static_link = false`（默认）仍是插件模式。
+
+静态 runner 的组件来自 `modules/*/*/register.cc` 导出的
+`star_static_register_<module>_<component>`；`star new component` 会自动生成并
+接入 `static_component_*` 列表。
+
+## 4. 注意事项
 
 - 插件与宿主必须同工具链/标准库，且必须导出工具链指纹；`doctor --deep`
   与加载器都会强制校验（见 [plugin_abi.md](plugin_abi.md)）。

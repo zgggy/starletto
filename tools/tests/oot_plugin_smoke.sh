@@ -117,4 +117,13 @@ echo "[i] doctor --deep"
 echo "[i] run assembled module"
 "${RUNNER}" --frames=0 --sleep-ms=0 "${MODULE}/module.conf" >/dev/null
 
+# 安装树里的静态 runner 必须能直接装配内置模块（不 dlopen 模块库）
+STATIC_RUNNER="${STAGE}/bin/native_runner_static"
+if [ ! -x "${STATIC_RUNNER}" ]; then
+    echo "[E] install surface missing: native_runner_static" >&2
+    exit 1
+fi
+"${STATIC_RUNNER}" --frames=2 --sleep-ms=10 "${STAGE}/modules/planning/motion/component.conf" >/dev/null
+echo "[i] installed static runner ok"
+
 echo "[OK] out-of-tree plugin smoke passed"

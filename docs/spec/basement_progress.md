@@ -27,10 +27,8 @@ basement/
 │   ├── schema_registry.h     # 运行时类型注册表
 │   ├── binary_codec.h        # 二进制 wire format 编解码（559行，功能单体）
 │   ├── native/
-│   │   ├── native_schema_loader.h  # .schema 文件加载（380行，已拆分）
-│   │   │   ├── schema_parser_types.h     # TypeRef/FieldDef/DefBlock/SchemaSyntaxDocument
-│   │   │   └── schema_syntax_parser.h    # SchemaSyntaxParser 递归下降解析器
 │   │   └── schema_bootstrap.h      # 16 个业务 schema 原子注册
+│   │       # 2026-11-14：C++ schema 定义解析器已删除，Python codegen 是唯一解析器
 │   └── builtin/
 │       ├── manifest/         # component.schema, module.schema (2 个)
 │       └── runtime/          # component_load_plan.schema, process_plan.schema (2 个)

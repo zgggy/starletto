@@ -229,6 +229,7 @@ run_native_runner() {
     local sleep_ms=""
     local log_file=""
     local log_dir=""
+    local static_runner=false
     local inputs=()
 
     while [[ $# -gt 0 ]]; do
@@ -239,6 +240,10 @@ run_native_runner() {
                 ;;
             --install-dir=*)
                 install_dir="${1#--install-dir=}"
+                shift
+                ;;
+            --static)
+                static_runner=true
                 shift
                 ;;
             --frames=*)
@@ -260,7 +265,7 @@ run_native_runner() {
             -h|--help)
                 echo "star run - 运行 native runner（Meson 构建产物）"
                 echo "用法:"
-                echo "  star run [--build-dir=<dir>] [--install-dir=<dir>] [--frames=<n>] [--sleep-ms=<ms>] [--log-file=<path>|--log-dir=<dir>] [--multi-process] <module|module.conf|component.conf|dir>..."
+                echo "  star run [--static] [--build-dir=<dir>] [--install-dir=<dir>] [--frames=<n>] [--sleep-ms=<ms>] [--log-file=<path>|--log-dir=<dir>] [--multi-process] <module|module.conf|component.conf|dir>..."
                 echo ""
                 echo "示例:"
                 echo "  star run planning"
@@ -287,10 +292,14 @@ run_native_runner() {
     fi
 
     local runner=""
+    local runner_name="native_runner"
+    if [ "$static_runner" = true ]; then
+        runner_name="native_runner_static"
+    fi
     if [ -n "$install_dir" ]; then
-        runner="${install_dir}/bin/native_runner"
+        runner="${install_dir}/bin/${runner_name}"
     else
-        runner="${build_dir}/apps/native_runner/native_runner"
+        runner="${build_dir}/apps/native_runner/${runner_name}"
     fi
     if [ ! -x "$runner" ]; then
         log_error "找不到 native runner: ${runner}"
@@ -342,7 +351,7 @@ run_dispatch() {
                 build_dir="${a#--build-dir=}"
                 native_args+=("$a")
                 ;;
-            --frames=*|--sleep-ms=*|--log-file=*|--log-dir=*|--transport=*|--multi-process|-h|--help)
+            --frames=*|--sleep-ms=*|--log-file=*|--log-dir=*|--transport=*|--multi-process|--static|-h|--help)
                 native_args+=("$a")
                 ;;
             *)
@@ -702,6 +711,23 @@ check_install_smoke() {
     return 0
 }
 
+# 静态装配冒烟：static_link=true + 不存在的 component_library，静态 runner
+# 必须完全靠编译进来的注册表完成装配（不能回退 dlopen）。
+check_static_smoke() {
+    local runner="$1"
+    local conf="${PROJECT_ROOT}/modules/planning/motion/component.conf"
+    local tmp
+    tmp=$(mktemp)
+    sed 's|component_library = .*|component_library = libmust_not_dlopen.so\n    static_link = true|' "$conf" > "$tmp"
+    if ! "$runner" --frames=2 --sleep-ms=10 "$tmp" >/dev/null 2>&1; then
+        rm -f "$tmp"
+        log_error "静态装配冒烟失败: ${conf}"
+        return 1
+    fi
+    rm -f "$tmp"
+    return 0
+}
+
 # 运行时冒烟：真的装配一次组件并启动/停止调度器。
 # 单元测试不经过 App::run，曾漏掉「context 被 move 后仍被解引用」这类装配期崩溃。
 check_runtime_smoke() {
@@ -882,6 +908,7 @@ run_ci_guard() {
     log_info "--- CI Guard: Step 3/8 Unit Test ---"
     _check_step "unit-test" meson test -C "$build_dir"
     _check_step "runtime-smoke" check_runtime_smoke "$runner"
+    _check_step "runtime-smoke-static" check_static_smoke "${build_dir}/apps/native_runner/native_runner_static"
     _check_step "app-boundary" check_app_module_boundary
     _check_step "install-smoke" check_install_smoke "$build_dir"
 

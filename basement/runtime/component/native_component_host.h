@@ -516,7 +516,9 @@ class NativeComponentHost final {
             return;
         }
         if (plan.static_link.value_or(false)) {
-            return;
+            // 显式声明静态装配却没有对应注册：不能静默跳过，否则错误会推迟到 create()
+            throw star::excep::RuntimeError("static_link=true but component_class is not registered: ", plan.component_class,
+                                            ", module=", plan.module_name, "; use native_runner_static or link the module");
         }
         if (plan.component_library.value_or("").empty()) {
             return;

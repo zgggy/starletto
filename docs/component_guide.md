@@ -250,16 +250,28 @@ logging {
 ### 2.3 `register.cc` —— 插件入口（永远照抄）
 
 ```cpp
+#include "basement/core/build_info.h"
 #include "basement/runtime/component/component_registry.h"
 #include "modules/planning/motion/motion_component.h"
 
-extern "C" void star_register_components(star::runtime::ComponentRegistry* registry) {
-    star::planning::register_native_components(*registry);
+// 静态装配入口：native_runner_static 直接调用，不 dlopen
+extern "C" void star_static_register_planning_motion(star::runtime::ComponentRegistry* registry) {
+    if (registry != nullptr) {
+        star::planning::register_native_components(*registry);
+    }
 }
+
+#ifndef STAR_STATIC_COMPONENTS_ONLY
+extern "C" void star_register_components(star::runtime::ComponentRegistry* registry) {
+    star_static_register_planning_motion(registry);
+}
+STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
+#endif
 ```
 
-- 函数名 `star_register_components` 是**固定约定**，宿主用 `dlsym` 找它。
-- 只需改两处 include 与命名空间。
+- 静态符号名固定为 `star_static_register_<module>_<component>`；`star new component`
+  会自动生成并接入静态库列表。
+- 动态插件仍导出 `star_register_components` + 指纹；两者共用同一实现。
 
 如果模块自带 schema，插件入口还要负责注册它们（app 不再知道任何模块）：
 
@@ -317,7 +329,8 @@ class MotionComponent : public star::runtime::Component {
 |---|---|
 | `init()` | 一次性初始化（读配置、建索引） |
 | `shutdown()` | 释放外部资源 |
-| `declare_reader<T>(name, cb)` | 想用**回调**而非轮询取最新值时（注意：回调在独立线程） |
+| `read_latest<T>("port")` | 在 `process_once()` 里取最新消息；端口由 `component.conf` 经 `auto_configure()` 建好 |
+| `write("port", msg)` | 发布到 `component.conf` 声明的 writer 端口 |
 
 #### 零拷贝读取（`peek_view`，当前不推荐）
 
@@ -374,7 +387,31 @@ shared_library(
     install: true,
     install_dir: 'modules/planning/motion',
 )
+
+# 静态部署：同一份 register.cc 编成 .a，供 native_runner_static 链接
+motion_static_lib = static_library(
+    'motion_static',
+    files('register.cc'),
+    dependencies: [motion_dep],
+    cpp_args: ['-DSTAR_STATIC_COMPONENTS_ONLY'],
+)
+static_component_symbols += ['planning_motion']
+static_component_static_libs += [motion_static_lib]
 ```
+
+### 2.7 静态装配（车上部署）
+
+`star build` 同时产出 `native_runner`（调试，dlopen）与
+`native_runner_static`（部署，组件已编入）。组件 conf 写 `static_link = true`
+时，宿主不会 dlopen；类未静态注册会启动失败并提示使用静态 runner。
+
+```bash
+./star run --static planning
+```
+
+静态 runner 的模块列表来自 `modules/meson.build` 的
+`static_component_symbols` / `static_component_static_libs`；新增组件请用
+`star new component`，它会自动接线。
 
 ---
 

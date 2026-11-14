@@ -19,3 +19,12 @@ shared_library(
     install: true,
     install_dir: 'modules/control/pid',
 )
+
+pid_static_lib = static_library(
+    'pid_static',
+    files('register.cc'),
+    dependencies: [pid_dep],
+    cpp_args: ['-DSTAR_STATIC_COMPONENTS_ONLY'],
+)
+static_component_symbols += ['control_pid']
+static_component_static_libs += [pid_static_lib]

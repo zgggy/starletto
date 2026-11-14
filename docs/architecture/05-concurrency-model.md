@@ -71,7 +71,7 @@ flowchart LR
     Q1 --> W1
 
     subgraph RC["reader 回调"]
-        R1["你写的 declare_reader 回调<br/><b>在轮询线程上同步执行</b>"]
+        R1["auto_configure 创建的 reader 回调<br/><b>在轮询线程上同步执行</b>"]
     end
 ```
 
@@ -79,10 +79,10 @@ flowchart LR
 |---|---|---|---|
 | `init()` | 主线程（装配期） | 读一次性配置 | 开长循环、阻塞 |
 | `process_once()` | scheduler worker | 算算法、publish | 睡长觉、等锁 |
-| `declare_reader` 回调 | **该端口专属轮询线程** | 轻量存数据/置标志 | 做重计算、调阻塞 RPC |
+| reader 回调（host 内部） | **该通道专属轮询线程** | 只缓存最新 view | 做重计算、调阻塞 RPC |
 | service handler | **该服务专属轮询线程** | 快速返回响应 | 长时间阻塞 |
 
-**这条最重要**：`declare_reader` 的回调是在轮询线程上**同步**执行的。回调里做 10ms 的计算，这个端口的读取就停顿 10ms，SHM 环可能在此期间被写满（4 帧）而丢数据。重活必须搬到 `process_once` 里，或者自己投递到队列。
+**这条最重要**：reader 缓存回调是在轮询线程上**同步**执行的。回调里做 10ms 的计算，这个端口的读取就停顿 10ms，SHM 环可能在此期间被写满（4 帧）而丢数据。重活必须搬到 `process_once` 里，或者自己投递到队列。
 
 ## 3. 帧一致性与同步触发
 

@@ -16,15 +16,16 @@ namespace star::control {
 
 class ControlComponent : public star::runtime::Component {
   public:
-    void init() override {
-        declare_reader<star::setting::planning::TrajectoryOutput>("planning_trajectory", [this](auto traj) { on_trajectory(traj); });
-        logI << "ControlComponent initialized, reading from planning.trajectory, writing control.command";
-    }
+    void init() override { logI << "ControlComponent initialized, reading from planning.trajectory, writing control.command"; }
 
     auto process_once() -> bool override {
         const auto& frame = context()->current_frame();
         if (frame.frame_id > 0) {
             logI << "ControlComponent processing frame=" << frame.frame_id;
+        }
+        // auto_configure() 已按 plan 建好 reader；这里取最新轨迹即可
+        if (auto traj = read_latest<star::setting::planning::TrajectoryOutput>("planning_trajectory")) {
+            latest_trajectory_ = std::move(traj);
         }
         if (not latest_trajectory_) {
             return true;
@@ -42,8 +43,6 @@ class ControlComponent : public star::runtime::Component {
     }
 
   private:
-    void on_trajectory(std::shared_ptr<const star::setting::planning::TrajectoryOutput> traj) { latest_trajectory_ = std::move(traj); }
-
     void record_latency(double latency_us) {
         std::lock_guard<std::mutex> lock(latency_mutex_);
         ++latency_count_;

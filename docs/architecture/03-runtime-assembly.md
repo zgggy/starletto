@@ -75,19 +75,24 @@ flowchart LR
   `--restart-backoff-ms`（默认 500，指数退避、封顶 32 倍）。预算耗尽则整体失败。
 - **录制现场**：重启尝试的录制文件带 `.attempt<N>` 后缀，不覆盖上一次现场。
 
-## 3. 两种加载方式
-
-`component.conf` 里的 `component_library` 与 `static_link` 决定走哪条路：
+## 3. 两种装配方式（同一份 conf / plan）
 
 ```mermaid
-flowchart TB
-    Q{"component_library<br/>有值？"}
-    Q -->|"有（如 libmotion.so）"| P["<b>插件模式</b><br/>dlopen → 注册 → 实例化<br/>换实现不用重编宿主"]
-    Q -->|"无 + static_link=true"| S["<b>静态模式</b><br/>启动时已由代码注册<br/>（当前无模块使用）"]
-    Q -->|"都无"| E["doctor 报错<br/>「empty component_library but static_link=false」"]
+flowchart LR
+    D["<b>调试</b><br/>native_runner"] -->|"component_library 有值<br/>static_link=false"| P["dlopen 插件<br/>→ 注册 → 实例化"]
+    S["<b>车上部署</b><br/>native_runner_static"] -->|"static_link=true"| T["组件已编入可执行文件<br/>启动时一次性注册"]
+    T -->|"类未注册"| E["启动失败<br/>提示改用 native_runner_static"]
+    P -->|"类已注册"| T
 ```
 
-当前 4 个模块全部走插件模式：`libconfig.so`、`libparameter.so`、`libmotion.so`、`libpid.so`。
+- **插件模式**：`component_library` 指向 `.so`，换实现不用重编宿主；默认调试路径。
+- **静态模式**：`native_runner_static` 链接所有模块的静态注册库，启动时调用
+  `star_register_static_components()`；`static_link=true` 表示不再 dlopen。
+  省掉启动加载/符号解析时间，适合车上部署。
+- 两种模式共用同一套 `component.conf` / `ComponentLoadPlan`；差异只在
+  “组件从哪里来”。静态 runner 仍可对未静态编入的类回退 dlopen（`static_link=false`）。
+
+当前 4 个模块两种产物都有：`.so` 用于调试，`native_runner_static` 用于部署。
 
 ## 4. 触发策略：什么时候调你的 process_once
 

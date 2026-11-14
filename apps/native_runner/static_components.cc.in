@@ -1,0 +1,8 @@
+// 由 Meson 根据 modules/ 下各组件模块的静态注册符号生成；不要手改。
+// 动态部署不编译本文件；静态部署（native_runner_static）用它把组件注册进
+// 全新 ComponentRegistry，之后 plan 里的 static_link=true 不再 dlopen。
+#include "basement/runtime/component/component_registry.h"
+
+@declarations@
+extern "C" void star_register_static_components(star::runtime::ComponentRegistry* registry) {
+@calls@}

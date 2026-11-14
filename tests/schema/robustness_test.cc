@@ -6,7 +6,6 @@
 
 #include "basement/schema/binary_codec.h"
 #include "basement/schema/decode_policy.h"
-#include "basement/schema/native/native_schema_loader.h"
 #include "basement/schema/schema_value.h"
 
 #include "tests/support/star_test.h"
@@ -15,7 +14,6 @@ namespace {
 
 using star::schema::BinaryCodec;
 using star::schema::DecodePolicy;
-using star::schema::NativeSchemaLoader;
 
 // 固定种子的 xorshift：用例可复现，不依赖平台随机源
 struct Rng {
@@ -39,24 +37,42 @@ struct Rng {
     }
 };
 
-constexpr const char* kSchemaText = R"SCHEMA(
-schema test.robust
-version 1
-root Robust {
-    1 id : int
-    2 name : string
-    3 ratio : float ?
-    4 tags : string[] ?
-    5 entries : {string : Item} ?
+auto make_field(uint32_t id, std::string name, star::schema::FieldKind kind) -> star::schema::FieldDescriptor {
+    auto field = star::schema::FieldDescriptor{};
+    field.id = id;
+    field.name = std::move(name);
+    field.kind = kind;
+    return field;
 }
-def Item {
-    1 value : int
-    2 note : string = "x"
-}
-)SCHEMA";
 
 auto load() -> star::schema::SchemaDescriptor {
-    return NativeSchemaLoader{}.load_schema_text(kSchemaText);
+    auto schema = star::schema::SchemaDescriptor{};
+    schema.type_id = star::schema::SchemaTypeId{"test.robust", 1, 0};
+    schema.root_name = "Robust";
+    schema.fields.push_back(make_field(1, "id", star::schema::FieldKind::INT64));
+    schema.fields.push_back(make_field(2, "name", star::schema::FieldKind::STRING));
+
+    auto ratio = make_field(3, "ratio", star::schema::FieldKind::FLOAT64);
+    ratio.optional = true;
+    schema.fields.push_back(ratio);
+
+    auto tags = make_field(4, "tags", star::schema::FieldKind::STRING);
+    tags.optional = true;
+    tags.repeated = true;
+    schema.fields.push_back(tags);
+
+    auto entries = make_field(5, "entries", star::schema::FieldKind::OBJECT);
+    entries.optional = true;
+    entries.has_value_kind = true;
+    entries.value_kind = star::schema::FieldKind::OBJECT;
+    entries.value_type_name = "Item";
+    entries.value_children.push_back(make_field(1, "value", star::schema::FieldKind::INT64));
+    auto note = make_field(2, "note", star::schema::FieldKind::STRING);
+    note.has_default = true;
+    note.default_value = star::schema::SchemaValue{std::string{"x"}};
+    entries.value_children.push_back(note);
+    schema.fields.push_back(entries);
+    return schema;
 }
 
 auto fuzz_iterations(int fallback) -> int {
@@ -115,19 +131,6 @@ TEST_CASE("schema value parser survives randomized text") {
         try {
             const auto parsed = star::schema::SchemaParser{text}.parse();
             (void)parsed;
-        } catch (const std::exception&) {
-        }
-    }
-}
-
-// 原生 schema loader 面对任意文本同样只能失败，不能崩溃
-TEST_CASE("native schema loader survives randomized text") {
-    auto rng = Rng{};
-    for (int iteration = 0; iteration < fuzz_iterations(800); ++iteration) {
-        const auto bytes = rng.bytes(rng.next() % 256);
-        const auto text = std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-        try {
-            (void)NativeSchemaLoader{}.load_schema_text(text);
         } catch (const std::exception&) {
         }
     }

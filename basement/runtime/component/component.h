@@ -222,46 +222,6 @@ class Component {
     // 注：原 read_history(port_name, max_count) 已移除——它忽略 max_count 只返回最新一条，
     // 语义与签名不符；真正的历史读取需要 MessageBus 提供按序号回溯的接口后再实现。
 
-    template <typename _Msg>
-    void declare_reader(const std::string& name, std::function<void(std::shared_ptr<const _Msg>)> callback) {
-        auto d = star::transport::ChannelDescriptor{};
-        d.name = resolve_channel(name, true);
-        d.type_name = resolve_type_name<_Msg>(name, true);
-        d.options.decode_policy = resolve_decode_policy(name, true);
-        auto reader = context()->message_bus().create_reader(d, [this, cb = std::move(callback)](const star::transport::MessageView& msg) { decode_and_dispatch<_Msg>(msg, cb); });
-        readers_[name] = std::move(reader);
-    }
-
-    template <typename _Msg>
-    void declare_writer(const std::string& name) {
-        auto d = star::transport::ChannelDescriptor{};
-        d.name = resolve_channel(name, false);
-        d.type_name = resolve_type_name<_Msg>(name, false);
-        d.options.decode_policy = resolve_decode_policy(name, false);
-        writers_[name] = context()->message_bus().create_writer(d);
-    }
-
-    template <typename _Msg>
-    void declare_delivery_writer(const std::string& name) {
-        auto d = star::transport::ChannelDescriptor{};
-        d.name = resolve_channel(name, false);
-        d.type_name = resolve_type_name<_Msg>(name, false);
-        delivery_writers_[name] = context()->message_bus().create_delivery_writer(d);
-    }
-
-    template <typename _Msg>
-    auto write_with_delivery(const std::string& name, const _Msg& msg, int64_t timeout_ms = 10) -> star::transport::DeliveryResult {
-        auto it = delivery_writers_.find(name);
-        if (it != delivery_writers_.end() && it->second) {
-            auto msg_ptr = std::make_shared<const _Msg>(msg);
-            auto serialized = make_serialized_message(msg_ptr);
-            auto future = it->second->write_serialized_with_delivery(serialized, timeout_ms);
-            return future.get();
-        }
-        const auto result = write(name, msg);
-        return {result.ok(), result.ok() ? "fallback (no delivery writer)" : result.error_message, 0};
-    }
-
     // 错误处理约定：**运行时状况**（transport 失败、编码失败、SHM 降级）以 WriteResult
     // 状态码返回，由调用方决定重试/降级/丢弃；**编程错误**（端口未声明、类型不符）
     // 属于装配缺陷，仍走异常。二者不可混用——把状态码再抛成异常会让调用方无法
@@ -586,7 +546,6 @@ class Component {
     std::optional<star::generated::runtime::component_load_plan::ComponentLoadPlan> plan_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::Reader>> readers_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::Writer>> writers_;
-    std::unordered_map<std::string, std::shared_ptr<star::transport::DeliveryWriter>> delivery_writers_;
     std::unordered_set<std::string> bidirectional_channels_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::RpcClient>> service_clients_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::RpcServer>> service_servers_;
