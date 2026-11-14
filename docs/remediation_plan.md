@@ -303,7 +303,7 @@ flowchart LR
   2. `BinaryCodec` best-effort 将 NaN/Inf/越界 double 强转 int64；改为范围检查后失败
 - ASan 在本机 macOS 27 + Apple clang 上 dyld 初始化死锁（非项目代码），记录在
   docs/testing.md；ASan 交给 Linux CI
-- 新增 `.github/workflows/ci.yml`（build/test/check + UBSan + macOS + ASan），2026-11-14 推送后已启用，四个 job 全绿
+- 新增 `.github/workflows/ci.yml`（build/test/check + UBSan + macOS + ASan + Coverage），2026-11-14 推送后已启用，五个 job 全绿
 - 32 套 206 用例；正常构建与 UBSan 构建均全绿
 
 ## 后续整改 P2.4：拆 app.cc（已完成 2026-11-14）
