@@ -48,3 +48,4 @@
 | 2026-11-14 | 随机输入测试 + UBSan：修复固定布局槽位未对齐访问、NaN/越界 double→int64；新增 docs/testing.md 与 CI 模板 | schema/tests/docs | P2.3 |
 | 2026-11-14 | app.cc 1140 行按职责拆 5 个 TU（run/inspect/selftest/monitor/common），纯移动、行为不变 | apps | P2.4 |
 | 2026-11-14 | 安装面：headers/生成头/schema 工具/pkg-config 安装；新增 oot_plugin_smoke 与 install-smoke 门禁（15/15） | build/docs | P1.1 B1 |
+| 2026-11-14 | 共享库 `libstar_runtime` + C ABI v1：纯 C 插件头（任意 C 编译器）、原始字节端口、ABI 版本探测；加载器优先 C 入口、doctor/回放适配；Component 拆分与统一错误模型评估后暂缓 | core/runtime/apps/docs/build | P1.1 B2 |

@@ -21,9 +21,11 @@ STAGE="${DEST}${PREFIX}"
 
 INCLUDE_DIR="${STAGE}/include/starletto"
 SCHEMA_TOOL="${STAGE}/share/starletto/schema/schema_codegen.py"
-RUNNER="${BUILD_DIR}/apps/native_runner/native_runner"
+# 用安装树里的 runner：同时验证 libstar_runtime 的安装 rpath
+RUNNER="${STAGE}/bin/native_runner"
 
 for required in "${INCLUDE_DIR}/basement/runtime/component/component.h" \
+                "${INCLUDE_DIR}/basement/plugin/star_plugin_abi.h" \
                 "${INCLUDE_DIR}/basement/schema/builtin/runtime/component_load_plan.s.h" \
                 "${SCHEMA_TOOL}" \
                 "${STAGE}/lib/pkgconfig/starletto.pc"; do
@@ -32,6 +34,10 @@ for required in "${INCLUDE_DIR}/basement/runtime/component/component.h" \
         exit 1
     fi
 done
+if ! compgen -G "${STAGE}/lib/libstar_runtime*" >/dev/null; then
+    echo "[E] install surface missing: libstar_runtime" >&2
+    exit 1
+fi
 
 MODULE="${WORK}/oot_module"
 mkdir -p "${MODULE}/schema"
@@ -41,7 +47,7 @@ module {
     version = 0.1.0
 }
 
-components [component.conf]
+components [component.conf, c_component.conf]
 CONF
 cat > "${MODULE}/component.conf" <<'CONF'
 component {
@@ -101,10 +107,53 @@ extern "C" void star_register_components(star::runtime::ComponentRegistry* regis
 STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 CPP
 
+cat > "${MODULE}/c_component.conf" <<'CONF'
+component {
+    name = oot_c_node
+    type = oot
+    component_library = liboot_c.so
+    component_class = oot::CNode
+}
+
+trigger {
+    cycle_ms = 10
+}
+CONF
+
+# 纯 C 插件：只用安装出来的 C ABI 头，由 C 编译器编成 .so
+cat > "${MODULE}/c_register.c" <<'C'
+#include "basement/plugin/star_plugin_abi.h"
+
+typedef struct { int calls; } c_node;
+static c_node g_node;
+
+static void* c_create(void) { return &g_node; }
+static void c_destroy(void* self) { (void)self; }
+static int c_process(void* self) { ((c_node*)self)->calls += 1; return 0; }
+
+static const star_plugin_component_v1 k_components[] = {
+    {"oot::CNode", c_create, c_destroy, 0, c_process, 0},
+};
+
+static const star_plugin_v1 k_plugin = {
+    STAR_PLUGIN_ABI_VERSION,
+    "oot_c_plugin",
+    k_components,
+    1,
+};
+
+const star_plugin_v1* star_plugin_entry_v1(void) { return &k_plugin; }
+C
+
 echo "[i] compiling out-of-tree plugin"
 c++ -std=c++20 -O2 -fPIC -shared \
     -I"${INCLUDE_DIR}" -I"${MODULE}" \
     "${MODULE}/register.cc" -o "${MODULE}/liboot.so" -pthread
+
+echo "[i] compiling out-of-tree C ABI plugin"
+cc -std=c11 -O2 -fPIC -shared \
+    -I"${INCLUDE_DIR}" \
+    "${MODULE}/c_register.c" -o "${MODULE}/liboot_c.so"
 
 echo "[i] doctor --deep"
 "${RUNNER}" --doctor --deep "${MODULE}/module.conf" >/dev/null

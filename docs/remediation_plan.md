@@ -327,7 +327,7 @@ flowchart LR
 - 新增 `tools/tests/oot_plugin_smoke.sh`：临时 DESTDIR 安装 → 用安装的 codegen
   生成模块 schema → 源码树外编译插件 → `doctor --deep` → 运行
 - `star check` 新增 `install-smoke` 门禁（15/15）
-- **待做（B2）**：抽 `libstar_runtime.so` + C ABI 插件入口，放宽跨编译器约束
+- **B2 已完成（2026-11-14）**：`libstar_runtime` + 纯 C ABI v1，见下节
 
 ## 后续整改 P2.5：ResourceMonitor 跨平台（已完成 2026-11-14）
 
@@ -341,3 +341,26 @@ flowchart LR
 - 首次采样 CPU=0（需两次差分），与 Linux 一致；无权限采样的字段保持 0。
 - 回归：新增 `runtime_resource_monitor` 2 用例（自身采样四项非零、未知 pid 全零）；
   33 套 208 用例、`star check` 15/15。
+
+## 后续整改 P1.1 B2：共享库与 C ABI 插件（已完成 2026-11-14）
+
+- 新增纯 C 头 `basement/plugin/star_plugin_abi.h`：无 C++ 类型/模板/STL，
+  插件导出 `star_plugin_entry_v1`，通过 `star_component_api_v1` 读写原始字节
+  （身份 name/version/hash 随 payload 传递；读接口支持「先问大小再分配」）。
+- 新增 `libstar_runtime`（soversion 0，随 `meson install` 安装，`starletto.pc`
+  带 `-lstar_runtime`）：承载 `CAbiComponentAdapter`、C descriptor 校验/注册、
+  `star_runtime_plugin_abi_version()`。core/schema/transport 仍 header-only。
+- 加载器优先探测 C ABI 入口，缺失时回退旧 `star_register_components`；
+  `doctor --deep` 对 C 插件只校验 ABI 版本/descriptor，不再要求工具链指纹；
+  回放工具遇到 C 插件明确告警「无 schema 可注册」。
+- 验证：
+  - `runtime_c_abi_plugin` 3 用例：字节收发+身份、无数据返回码、ABI 版本不匹配拒绝；
+  - 测试插件用 `cc -std=c11` 编译，`otool -L` 只依赖 libSystem，无 libc++，
+    未定义符号仅 `calloc/free/malloc/memcpy/strcmp`；
+  - `install-smoke` 用安装出头在源码树外编译纯 C 插件，`doctor --deep` 与运行通过；
+  - 34 套 212 用例、`star check` 15/15。
+- **评估结论**：暂不把 `Component` 整体改成 C ABI、也不拆
+  Lifecycle/Ports/Config/Service。原因：端口是模板、解码依赖生成类型的编译期
+  信息；完整 C ABI 需要运期 schema 描述符，是独立工程。拆分只改契约、无正确性
+  收益。错误模型保持「编程错误异常 + 运行时状况 WriteResult」，C 边界映射为
+  `int` + `last_error()`。详见 `docs/plugin_abi.md` §4。

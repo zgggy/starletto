@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "basement/core/exception.h"
+#include "basement/plugin/star_plugin_abi.h"
+#include "basement/runtime/component/c_abi_adapter.h"
 #include "basement/runtime/plan/plan_builder.h"
 
 namespace star::runtime {
@@ -106,8 +108,12 @@ class ComponentDlHelper {
         return lib;
     }
 
-    // 插件入口约定：extern "C" void star_register_components(ComponentRegistry* registry)
+    // 两种插件入口：
+    //   1. C ABI（优先）：const star_plugin_v1* star_plugin_entry_v1(void)
+    //      纯 C 编译、不要求与宿主同工具链；
+    //   2. 旧 C++ 入口：extern "C" void star_register_components(ComponentRegistry*)
     using RegisterComponentsFn = void (*)(star::runtime::ComponentRegistry*);
+    using PluginEntryFn = const star_plugin_v1* (*)(void);
 
     void load_dynamic_library(const star::runtime::plan::ComponentLoadPlan& plan, std::unordered_map<std::string, DlHandle>& handles,
                               star::runtime::ComponentRegistry* registry) {
@@ -122,15 +128,27 @@ class ComponentDlHelper {
             it = handles.emplace(library_key, DlHandle(handle)).first;
         }
 
+        if (registry == nullptr) {
+            throw star::excep::RuntimeError("NativeComponentHost register failed, registry is null: library=", library_key, ", component_class=", plan.component_class);
+        }
+
+        // 优先 C ABI：纯 C 插件没有 star_register_components，也不要求工具链指纹
+        dlerror();
+        auto entry_sym = dlsym(it->second.handle, STAR_PLUGIN_ENTRY_SYMBOL);
+        if (entry_sym != nullptr) {
+            auto entry = reinterpret_cast<PluginEntryFn>(entry_sym);
+            const auto* plugin = entry();
+            register_c_abi_plugin_components(plugin, *registry);
+            return;
+        }
+
         dlerror();
         auto sym = dlsym(it->second.handle, "star_register_components");
         const auto* err = dlerror();
         if (err != nullptr || sym == nullptr) {
-            throw star::excep::RuntimeError("NativeComponentHost dlsym failed: library=", library_key, ", symbol=star_register_components", ", component_class=", plan.component_class,
+            throw star::excep::RuntimeError("NativeComponentHost dlsym failed: library=", library_key,
+                                            ", symbols=star_plugin_entry_v1|star_register_components", ", component_class=", plan.component_class,
                                             ", err=", (err ? err : "unknown"));
-        }
-        if (registry == nullptr) {
-            throw star::excep::RuntimeError("NativeComponentHost register failed, registry is null: library=", library_key, ", component_class=", plan.component_class);
         }
         // 必须把真实的 registry 交给插件：早先把 register_fn 这个函数指针当成了 registry，
         // 插件拿到垃圾地址后对其中的 mutex 加锁，触发「mutex lock failed: Invalid argument」

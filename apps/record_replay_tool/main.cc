@@ -10,6 +10,7 @@
 
 #include <dlfcn.h>
 
+#include "basement/plugin/star_plugin_abi.h"
 #include "basement/runtime/component/component_registry.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/schema/native/schema_bootstrap.h"
@@ -70,6 +71,13 @@ auto load_plugin_schemas(star::runtime::ComponentRegistry& registry, const std::
         const auto symbol = ::dlsym(handle, "star_register_components");
         const auto* error = ::dlerror();
         if (error != nullptr || symbol == nullptr) {
+            // C ABI v1 插件不携带 schema（只处理原始字节），没有可注册的类型
+            ::dlerror();
+            if (::dlsym(handle, STAR_PLUGIN_ENTRY_SYMBOL) != nullptr) {
+                std::cerr << "[W] C ABI plugin has no schema registration (v1), skipped: " << plugin << "\n";
+                ::dlclose(handle);
+                continue;
+            }
             std::cerr << "[E] plugin missing star_register_components: " << plugin << "\n";
             ::dlclose(handle);
             return false;

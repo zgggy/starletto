@@ -20,6 +20,7 @@
 
 #include "apps/native_runner/runner_utils.h"
 #include "basement/core/build_info.h"
+#include "basement/plugin/star_plugin_abi.h"
 #include "basement/runtime/component/native_component_host.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/observability/resource_monitor.h"
@@ -210,24 +211,47 @@ namespace star::native_runner {
                         ok = false;
                     } else {
                         dlerror();
-                        auto sym = dlsym(handle, "star_register_components");
-                        const auto* err = dlerror();
-                        if (err != nullptr || sym == nullptr) {
-                            logE << "doctor: dlsym failed: lib=" << lib_key << ", conf=" << component_conf << ", err=" << (err ? err : "unknown");
-                            ok = false;
-                        }
-                        // 插件 ABI 契约：header-only 运行时要求插件与宿主同工具链
-                        auto fingerprint_sym = dlsym(handle, "star_toolchain_fingerprint");
-                        if (fingerprint_sym == nullptr) {
-                            logW << "doctor: plugin has no toolchain fingerprint (unversioned), ABI not verified: " << lib_key;
-                        } else {
-                            const auto* plugin_fingerprint = reinterpret_cast<const char* (*)()>(fingerprint_sym)();
-                            const auto* host_fingerprint = star::base::toolchain_fingerprint();
-                            if (plugin_fingerprint == nullptr || std::string(plugin_fingerprint) != std::string(host_fingerprint)) {
-                                logE << "doctor: plugin toolchain mismatch: lib=" << lib_key
-                                     << ", plugin=" << (plugin_fingerprint ? plugin_fingerprint : "null")
-                                     << ", host=" << host_fingerprint;
+                        auto* cabi_sym = dlsym(handle, STAR_PLUGIN_ENTRY_SYMBOL);
+                        if (cabi_sym != nullptr) {
+                            // C ABI 插件：纯 C 编译，不要求工具链一致；校验 ABI 版本与 descriptor
+                            const auto* plugin = reinterpret_cast<star_plugin_entry_v1_fn>(cabi_sym)();
+                            if (plugin == nullptr) {
+                                logE << "doctor: C ABI plugin entry returned null: lib=" << lib_key;
                                 ok = false;
+                            } else if (plugin->abi_version != STAR_PLUGIN_ABI_VERSION) {
+                                logE << "doctor: C ABI plugin version mismatch: lib=" << lib_key << ", plugin=" << plugin->abi_version
+                                     << ", host=" << STAR_PLUGIN_ABI_VERSION;
+                                ok = false;
+                            } else if (plugin->component_count == 0 || plugin->components == nullptr) {
+                                logE << "doctor: C ABI plugin registers no components: lib=" << lib_key;
+                                ok = false;
+                            } else {
+                                logI << "doctor: C ABI plugin v" << plugin->abi_version << ": lib=" << lib_key
+                                     << ", name=" << (plugin->plugin_name ? plugin->plugin_name : "<unnamed>")
+                                     << ", components=" << plugin->component_count;
+                            }
+                        } else {
+                            dlerror();
+                            auto sym = dlsym(handle, "star_register_components");
+                            const auto* err = dlerror();
+                            if (err != nullptr || sym == nullptr) {
+                                logE << "doctor: dlsym failed: lib=" << lib_key << ", symbols=star_plugin_entry_v1|star_register_components"
+                                     << ", conf=" << component_conf << ", err=" << (err ? err : "unknown");
+                                ok = false;
+                            }
+                            // 插件 ABI 契约：header-only 运行时要求插件与宿主同工具链
+                            auto fingerprint_sym = dlsym(handle, "star_toolchain_fingerprint");
+                            if (fingerprint_sym == nullptr) {
+                                logW << "doctor: plugin has no toolchain fingerprint (unversioned), ABI not verified: " << lib_key;
+                            } else {
+                                const auto* plugin_fingerprint = reinterpret_cast<const char* (*)()>(fingerprint_sym)();
+                                const auto* host_fingerprint = star::base::toolchain_fingerprint();
+                                if (plugin_fingerprint == nullptr || std::string(plugin_fingerprint) != std::string(host_fingerprint)) {
+                                    logE << "doctor: plugin toolchain mismatch: lib=" << lib_key
+                                         << ", plugin=" << (plugin_fingerprint ? plugin_fingerprint : "null")
+                                         << ", host=" << host_fingerprint;
+                                    ok = false;
+                                }
                             }
                         }
                         dlclose(handle);

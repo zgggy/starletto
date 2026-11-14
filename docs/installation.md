@@ -1,8 +1,9 @@
 # 安装与源码树外开发
 
 > 适用于：基于已安装的 Starletto 开发自己的模块/插件，不改本仓库。
-> 当前阶段：headers + 生成的 builtin 头 + schema 工具 + pkg-config 文件已安装；
-> 共享运行时库（`libstar_runtime.so`）尚未抽离，插件仍按 header-only 编译。
+> 当前阶段：headers + 生成的 builtin 头 + schema 工具 + pkg-config + 
+> `libstar_runtime`（C ABI 适配层）已安装。C++ 插件仍按 header-only 编译；
+> 纯 C 插件只需要 `basement/plugin/star_plugin_abi.h`。
 
 ## 1. 构建与安装
 
@@ -21,7 +22,9 @@ meson install -C build
 | `include/starletto/basement/schema/builtin/**.s.h` | 内置 schema 的生成头（`component.h` 依赖） |
 | `share/starletto/schema/schema_codegen.py` | schema 生成器（源码树外可用） |
 | `share/starletto/schema/codegen/*.py` | 生成器实现模块 |
-| `lib/pkgconfig/starletto.pc` | `-I${includedir}/starletto -std=c++20` |
+| `lib/libstar_runtime.*` | C ABI 适配层（`Component` 适配、ABI 版本探测） |
+| `include/starletto/basement/plugin/star_plugin_abi.h` | 纯 C 插件 ABI（任意 C 编译器） |
+| `lib/pkgconfig/starletto.pc` | `-I${includedir}/starletto -std=c++20 -lstar_runtime` |
 | `bin/native_runner`、`modules/` | 宿主与内置模块 |
 
 ## 2. 源码树外插件
@@ -82,10 +85,26 @@ tools/tests/oot_plugin_smoke.sh build
 它会在临时 DESTDIR 下安装、生成 schema、编译插件、`doctor --deep` 并运行；
 `star check` 已把它作为 `install-smoke` 门禁（15/15）。
 
-## 3. 注意事项
+## 3. 纯 C ABI 插件（可选）
 
-- 插件与宿主必须同工具链/标准库（`doctor --deep` 会比对工具链指纹，
-  见 [plugin_abi.md](plugin_abi.md)）；共享库抽离后可放宽。
+需要跨编译器分发、或插件本身就用 C 写时，导出 `star_plugin_entry_v1` 即可，
+不链接 `libstar_runtime`：
+
+```bash
+cc -std=c11 -O2 -fPIC -shared -I"$PREFIX/include/starletto" \
+   my_module/register.c -o my_module/libmy.so
+```
+
+插件只依赖 `basement/plugin/star_plugin_abi.h` 与 libc；能力边界（原始字节端口、
+不能注册 schema/读配置）见 [plugin_abi.md](plugin_abi.md)。
+
+
+## 4. 注意事项
+
+- **C++ 插件**与宿主必须同工具链/标准库（`doctor --deep` 会比对工具链指纹，
+  见 [plugin_abi.md](plugin_abi.md)）。
+- **C ABI 插件**用任意 C 编译器即可；`doctor --deep` 只校验 ABI 版本与
+  descriptor，不比对工具链。
 - 业务模块（setting/planning/control）的 schema **不安装**：它们是模块私有契约，
   源码树外模块应定义自己的 schema。
 - `pkg-config` 文件已生成；开发机若未安装 pkg-config，可直接用 `-I` 编译。

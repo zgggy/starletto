@@ -62,7 +62,40 @@ transport_native_dep = declare_dependency(
     dependencies: [transport_api_dep, rt_dep],
 )
 
+# macOS 默认把 dylib 的 install_name 写成绝对路径，安装树不可搬迁；
+# 改用 @rpath，配合可执行文件的 @loader_path/../lib 才能真正 relocatable。
+star_runtime_link_args = host_machine.system() == 'darwin' ? ['-Wl,-install_name,@rpath/libstar_runtime.0.dylib'] : []
+
+# 共享运行时库：目前承载 C ABI 插件适配器与 ABI 探测入口。
+# core/schema/transport 仍是 header-only；这里是「非模板实现下沉」的第一块，
+# 后续可以把更多实现迁进来而不改变插件 ABI。
+star_runtime_lib = both_libraries(
+    'star_runtime',
+    'runtime/component/c_abi_adapter.cc',
+    include_directories: starletto_inc,
+    dependencies: [schema_dep, transport_native_dep],
+    version: meson.project_version(),
+    soversion: '0',
+    link_args: star_runtime_link_args,
+    install: true,
+)
+
+# 宿主可执行文件静态链接适配层：安装后不依赖 dylib 的绝对 install_name，
+# DESTDIR/容器/relocatable 部署都能直接运行。
+star_runtime_dep = declare_dependency(
+    include_directories: starletto_inc,
+    link_with: star_runtime_lib.get_static_lib(),
+    dependencies: [transport_native_dep],
+)
+
+# 显式链接共享库的依赖：给需要验证 .so/.dylib 路径的测试用。
+star_runtime_shared_dep = declare_dependency(
+    include_directories: starletto_inc,
+    link_with: star_runtime_lib.get_shared_lib(),
+    dependencies: [transport_native_dep],
+)
+
 runtime_native_dep = declare_dependency(
     include_directories: starletto_inc,
-    dependencies: [runtime_api_dep, transport_native_dep, manifest_native_dep, dl_dep],
+    dependencies: [runtime_api_dep, transport_native_dep, manifest_native_dep, star_runtime_dep, dl_dep],
 )

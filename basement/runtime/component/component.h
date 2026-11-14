@@ -349,6 +349,74 @@ class Component {
     }
 
   protected:
+    // C ABI 插件（basement/plugin/star_plugin_abi.h）只能处理原始 wire 字节：
+    // 这两个入口不经过生成类型的编解码，身份由调用方显式携带。
+    struct RawPayload {
+        std::vector<uint8_t> bytes;
+        star::schema::SchemaTypeId schema_type_id;
+    };
+
+    auto read_latest_raw(const std::string& port_name) -> std::optional<RawPayload> {
+        if (not latest_mutex_) {
+            return std::nullopt;
+        }
+        star::transport::MessageView view;
+        {
+            std::lock_guard<std::mutex> lock(*latest_mutex_);
+            const auto it = latest_messages_.find(port_name);
+            if (it == latest_messages_.end()) {
+                return std::nullopt;
+            }
+            view = it->second;
+        }
+
+        auto out = RawPayload{};
+        out.schema_type_id = view.schema_type_id;
+        if (const auto slot = view.payload.as<star::transport::ShmSlotView>()) {
+            // 拷贝前后各复核一次代际：拷贝期间被覆写则丢弃（与 typed 解码同语义）
+            if (not slot->stable()) {
+                return std::nullopt;
+            }
+            if (slot->size > 0) {
+                if (slot->data == nullptr) {
+                    return std::nullopt;
+                }
+                out.bytes.assign(slot->data, slot->data + slot->size);
+            }
+            if (not slot->stable()) {
+                return std::nullopt;
+            }
+            return out;
+        }
+        if (const auto binary = view.payload.as<star::transport::BinaryPayloadView>()) {
+            if (binary->size > 0) {
+                if (binary->data == nullptr) {
+                    return std::nullopt;
+                }
+                out.bytes.assign(binary->data, binary->data + binary->size);
+            }
+            return out;
+        }
+        // 进程内 typed payload 没有 wire 字节；C 插件应只订阅可序列化视图。
+        return std::nullopt;
+    }
+
+    auto write_raw(const std::string& port_name, std::span<const uint8_t> bytes, const star::schema::SchemaTypeId& schema_type_id)
+        -> star::transport::WriteResult {
+        auto it = writers_.find(port_name);
+        if (it == writers_.end() || not it->second) {
+            throw star::excep::RuntimeError("Component write_raw failed, writer not declared: ", port_name);
+        }
+        auto owner = std::make_shared<std::vector<uint8_t>>(bytes.begin(), bytes.end());
+        auto serialized = star::transport::SerializedMessage{};
+        serialized.view.payload = star::base::TypedConstPtr::from(
+            std::make_shared<star::transport::BinaryPayloadView>(star::transport::BinaryPayloadView{owner, owner->data(), owner->size()}));
+        serialized.view.schema_type_id = schema_type_id;
+        serialized.serializer.payload_size_hint = owner->size();
+        serialized.serializer.encode_binary = [owner]() { return *owner; };
+        return it->second->write_serialized(serialized);
+    }
+
     virtual auto handle_service_request(const std::string&, const star::transport::ServiceRequest&) -> star::transport::SerializedServiceResponse {
         auto response = star::transport::ServiceResponse{};
         response.ok = false;

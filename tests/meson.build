@@ -89,6 +89,37 @@ test(
     ),
 )
 
+# C ABI 插件：用 C 编译器编（不是 C++），插件源只包含纯 C ABI 头。
+c_abi_demo_plugin = shared_library(
+    'c_abi_demo_plugin',
+    files('runtime/c_abi_plugin.c'),
+    include_directories: include_directories('..'),
+    name_suffix: 'so',
+)
+
+c_abi_bad_plugin = shared_library(
+    'c_abi_bad_plugin',
+    files('runtime/c_abi_plugin.c'),
+    include_directories: include_directories('..'),
+    c_args: ['-DSTAR_CABI_TEST_BAD_ABI'],
+    name_suffix: 'so',
+)
+
+test(
+    'runtime_c_abi_plugin',
+    executable(
+        'runtime_c_abi_plugin_test',
+        files('runtime/c_abi_plugin_test.cc') + test_main,
+        include_directories: test_root_inc,
+        # 显式走共享库路径，确保 libstar_runtime 本身可用（其余目标静态链接）
+        dependencies: [star_runtime_shared_dep, manifest_native_dep, dl_dep],
+        cpp_args: [
+            '-DSTAR_CABI_PLUGIN_PATH="@0@"'.format(c_abi_demo_plugin.full_path()),
+            '-DSTAR_CABI_BAD_PLUGIN_PATH="@0@"'.format(c_abi_bad_plugin.full_path()),
+        ],
+    ),
+)
+
 # 多 DSO 回归测试用的独立插件：只为在另一个 DSO 内生成 CorrelationId
 correlation_test_plugin = shared_library(
     'correlation_test_plugin',
