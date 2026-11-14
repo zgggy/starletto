@@ -98,6 +98,16 @@ test(
 )
 
 test(
+    'runtime_health_monitor',
+    executable(
+        'runtime_health_monitor_test',
+        files('runtime/health_monitor_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep, libraries_dep],
+    ),
+)
+
+test(
     'runtime_stats_publisher',
     executable(
         'runtime_stats_publisher_test',

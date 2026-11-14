@@ -9,6 +9,16 @@ root ComponentConf {
     5 readers : {string : Port} ?
     6 writers : {string : Port} ?
     7 commands : {string : Port} ?
+    8 health : HealthConf ?
+}
+
+def HealthConf {
+    1 channel : string ?
+    2 min_hz : float ?
+    3 window_ms : int ?
+    4 max_cpu_percent : float ?
+    5 max_rss_mb : int ?
+    6 max_fd_count : int ?
 }
 
 def GlobalInfo {

@@ -1,0 +1,18 @@
+schema observability.worker_health
+version 1
+namespace star.generated.observability.worker_health
+
+root WorkerHealth {
+    1 component : string
+    2 healthy : bool
+    3 severity : string
+    4 message : string
+    5 channel : string ?
+    6 actual_hz : float ?
+    7 cpu_percent : float ?
+    8 rss_kb : int ?
+    9 fd_count : int ?
+    10 pid : int
+    11 timestamp_ns : int
+    12 process_group : string ?
+}

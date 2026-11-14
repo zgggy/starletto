@@ -3,6 +3,7 @@
 
 #include "basement/schema/builtin/manifest/component.s.h"
 #include "basement/schema/builtin/manifest/module.s.h"
+#include "basement/schema/builtin/observability/worker_health.s.h"
 #include "basement/schema/builtin/observability/worker_stats.s.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/schema/builtin/runtime/process_plan.s.h"
@@ -18,6 +19,7 @@ inline auto register_builtin_schemas(SchemaRegistry& registry) -> void {
     star::generated::runtime::component_load_plan::ComponentLoadPlan::register_schema(registry);
     star::generated::runtime::process_plan::ProcessPlan::register_schema(registry);
     star::generated::observability::worker_stats::WorkerStats::register_schema(registry);
+    star::generated::observability::worker_health::WorkerHealth::register_schema(registry);
 }
 
 }  // namespace star::schema::native

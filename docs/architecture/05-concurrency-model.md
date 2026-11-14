@@ -42,6 +42,7 @@ flowchart TB
 | scheduler worker | `executor_threads`（1–4） | 从就绪队列取任务，调 `process_once()` |
 | scheduler timer | 1 | 周期触发 `notify()` |
 | 通道轮询线程 | **每个 shm 通道 1 个**（该通道的所有订阅者共享） | 从 shm 环读新帧，按各订阅者的 QoS 分发 |
+| 统计/健康发布线程 | 各 1 个（健康线程仅在配置了 `health` 时启动） | 周期采样通道统计/健康状态，发布到 `starletto.stats` / `starletto.health` |
 | ShmChannel 等待 | 0（复用通道轮询线程） | futex 等待 |
 
 > 线程数 = 有 shm 订阅者的通道数，而不是订阅者数。8 个相机 × 3 个消费者是

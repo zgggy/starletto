@@ -17,6 +17,7 @@
 #include "basement/runtime/component/component_dl_helper.h"
 #include "basement/runtime/component/component_registry.h"
 #include "basement/runtime/context/runtime_context.h"
+#include "basement/runtime/observability/health_monitor.h"
 #include "basement/runtime/observability/stats_publisher.h"
 #include "basement/runtime/plan/plan_builder.h"
 #include "basement/runtime/scheduler/native_scheduler.h"
@@ -101,12 +102,43 @@ class NativeComponentHost final {
                 logE << "NativeComponentHost scheduler start failed, group=" << group << ", err: unknown exception";
             }
         }
+        // 健康检查：component.conf 的 health 块经 plan 传下来；没配的组件不评估
+        auto health_rules = std::vector<star::runtime::observability::HealthMonitor::Rule>{};
+        auto health_interval_ms = int64_t{2000};
+        for (const auto& plan : plans_) {
+            if (not plan.health.has_value()) {
+                continue;
+            }
+            auto rule = star::runtime::observability::HealthMonitor::Rule{};
+            rule.component = plan.component_name;
+            if (plan.health->channel.has_value() and not plan.health->channel->empty()) {
+                rule.has_channel = true;
+                rule.channel.channel = *plan.health->channel;
+                rule.channel.min_hz = plan.health->min_hz.value_or(0.0);
+                rule.channel.window_ms = static_cast<uint64_t>(std::max<int64_t>(0, plan.health->window_ms.value_or(3000)));
+                health_interval_ms = std::min<int64_t>(health_interval_ms, std::max<int64_t>(500, plan.health->window_ms.value_or(3000)));
+            }
+            rule.resource.max_cpu_percent = plan.health->max_cpu_percent.value_or(90.0);
+            rule.resource.max_rss_mb = static_cast<uint64_t>(std::max<int64_t>(0, plan.health->max_rss_mb.value_or(512)));
+            rule.resource.max_fd_count = static_cast<int>(std::max<int64_t>(0, plan.health->max_fd_count.value_or(256)));
+            health_rules.push_back(std::move(rule));
+        }
+        if (not health_rules.empty()) {
+            health_monitor_ = std::make_unique<star::runtime::observability::HealthMonitor>(
+                context_->message_bus(), process_group_, std::move(health_rules), health_interval_ms);
+            health_monitor_->start();
+        }
+
         // 统计发布是普通通道流量：monitor 由此看到本进程真实状态（不再自指）
         stats_publisher_ = std::make_unique<star::runtime::observability::StatsPublisher>(*context_, process_group_);
         stats_publisher_->start();
     }
 
     void stop() {
+        if (health_monitor_) {
+            health_monitor_->stop();
+            health_monitor_.reset();
+        }
         if (stats_publisher_) {
             stats_publisher_->stop();
             stats_publisher_.reset();
@@ -454,6 +486,7 @@ class NativeComponentHost final {
     std::vector<star::runtime::plan::ComponentLoadPlan> plans_;
     std::string process_group_;
     std::unique_ptr<star::runtime::observability::StatsPublisher> stats_publisher_;
+    std::unique_ptr<star::runtime::observability::HealthMonitor> health_monitor_;
     std::optional<star::runtime::plan::ProcessPlan> process_plan_;
     std::mutex trigger_frame_mutex_;
     std::unordered_map<std::string, int64_t> trigger_frame_ids_;

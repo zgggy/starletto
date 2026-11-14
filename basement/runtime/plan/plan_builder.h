@@ -64,6 +64,16 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
     if (not ctx.log_level.empty()) {
         plan.log_level = ctx.log_level;
     }
+    if (conf.health.has_value()) {
+        auto health = star::generated::runtime::component_load_plan::HealthPlan{};
+        health.channel = conf.health->channel;
+        health.min_hz = conf.health->min_hz;
+        health.window_ms = conf.health->window_ms;
+        health.max_cpu_percent = conf.health->max_cpu_percent;
+        health.max_rss_mb = conf.health->max_rss_mb;
+        health.max_fd_count = conf.health->max_fd_count;
+        plan.health = std::move(health);
+    }
     if (conf.component.component_group.has_value()) {
         plan.component_group = *conf.component.component_group;
     }

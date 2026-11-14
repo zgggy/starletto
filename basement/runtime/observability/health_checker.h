@@ -86,7 +86,10 @@ using UnhealthyAction = std::function<void(const ComponentHealthReport&)>;
 
 class HealthChecker {
   public:
-    explicit HealthChecker(std::shared_ptr<star::transport::MessageBus> bus) : bus_(std::move(bus)) {}
+    explicit HealthChecker(std::shared_ptr<star::transport::MessageBus> bus) : bus_shared_(std::move(bus)), bus_(bus_shared_.get()) {}
+
+    // 运行时（RuntimeContext）持的是引用而不是 shared_ptr：这里只借用，生命周期由调用方保证
+    explicit HealthChecker(star::transport::MessageBus& bus) : bus_(&bus) {}
 
     void add_channel_rule(const ChannelHealthRule& rule) { channel_rules_.push_back(rule); }
 
@@ -182,6 +185,12 @@ class HealthChecker {
     static auto check_channel_rule(const ChannelHealthRule& rule, const std::unordered_map<std::string, star::transport::ChannelStatsSnapshot>& stats) -> ChannelHealthStatus {
         auto status = ChannelHealthStatus{};
         status.channel = rule.channel;
+        if (rule.channel.empty()) {
+            // 只配了资源阈值、没配通道：不做频率检查
+            status.healthy = true;
+            status.message = "no channel rule";
+            return status;
+        }
         auto it = stats.find(rule.channel);
         if (it == stats.end()) {
             status.healthy = false;
@@ -265,7 +274,8 @@ class HealthChecker {
 
     static auto getpid() -> int64_t { return static_cast<int64_t>(::getpid()); }
 
-    std::shared_ptr<star::transport::MessageBus> bus_;
+    std::shared_ptr<star::transport::MessageBus> bus_shared_;
+    star::transport::MessageBus* bus_{nullptr};
     std::shared_ptr<ResourceMonitor> res_monitor_;
     std::vector<ChannelHealthRule> channel_rules_;
     std::unordered_map<std::string, ComponentHealthRule> component_rules_;

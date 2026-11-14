@@ -22,6 +22,16 @@ root ComponentLoadPlan {
     18 outputs : PortPlan[] ?
     19 services : ServicePortPlan[] ?
     20 log_level : string ?
+    21 health : HealthPlan ?
+}
+
+def HealthPlan {
+    1 channel : string ?
+    2 min_hz : float ?
+    3 window_ms : int ?
+    4 max_cpu_percent : float ?
+    5 max_rss_mb : int ?
+    6 max_fd_count : int ?
 }
 
 def TriggerPlan {

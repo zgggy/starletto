@@ -126,3 +126,33 @@ TEST_CASE("module.conf logging level is parsed into the plan") {
     REQUIRE(plan.log_level.has_value());
     REQUIRE_EQ(*plan.log_level, std::string("DEBUG"));
 }
+
+// HealthChecker 接线的配置来源：component.conf 的 health 块必须进 plan
+TEST_CASE("component health block flows into the load plan") {
+    using star::generated::manifest::component::HealthConf;
+
+    auto health = HealthConf{};
+    health.channel = std::string("planning.trajectory");
+    health.min_hz = 10.0;
+    health.window_ms = int64_t{1500};
+    health.max_cpu_percent = 75.0;
+    health.max_rss_mb = int64_t{256};
+    health.max_fd_count = int64_t{128};
+
+    auto component_conf = star::generated::manifest::component::ComponentConf{};
+    component_conf.component.name = "motion";
+    component_conf.component.type = "planning";
+    component_conf.component.component_class = "star::planning::Motion";
+    component_conf.health = std::move(health);
+
+    auto ctx = star::runtime::plan::LoadContext{};
+    ctx.module_name = "planning";
+    const auto plan = star::runtime::plan::build_component_load_plan(component_conf, ctx);
+    REQUIRE(plan.health.has_value());
+    REQUIRE_EQ(plan.health->channel.value_or(""), std::string("planning.trajectory"));
+    REQUIRE_EQ(plan.health->min_hz.value_or(0.0), 10.0);
+    REQUIRE_EQ(plan.health->window_ms.value_or(0), int64_t{1500});
+    REQUIRE_EQ(plan.health->max_cpu_percent.value_or(0.0), 75.0);
+    REQUIRE_EQ(plan.health->max_rss_mb.value_or(0), int64_t{256});
+    REQUIRE_EQ(plan.health->max_fd_count.value_or(0), int64_t{128});
+}

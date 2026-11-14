@@ -22,6 +22,7 @@
 #include "basement/runtime/component/native_component_host.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/observability/resource_monitor.h"
+#include "basement/schema/builtin/observability/worker_health.s.h"
 #include "basement/schema/builtin/observability/worker_stats.s.h"
 #include "basement/runtime/plan/plan_loader.h"
 #include "basement/runtime/process/path_resolver.h"
@@ -622,9 +623,8 @@ namespace star::native_runner {
         // monitor 是普通订阅者：只订阅统计通道，不再创建「自己的空总线」自指
         if (auto* routed = dynamic_cast<star::transport::ShmRoutedMessageBus*>(&context->message_bus())) {
             if (options.route_plan.empty() && options.process_group.empty()) {
-                const auto sub = options.shm_sub_topics.empty()
-                                     ? std::string(star::runtime::observability::kStatsChannelName)
-                                     : options.shm_sub_topics + "," + star::runtime::observability::kStatsChannelName;
+                const auto sub = (options.shm_sub_topics.empty() ? std::string{} : options.shm_sub_topics + ",") +
+                                 star::runtime::observability::kStatsChannelName + "," + star::runtime::observability::kHealthChannelName;
                 routed->configure_route_plan(options.shm_pub_topics, sub);
             } else {
                 routed->configure_route_registry(options.process_group, options.route_plan);
@@ -633,10 +633,13 @@ namespace star::native_runner {
         star::schema::native::register_builtin_schemas(context->schema_registry());
         star::setting::schema::register_setting_schemas(context->schema_registry());
 
+        using WorkerHealth = star::generated::observability::worker_health::WorkerHealth;
         struct LatestStats {
             std::mutex mutex;
             std::map<std::string, WorkerStats> by_group;
+            std::map<std::string, WorkerHealth> health_by_component;
             std::atomic<uint64_t> received{0};
+            std::atomic<uint64_t> health_received{0};
             std::atomic<uint64_t> decode_failures{0};
         };
         auto latest = std::make_shared<LatestStats>();
@@ -671,6 +674,36 @@ namespace star::native_runner {
             }
         });
 
+        auto health_descriptor = star::transport::ChannelDescriptor{};
+        health_descriptor.name = star::runtime::observability::kHealthChannelName;
+        health_descriptor.type_name = "observability.worker_health";
+        health_descriptor.schema_type_id = WorkerHealth::schema_type_id();
+        auto health_reader = context->message_bus().create_reader(health_descriptor, [latest](const star::transport::MessageView& message) {
+            try {
+                auto health = WorkerHealth{};
+                if (const auto typed = message.payload.as<WorkerHealth>()) {
+                    health = *typed;
+                } else if (const auto binary = message.payload.as<star::transport::BinaryPayloadView>()) {
+                    health = WorkerHealth::from_binary(binary->bytes());
+                } else if (const auto slot = message.payload.as<star::transport::ShmSlotView>()) {
+                    if (not slot->stable()) {
+                        return;
+                    }
+                    health = WorkerHealth::from_binary(slot->bytes());
+                } else {
+                    return;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(latest->mutex);
+                    latest->health_by_component[health.component] = std::move(health);
+                }
+                latest->health_received.fetch_add(1, std::memory_order_relaxed);
+            } catch (const std::exception& e) {
+                latest->decode_failures.fetch_add(1, std::memory_order_relaxed);
+                logW << "monitor: decode worker health failed: " << e.what();
+            }
+        });
+
         std::cout << "# Starletto Transport Monitor\n";
         std::cout << "# Time: " << make_timestamp() << "\n";
         std::cout << "# Transport: " << transport_name << "\n";
@@ -684,13 +717,16 @@ namespace star::native_runner {
         while (true) {
             std::this_thread::sleep_for(std::chrono::milliseconds(300));
             auto snapshot = std::map<std::string, WorkerStats>{};
+            auto health_snapshot = std::map<std::string, WorkerHealth>{};
             {
                 std::lock_guard<std::mutex> lock(latest->mutex);
                 snapshot = latest->by_group;
+                health_snapshot = latest->health_by_component;
             }
-            const auto received_now = latest->received.load(std::memory_order_relaxed);
+            const auto received_now = latest->received.load(std::memory_order_relaxed) +
+                                      latest->health_received.load(std::memory_order_relaxed);
             const auto now = std::chrono::steady_clock::now();
-            if (not snapshot.empty() and (options.monitor_once or received_now != last_received)) {
+            if ((not snapshot.empty() or not health_snapshot.empty()) and (options.monitor_once or received_now != last_received)) {
                 std::cout << "group      pid      transport   channel                                        hz      p99_us   dropped  failures\n";
                 for (const auto& [group, stats] : snapshot) {
                     for (const auto& entry : stats.channels) {
@@ -700,6 +736,20 @@ namespace star::native_runner {
                                   << std::setw(8) << entry.latency_p99_us << " " << std::setw(8)
                                   << entry.dropped_count << " " << std::setw(8)
                                   << entry.callback_failures << "\n";
+                    }
+                }
+                auto unhealthy = std::vector<const WorkerHealth*>{};
+                for (const auto& [_, health] : health_snapshot) {
+                    if (not health.healthy) {
+                        unhealthy.push_back(&health);
+                    }
+                }
+                if (not unhealthy.empty()) {
+                    std::cout << "health     component                 group        severity  message\n";
+                    for (const auto* health : unhealthy) {
+                        std::cout << "health     " << std::left << std::setw(24) << health->component << " "
+                                  << std::setw(12) << health->process_group.value_or("") << " "
+                                  << std::setw(9) << health->severity << " " << health->message << "\n";
                     }
                 }
                 std::cout << std::endl;

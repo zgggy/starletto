@@ -33,3 +33,4 @@
 | 2026-11-14 | 回放写回通道：新增 `MessagePublisher` 与 `star replay --publish/--channel/--repeat/--strict`，录制字节原样发布、schema 身份随行；回放前用 registry 校验身份 | transport/apps | record v2 收口 |
 | 2026-11-14 | shm header v5：持有者 pid 表 + attach/析构时清扫已死进程，孤儿段（`_exit`/SIGKILL）自动重建；段名随版本更新，v4 旧段不可达 | transport | remediation_plan P1-4 遗留 |
 | 2026-11-14 | 新增 `star new module/component` 脚手架：生成 6 个文件并自动登记父 module.conf/meson，三处命名一次写对；脚手架自检进 CI（12/12） | tools/docs | component_guide 易用性路线 |
+| 2026-11-14 | HealthChecker 接线：component.conf 新增 `health` 块（通道频率 + 资源阈值），经 plan 到 host 启动周期评估；严重度变化写日志并发布 `starletto.health`，monitor 展示未健康组件 | runtime/schema/apps | 能力盘点：HealthChecker 零接线 |
