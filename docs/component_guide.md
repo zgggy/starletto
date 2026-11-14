@@ -264,12 +264,14 @@ extern "C" void star_register_components(star::runtime::ComponentRegistry* regis
 如果模块自带 schema，插件入口还要负责注册它们（app 不再知道任何模块）：
 
 ```cpp
+#include "basement/core/build_info.h"
 #include "modules/<module>/schema/schema_bootstrap.h"
 
 extern "C" void star_register_components(star::runtime::ComponentRegistry* registry) {
     star::<module>::schema::register_<module>_schemas(*registry->schema_registry());
     star::<module>::register_native_components(*registry);
 }
+STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 ```
 
 注册是幂等的；同一模块的多个插件各自注册也没问题。`star check` 的 `app-boundary`

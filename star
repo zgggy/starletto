@@ -874,7 +874,7 @@ run_ci_guard() {
     if [ ${#targets[@]} -eq 0 ]; then
         for mod_dir in "${PROJECT_ROOT}"/modules/*/; do
             if [ -d "$mod_dir" ] && [ -f "${mod_dir}module.conf" ]; then
-                _check_step "doctor-$(basename "$mod_dir")" "$runner" --doctor "$mod_dir"
+                _check_step "doctor-$(basename "$mod_dir")" "$runner" --doctor --deep "$mod_dir"
             fi
         done
     else

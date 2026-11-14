@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "apps/native_runner/runner_utils.h"
+#include "basement/core/build_info.h"
 #include "basement/runtime/component/native_component_host.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/observability/resource_monitor.h"
@@ -441,6 +442,20 @@ namespace star::native_runner {
                         if (err != nullptr || sym == nullptr) {
                             logE << "doctor: dlsym failed: lib=" << lib_key << ", conf=" << component_conf << ", err=" << (err ? err : "unknown");
                             ok = false;
+                        }
+                        // 插件 ABI 契约：header-only 运行时要求插件与宿主同工具链
+                        auto fingerprint_sym = dlsym(handle, "star_toolchain_fingerprint");
+                        if (fingerprint_sym == nullptr) {
+                            logW << "doctor: plugin has no toolchain fingerprint (unversioned), ABI not verified: " << lib_key;
+                        } else {
+                            const auto* plugin_fingerprint = reinterpret_cast<const char* (*)()>(fingerprint_sym)();
+                            const auto* host_fingerprint = star::base::toolchain_fingerprint();
+                            if (plugin_fingerprint == nullptr || std::string(plugin_fingerprint) != std::string(host_fingerprint)) {
+                                logE << "doctor: plugin toolchain mismatch: lib=" << lib_key
+                                     << ", plugin=" << (plugin_fingerprint ? plugin_fingerprint : "null")
+                                     << ", host=" << host_fingerprint;
+                                ok = false;
+                            }
                         }
                         dlclose(handle);
                     }

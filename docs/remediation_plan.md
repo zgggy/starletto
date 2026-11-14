@@ -246,3 +246,12 @@ flowchart LR
   demo，不应放在 apps）
 - `star check` 新增 `app-boundary`（grep 门禁）；新增 `runtime_plugin_schema` 用例
   直接 dlopen 插件并断言 schema/组件已注册；30 套 192 用例、14/14
+
+## 后续整改 P1.1：插件 ABI 契约（第一阶段完成 2026-11-14）
+
+- 新增 `basement/core/build_info.h`：编译器/标准库/ABI 宏/指针宽度/NDEBUG 指纹
+- 所有插件 `register.cc` 导出 `star_toolchain_fingerprint()`（脚手架默认生成）
+- `doctor --deep` 比对插件与宿主指纹，不一致直接失败；`star check` 的 doctor
+  改为 `--deep`，每次门禁都验证插件 ABI
+- `docs/plugin_abi.md` 写明当前模型、必须一致项、指纹不覆盖项与后续共享库路线
+- **待做（第二阶段）**：抽 `libstar_runtime.so` + C ABI 入口 + 安装头文件/pkg-config

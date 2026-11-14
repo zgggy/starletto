@@ -172,12 +172,16 @@ inline auto register_native_components(star::runtime::ComponentRegistry& registr
 
 
 def register_cc(module: str, name: str) -> str:
-    return f"""#include "basement/runtime/component/component_registry.h"
+    return f"""#include "basement/core/build_info.h"
+#include "basement/runtime/component/component_registry.h"
 #include "modules/{module}/{name}/{name}_component.h"
 
 extern "C" void star_register_components(star::runtime::ComponentRegistry* registry) {{
     star::{module}::register_native_components(*registry);
 }}
+
+// 插件 ABI 契约：宿主用该符号比对工具链（header-only 运行时要求同工具链）
+STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 """
 
 

@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "basement/core/build_info.h"
 #include "basement/core/exception.h"
 #include "basement/runtime/component/component_registry.h"
 #include "basement/schema/schema_registry.h"
@@ -22,6 +23,10 @@ TEST_CASE("plugin entry registers its module schemas") {
     auto schemas = star::schema::SchemaRegistry{};
     registry.set_schema_registry(&schemas);
     reinterpret_cast<void (*)(star::runtime::ComponentRegistry*)>(symbol)(&registry);
+
+    const auto fingerprint = ::dlsym(handle, "star_toolchain_fingerprint");
+    REQUIRE(fingerprint != nullptr);
+    REQUIRE_EQ(std::string(reinterpret_cast<const char* (*)()>(fingerprint)()), std::string(star::base::toolchain_fingerprint()));
 
     REQUIRE(registry.contains("star::parameter::Parameter"));
     REQUIRE(schemas.find_latest("planning.motion").has_value());

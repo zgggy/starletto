@@ -1,3 +1,4 @@
+#include "basement/core/build_info.h"
 #include "basement/core/exception.h"
 #include "modules/setting/parameter/parameter_component.h"
 #include "modules/setting/schema/schema_bootstrap.h"
@@ -10,3 +11,4 @@ extern "C" void star_register_components(star::runtime::ComponentRegistry* regis
     star::setting::schema::register_setting_schemas(*registry->schema_registry());
     star::setting::register_native_parameter_components(*registry);
 }
+STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
