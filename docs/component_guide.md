@@ -421,6 +421,7 @@ flowchart LR
 | 现象 | 原因 | 排查 |
 |---|---|---|
 | `star list` 里没有我的组件 | `module.conf` 的 `components []` 漏登记 | 看 module.conf |
+| 启动报 `SchemaValidator unknown field: ComponentConf.xxx` | conf 拼错/写了不存在的块（如 `readres`） | 对照组件 schema 的字段名 |
 | `doctor` 报 `empty component_library but static_link=false` | conf 既没库也没标静态 | 补 `component_library` |
 | `dlopen failed: lib=X` | `.so` 名字不匹配或未安装 | `star doctor --deep` |
 | `create component failed: 类名` | `component_class` 与注册名不一致 | 对照 `register_native_components` |

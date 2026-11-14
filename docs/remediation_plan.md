@@ -274,3 +274,12 @@ flowchart LR
 - 录制文件创建后 `chmod 0600`
 - 新增 `docs/security_model.md`：资产、信任边界、威胁/缓解、非目标、部署建议
 - 回归：shm 权限、录制权限、插件路径拒绝 3 用例；30 套 199 用例、14/14
+
+## 后续整改 P2.1：conf 严格校验（已完成 2026-11-14）
+
+- PlanLoader 在 `from_value` 前调用 `SchemaValidator::validate(descriptor, root)`：
+  - 未知键报错（如 `readres` → `SchemaValidator unknown field: ComponentConf.readres`）
+  - 缺失必填、类型不符同样在加载期报错
+  - `object` 类型（如 `parameters`）保持不透明，不限制内部键
+- 错误经 `build_component_load_plan` 返回，`star run`/`doctor` 直接显示
+- 回归：plan 测试新增 1 用例（typo 拒绝 + parameters 通过）；30 套 201 用例

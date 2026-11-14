@@ -43,3 +43,4 @@
 | 2026-11-14 | 插件 ABI 契约第一阶段：工具链指纹导出 + doctor --deep 比对（star check 内置）；新增 docs/plugin_abi.md；共享库抽离列为第二阶段 | core/runtime/docs | P1.1 |
 | 2026-11-14 | supervisor：ready 握手（STAR_READY_FD）+ on-failure 重启/指数退避/预算；重启录制加 .attemptN 保留现场 | runtime/apps | P1.3 |
 | 2026-11-14 | 安全基线：shm 0600 + 属主校验、插件路径限制在模块目录、录制 0600、新增 security_model.md | transport/runtime/docs | P1.4 |
+| 2026-11-14 | conf 严格校验：PlanLoader 在 from_value 前跑 SchemaValidator（未知键/缺失/类型），object 容器保持不透明；拼错 readers 不再静默 | runtime/schema | P2.1 |

@@ -1,4 +1,7 @@
+#include <fstream>
 #include <memory>
+#include <cstdio>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -6,6 +9,7 @@
 #include "basement/schema/schema_value.h"
 #include "basement/runtime/factory/runtime_factory.h"
 #include "basement/runtime/plan/plan_builder.h"
+#include "basement/runtime/plan/plan_loader.h"
 #include "basement/transport/rpc/rpc.h"
 
 #include "tests/support/star_test.h"
@@ -155,4 +159,43 @@ TEST_CASE("component health block flows into the load plan") {
     REQUIRE_EQ(plan.health->max_cpu_percent.value_or(0.0), 75.0);
     REQUIRE_EQ(plan.health->max_rss_mb.value_or(0), int64_t{256});
     REQUIRE_EQ(plan.health->max_fd_count.value_or(0), int64_t{128});
+}
+
+// P2.1：conf 未知键必须报错；此前拼错 readers 会静默不订阅
+TEST_CASE("component.conf rejects unknown keys but allows opaque parameters") {
+    char path[96]{};
+    std::snprintf(path, sizeof(path), "/tmp/starletto_conf_typo_%d.conf", static_cast<int>(::getpid()));
+
+    const auto write = [&path](const std::string& body) {
+        auto out = std::ofstream{path};
+        out << body;
+    };
+
+    write(R"CONF(
+component {
+    name = probe
+    type = test
+    component_class = test::Probe
+}
+readres { in { channel = a } }
+)CONF");
+    auto loader = star::runtime::plan::PlanLoader{};
+    const auto typo = loader.try_load_component(path);
+    REQUIRE(not typo.ok());
+    REQUIRE(typo.error.find("unknown field") != std::string::npos);
+
+    write(R"CONF(
+component {
+    name = probe
+    type = test
+    component_class = test::Probe
+}
+parameters {
+    any_key = any_value
+}
+)CONF");
+    const auto opaque = loader.try_load_component(path);
+    REQUIRE(opaque.ok());
+
+    std::remove(path);
 }

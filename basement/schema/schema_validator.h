@@ -119,6 +119,12 @@ private:
                 validate_object_values(path, field, value);
                 return;
             }
+            // `object` 是刻意的不透明容器（如 component.conf 的 parameters）：
+            // 只校验它是 object，不限制内部键
+            if (field.type_name == "object" and field.children.empty()) {
+                (void)ensure_object(path, value);
+                return;
+            }
             validate_object_fields(path, field.children, field.allow_unknown_fields, value);
             return;
         }

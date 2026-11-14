@@ -11,6 +11,7 @@
 #include "basement/runtime/plan/plan_builder.h"
 #include "basement/schema/builtin/manifest/component.s.h"
 #include "basement/schema/builtin/manifest/module.s.h"
+#include "basement/schema/schema_validator.h"
 #include "basement/schema/schema_value.h"
 
 namespace star::runtime::plan {
@@ -35,6 +36,8 @@ class PlanLoader {
     auto try_load_module(const std::string& path) const -> LoadResult<ModuleConf> {
         try {
             const auto root = star::schema::parse_schema_file(path);
+            // 严格校验：未知键（如把 readers 拼成 readres）必须报错，不能静默忽略
+            star::schema::SchemaValidator::validate(star::generated::manifest::module::ModuleConf::schema_descriptor(), root);
             const auto typed = star::generated::manifest::module::ModuleConf::from_value(root);
             if (typed.module.name.empty()) {
                 throw star::excep::RuntimeError("PlanLoader load_module failed, module.name is empty: path=", path);
@@ -54,6 +57,7 @@ class PlanLoader {
     auto try_load_component(const std::string& path) const -> LoadResult<ComponentConf> {
         try {
             const auto root = star::schema::parse_schema_file(path);
+            star::schema::SchemaValidator::validate(star::generated::manifest::component::ComponentConf::schema_descriptor(), root);
             const auto typed = star::generated::manifest::component::ComponentConf::from_value(root);
             if (typed.component.name.empty()) {
                 throw star::excep::RuntimeError("PlanLoader load_component failed, component.name is empty: path=", path);
