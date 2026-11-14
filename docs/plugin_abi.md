@@ -70,7 +70,7 @@ STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 | `star doctor --deep` | 预检 `star_register_components` + 指纹；缺失/不一致都让门禁失败 |
 | `star check` | 模块 doctor、runtime-smoke、install-smoke 都走同一契约 |
 
-回放工具的 `--plugin` 也要求同样的 C++ 入口（它需要插件注册 schema）。
+回放工具的 `--plugin` 也要求同样的 C++ 入口与工具链指纹（它需要插件注册 schema）。
 
 ## 5. 生命周期
 
