@@ -24,15 +24,20 @@ SCHEMA_TOOL="${STAGE}/share/starletto/schema/schema_codegen.py"
 # 用安装树里的 runner：同时验证安装树自包含、可执行
 RUNNER="${STAGE}/bin/native_runner"
 
+# libdir 在 Debian/Ubuntu 可能是 lib/x86_64-linux-gnu，不能写死 lib/
+PC_FILE="$(find "${STAGE}" -name 'starletto.pc' -print -quit)"
 for required in "${INCLUDE_DIR}/basement/runtime/component/component.h" \
                 "${INCLUDE_DIR}/basement/schema/builtin/runtime/component_load_plan.s.h" \
-                "${SCHEMA_TOOL}" \
-                "${STAGE}/lib/pkgconfig/starletto.pc"; do
+                "${SCHEMA_TOOL}"; do
     if [ ! -e "${required}" ]; then
         echo "[E] install surface missing: ${required}" >&2
         exit 1
     fi
 done
+if [ -z "${PC_FILE}" ]; then
+    echo "[E] install surface missing: starletto.pc" >&2
+    exit 1
+fi
 MODULE="${WORK}/oot_module"
 mkdir -p "${MODULE}/schema"
 cat > "${MODULE}/module.conf" <<'CONF'
