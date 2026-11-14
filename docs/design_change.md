@@ -46,3 +46,4 @@
 | 2026-11-14 | conf 严格校验：PlanLoader 在 from_value 前跑 SchemaValidator（未知键/缺失/类型），object 容器保持不透明；拼错 readers 不再静默 | runtime/schema | P2.1 |
 | 2026-11-14 | 文档/拓扑修正：README 不再宣称 shm 零拷贝（明确跨进程编码+拷贝、View 当前不适用）；资产状态说明；doctor 增加通道两端类型一致性检查 | docs/runtime | P2.2 |
 | 2026-11-14 | 随机输入测试 + UBSan：修复固定布局槽位未对齐访问、NaN/越界 double→int64；新增 docs/testing.md 与 CI 模板 | schema/tests/docs | P2.3 |
+| 2026-11-14 | app.cc 1140 行按职责拆 5 个 TU（run/inspect/selftest/monitor/common），纯移动、行为不变 | apps | P2.4 |

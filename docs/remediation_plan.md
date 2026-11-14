@@ -305,3 +305,15 @@ flowchart LR
   docs/testing.md；ASan 交给 Linux CI
 - 新增 `.github/workflows/ci.yml`（build/test/check + UBSan job），尚未实际启用
 - 32 套 206 用例；正常构建与 UBSan 构建均全绿
+
+## 后续整改 P2.4：拆 app.cc（已完成 2026-11-14）
+
+- `apps/native_runner/app.cc`（1140 行）按职责拆为 5 个 TU：
+  - `app_run.cc`（run + multi-process/supervisor）
+  - `app_inspect.cc`（list/graph/doctor）
+  - `app_selftest.cc`（transport/shm 自检）
+  - `app_monitor.cc`（stats/health 订阅与展示）
+  - `app_common.cc`（时间戳、路由配置、库解析、日志/统计辅助）
+- 纯移动，行为不变；`star check` 14/14、32 套 206 用例、list/monitor/doctor 实跑通过
+- **待做**：`Component` 基类拆分（Lifecycle/Ports/Config/Service）与运行时错误模型统一，
+  属于 API 变更，放到共享库阶段一起评估
