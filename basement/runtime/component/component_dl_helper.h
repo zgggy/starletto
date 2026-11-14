@@ -10,9 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "basement/core/build_info.h"
 #include "basement/core/exception.h"
-#include "basement/plugin/star_plugin_abi.h"
-#include "basement/runtime/component/c_abi_adapter.h"
 #include "basement/runtime/plan/plan_builder.h"
 
 namespace star::runtime {
@@ -83,6 +82,9 @@ inline auto validate_declared_library(const std::string& lib, const std::string&
     return candidate_text;
 }
 
+// 生命周期契约：插件注册的工厂闭包代码位于插件 DSO 内，因此持有这些工厂的
+// ComponentRegistry 必须先于 handles（DlHandle）析构。NativeComponentHost 的
+// 成员声明顺序满足该约束；外部宿主也必须照此排列。
 class ComponentDlHelper {
   public:
     auto resolve_library_key(const star::runtime::plan::ComponentLoadPlan& plan) const -> std::string {
@@ -108,12 +110,9 @@ class ComponentDlHelper {
         return lib;
     }
 
-    // 两种插件入口：
-    //   1. C ABI（优先）：const star_plugin_v1* star_plugin_entry_v1(void)
-    //      纯 C 编译、不要求与宿主同工具链；
-    //   2. 旧 C++ 入口：extern "C" void star_register_components(ComponentRegistry*)
+    // 唯一插件入口：extern "C" void star_register_components(ComponentRegistry*)
+    // 并且必须导出 star_toolchain_fingerprint；没有兼容入口、没有未版本化插件。
     using RegisterComponentsFn = void (*)(star::runtime::ComponentRegistry*);
-    using PluginEntryFn = const star_plugin_v1* (*)(void);
 
     void load_dynamic_library(const star::runtime::plan::ComponentLoadPlan& plan, std::unordered_map<std::string, DlHandle>& handles,
                               star::runtime::ComponentRegistry* registry) {
@@ -132,23 +131,29 @@ class ComponentDlHelper {
             throw star::excep::RuntimeError("NativeComponentHost register failed, registry is null: library=", library_key, ", component_class=", plan.component_class);
         }
 
-        // 优先 C ABI：纯 C 插件没有 star_register_components，也不要求工具链指纹
+        // 插件 ABI 契约：header-only 运行时要求插件与宿主同工具链。
+        // 指纹缺失/不一致都在加载时拒绝，不再保留「旧插件先跑起来」的兼容路径。
         dlerror();
-        auto entry_sym = dlsym(it->second.handle, STAR_PLUGIN_ENTRY_SYMBOL);
-        if (entry_sym != nullptr) {
-            auto entry = reinterpret_cast<PluginEntryFn>(entry_sym);
-            const auto* plugin = entry();
-            register_c_abi_plugin_components(plugin, *registry);
-            return;
+        auto fingerprint_sym = dlsym(it->second.handle, "star_toolchain_fingerprint");
+        const auto* fingerprint_err = dlerror();
+        if (fingerprint_err != nullptr || fingerprint_sym == nullptr) {
+            throw star::excep::RuntimeError("NativeComponentHost dlsym failed: library=", library_key, ", symbol=star_toolchain_fingerprint",
+                                            ", component_class=", plan.component_class, ", err=", (fingerprint_err ? fingerprint_err : "missing"));
+        }
+        const auto* plugin_fingerprint = reinterpret_cast<const char* (*)()>(fingerprint_sym)();
+        const auto* host_fingerprint = star::base::toolchain_fingerprint();
+        if (plugin_fingerprint == nullptr || std::string(plugin_fingerprint) != std::string(host_fingerprint)) {
+            throw star::excep::RuntimeError("NativeComponentHost plugin toolchain mismatch: library=", library_key,
+                                            ", plugin=", (plugin_fingerprint ? plugin_fingerprint : "null"), ", host=", host_fingerprint,
+                                            ", component_class=", plan.component_class);
         }
 
         dlerror();
         auto sym = dlsym(it->second.handle, "star_register_components");
         const auto* err = dlerror();
         if (err != nullptr || sym == nullptr) {
-            throw star::excep::RuntimeError("NativeComponentHost dlsym failed: library=", library_key,
-                                            ", symbols=star_plugin_entry_v1|star_register_components", ", component_class=", plan.component_class,
-                                            ", err=", (err ? err : "unknown"));
+            throw star::excep::RuntimeError("NativeComponentHost dlsym failed: library=", library_key, ", symbol=star_register_components",
+                                            ", component_class=", plan.component_class, ", err=", (err ? err : "missing"));
         }
         // 必须把真实的 registry 交给插件：早先把 register_fn 这个函数指针当成了 registry，
         // 插件拿到垃圾地址后对其中的 mutex 加锁，触发「mutex lock failed: Invalid argument」

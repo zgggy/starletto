@@ -24,8 +24,8 @@ flowchart LR
 | [`component_guide.md`](component_guide.md) | **组件开发指南**：写一个组件要动哪些文件、三重一致性陷阱、易用性改进路线 | 要加模块的人 |
 | [`arch.md`](arch.md) | 系统架构（简版，Mermaid 三图 + 关键决策表） | 快速总览 |
 | [`spec/`](spec/) | 设计契约：system_vision、basement_design/schema/transport/runtime_*、workplan | 改底座前必读 |
-| [`installation.md`](installation.md) | 安装树、源码树外插件开发、pkg-config、C ABI 插件 | 插件作者 |
-| [`plugin_abi.md`](plugin_abi.md) | 插件 ABI：C ABI v1（任意 C 编译器）与 C++ header-only 路径、共享库边界 | 插件作者/发布者 |
+| [`installation.md`](installation.md) | 安装树、源码树外插件开发、pkg-config | 插件作者 |
+| [`plugin_abi.md`](plugin_abi.md) | 插件 ABI 终态：唯一 C++ 入口、强制工具链指纹、生命周期契约 | 插件作者/发布者 |
 | [`testing.md`](testing.md) | 测试、确定性随机输入、UBSan/ASan 配方与 CI 模板 | 开发者 |
 | [`remediation_plan.md`](remediation_plan.md) | 底层缺陷修复方案（2026-11-11 复审，P0/P1/P2 分级 + 验收） | 系统工程师 |
 | [`contract_decisions.md`](contract_decisions.md) | **契约决策（已确认）**：多版本 Schema 演进 + 服务并入通道；实施计划五阶段 | 系统工程师 |
@@ -52,5 +52,5 @@ flowchart LR
 | 测试 | 34 套 212 用例 |
 | CI 门禁 | `star check` 15/15 |
 | 业务模块 | setting/config、setting/parameter、planning/motion（示例）、control/pid |
-| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 收口；P1.1 B1 安装面、B2 共享库/C ABI、P2.5 macOS 资源采样已完成 |
+| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 收口；P1.1 B1 安装面、B2 插件 ABI 终态、P2.5 macOS 资源采样已完成 |
 | 算法资产 | `libraries/` 约 3500 行未接线，等 localization/perception 等模块落地 |

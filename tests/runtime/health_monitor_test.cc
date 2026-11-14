@@ -106,7 +106,8 @@ TEST_CASE("HealthMonitor evaluates periodically once started") {
     rule.component = "periodic";
     auto monitor = HealthMonitor{*bus, "test_group", std::vector<HealthMonitor::Rule>{rule}, 50};
     monitor.start();
-    for (int i = 0; i < 100 && count.load(std::memory_order_relaxed) < 2; ++i) {
+    // 并行/UBSan 下调度可能被拉长：给足 5s，避免把「慢」误判成「不工作」
+    for (int i = 0; i < 1000 && count.load(std::memory_order_relaxed) < 2; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     monitor.stop();

@@ -1,13 +1,16 @@
 #include <chrono>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "basement/core/stable_hash.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/schema/fixed_layout_codec.h"
 #include "basement/transport/shm/shm_message_bus.h"
+#include "basement/transport/shm/shm_channel.h"
 #include "basement/transport/shm/shm_views.h"
 
 #include "tests/support/star_test.h"
@@ -89,6 +92,34 @@ TEST_CASE("shm write prefers the versionable binary encoding") {
     const auto decoded = LoadPlan::from_binary(slot->bytes());
     REQUIRE_EQ(decoded.module_name, std::string("setting"));
     REQUIRE_EQ(decoded.component_name, std::string("parameter"));
+}
+
+// v7 起槽内必须是带身份的帧：未加帧的旧载荷直接丢弃，不能静默当 legacy 放行
+TEST_CASE("shm drops an unframed payload instead of treating it as legacy") {
+    const auto bus = std::make_shared<ShmMessageBus>();
+    const auto channel = "test.payload.unframed";
+    auto delivered = 0;
+    const auto reader = bus->create_reader(make_descriptor(channel), [&](const MessageView&) { ++delivered; });
+
+    // 用相同段名直接 attach 到底层 shm，绕过总线写路径注入无帧载荷
+    const auto hash = star::base::fnv1a64(channel);
+    char shm_name[64]{};
+    std::snprintf(shm_name, sizeof(shm_name), "/star_v%02u_%016lx", star::transport::kShmVersion, static_cast<unsigned long>(hash));
+    auto raw = star::transport::ShmChannel{std::string(shm_name), 1u << 20};
+    const auto junk = std::vector<uint8_t>{'n', 'o', 't', 'a', 'f', 'r', 'a', 'm', 'e'};
+    raw.write(junk.data(), static_cast<uint32_t>(junk.size()));
+
+    std::optional<star::transport::ChannelStatsSnapshot> stats;
+    for (int i = 0; i < 200; ++i) {
+        stats = bus->channel_stats(channel);
+        if (stats.has_value() && stats->dropped_count > 0) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE(stats.has_value());
+    REQUIRE_EQ(stats->dropped_count, uint64_t{1});
+    REQUIRE_EQ(delivered, 0);
 }
 
 // 跨版本通信：同名不同 version/hash 允许通过总线，解码策略由接收端决定

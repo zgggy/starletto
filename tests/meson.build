@@ -89,33 +89,44 @@ test(
     ),
 )
 
-# C ABI 插件：用 C 编译器编（不是 C++），插件源只包含纯 C ABI 头。
-c_abi_demo_plugin = shared_library(
-    'c_abi_demo_plugin',
-    files('runtime/c_abi_plugin.c'),
-    include_directories: include_directories('..'),
+# 插件 ABI 契约测试用 DSO（缺指纹/指纹不一致/正常三种变体）
+plugin_abi_valid = shared_library(
+    'plugin_abi_valid',
+    files('runtime/plugin_abi_test_plugin.cc'),
+    include_directories: test_root_inc,
+    dependencies: [runtime_api_dep],
     name_suffix: 'so',
 )
 
-c_abi_bad_plugin = shared_library(
-    'c_abi_bad_plugin',
-    files('runtime/c_abi_plugin.c'),
-    include_directories: include_directories('..'),
-    c_args: ['-DSTAR_CABI_TEST_BAD_ABI'],
+plugin_abi_no_fingerprint = shared_library(
+    'plugin_abi_no_fingerprint',
+    files('runtime/plugin_abi_test_plugin.cc'),
+    include_directories: test_root_inc,
+    dependencies: [runtime_api_dep],
+    cpp_args: ['-DSTAR_TEST_NO_FINGERPRINT'],
+    name_suffix: 'so',
+)
+
+plugin_abi_wrong_fingerprint = shared_library(
+    'plugin_abi_wrong_fingerprint',
+    files('runtime/plugin_abi_test_plugin.cc'),
+    include_directories: test_root_inc,
+    dependencies: [runtime_api_dep],
+    cpp_args: ['-DSTAR_TEST_WRONG_FINGERPRINT'],
     name_suffix: 'so',
 )
 
 test(
-    'runtime_c_abi_plugin',
+    'runtime_plugin_abi',
     executable(
-        'runtime_c_abi_plugin_test',
-        files('runtime/c_abi_plugin_test.cc') + test_main,
+        'runtime_plugin_abi_test',
+        files('runtime/plugin_abi_test.cc') + test_main,
         include_directories: test_root_inc,
-        # 显式走共享库路径，确保 libstar_runtime 本身可用（其余目标静态链接）
-        dependencies: [star_runtime_shared_dep, manifest_native_dep, dl_dep],
+        dependencies: [runtime_native_dep],
         cpp_args: [
-            '-DSTAR_CABI_PLUGIN_PATH="@0@"'.format(c_abi_demo_plugin.full_path()),
-            '-DSTAR_CABI_BAD_PLUGIN_PATH="@0@"'.format(c_abi_bad_plugin.full_path()),
+            '-DSTAR_TEST_VALID_PLUGIN_PATH="@0@"'.format(plugin_abi_valid.full_path()),
+            '-DSTAR_TEST_NO_FINGERPRINT_PLUGIN_PATH="@0@"'.format(plugin_abi_no_fingerprint.full_path()),
+            '-DSTAR_TEST_WRONG_FINGERPRINT_PLUGIN_PATH="@0@"'.format(plugin_abi_wrong_fingerprint.full_path()),
         ],
     ),
 )

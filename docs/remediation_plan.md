@@ -254,7 +254,7 @@ flowchart LR
 - `doctor --deep` 比对插件与宿主指纹，不一致直接失败；`star check` 的 doctor
   改为 `--deep`，每次门禁都验证插件 ABI
 - `docs/plugin_abi.md` 写明当前模型、必须一致项、指纹不覆盖项与后续共享库路线
-- **待做（第二阶段）**：抽 `libstar_runtime.so` + C ABI 入口 + 安装头文件/pkg-config
+- **B2 结论（2026-11-14）**：不采用 C ABI 双入口；只保留 C++ 单入口 + 强制指纹，见文末
 
 ## 后续整改 P1.3：supervisor 重启/退避/readiness（已完成 2026-11-14）
 
@@ -327,7 +327,7 @@ flowchart LR
 - 新增 `tools/tests/oot_plugin_smoke.sh`：临时 DESTDIR 安装 → 用安装的 codegen
   生成模块 schema → 源码树外编译插件 → `doctor --deep` → 运行
 - `star check` 新增 `install-smoke` 门禁（15/15）
-- **B2 已完成（2026-11-14）**：`libstar_runtime` + 纯 C ABI v1，见下节
+- **B2 终态决策（2026-11-14）**：只保留 C++ 插件入口，C ABI/过渡库已撤销，见下节
 
 ## 后续整改 P2.5：ResourceMonitor 跨平台（已完成 2026-11-14）
 
@@ -342,25 +342,35 @@ flowchart LR
 - 回归：新增 `runtime_resource_monitor` 2 用例（自身采样四项非零、未知 pid 全零）；
   33 套 208 用例、`star check` 15/15。
 
-## 后续整改 P1.1 B2：共享库与 C ABI 插件（已完成 2026-11-14）
+## 后续整改 P1.1 B2：插件 ABI 终态（2026-11-14）
 
-- 新增纯 C 头 `basement/plugin/star_plugin_abi.h`：无 C++ 类型/模板/STL，
-  插件导出 `star_plugin_entry_v1`，通过 `star_component_api_v1` 读写原始字节
-  （身份 name/version/hash 随 payload 传递；读接口支持「先问大小再分配」）。
-- 新增 `libstar_runtime`（soversion 0，随 `meson install` 安装，`starletto.pc`
-  带 `-lstar_runtime`）：承载 `CAbiComponentAdapter`、C descriptor 校验/注册、
-  `star_runtime_plugin_abi_version()`。core/schema/transport 仍 header-only。
-- 加载器优先探测 C ABI 入口，缺失时回退旧 `star_register_components`；
-  `doctor --deep` 对 C 插件只校验 ABI 版本/descriptor，不再要求工具链指纹；
-  回放工具遇到 C 插件明确告警「无 schema 可注册」。
-- 验证：
-  - `runtime_c_abi_plugin` 3 用例：字节收发+身份、无数据返回码、ABI 版本不匹配拒绝；
-  - 测试插件用 `cc -std=c11` 编译，`otool -L` 只依赖 libSystem，无 libc++，
-    未定义符号仅 `calloc/free/malloc/memcpy/strcmp`；
-  - `install-smoke` 用安装出头在源码树外编译纯 C 插件，`doctor --deep` 与运行通过；
-  - 34 套 212 用例、`star check` 15/15；UBSan 构建（`build-ubsan`）同样 34/34 全绿。
-- **评估结论**：暂不把 `Component` 整体改成 C ABI、也不拆
-  Lifecycle/Ports/Config/Service。原因：端口是模板、解码依赖生成类型的编译期
-  信息；完整 C ABI 需要运期 schema 描述符，是独立工程。拆分只改契约、无正确性
-  收益。错误模型保持「编程错误异常 + 运行时状况 WriteResult」，C 边界映射为
-  `int` + `last_error()`。详见 `docs/plugin_abi.md` §4。
+**结论**：插件 ABI 收敛为单一 C++ 入口，C ABI v1 与 `libstar_runtime` 过渡库
+整体撤销；不再保留「新入口 + 旧入口」并存的策略。
+
+**原因**：
+
+- `Component` 的端口是模板，解码依赖生成类型的编译期信息；配置、服务、schema
+  注册也都建立在 C++ 类型上。纯 C ABI 只能传原始字节，覆盖不了主组件模型。
+- 两套入口 = 两套组件模型、两套诊断、两套生命周期，属于架构分裂；
+  跨编译器预编译插件的前置是运行期 schema 描述符 + C 代码生成，是新架构，
+  不能用兼容层冒充。
+- C ABI 版本没有带来主路径收益，却让加载器/doctor/回放/安装面都出现分叉。
+
+**同批收紧（终态相关）**：
+
+- 加载器强制要求 `star_register_components` + `star_toolchain_fingerprint`；
+  缺失/不一致直接拒绝（doctor 同步从 warning 改为 error）。
+- shm 槽内只接受 v7 带身份帧；无 magic/长度非法的帧丢弃、`dropped_count`
+  递增并记 ERROR，不再按 legacy 原始载荷放行。
+- 明确生命周期契约：`ComponentRegistry` 必须先于插件 `DlHandle` 析构
+  （工厂闭包代码在插件 DSO 内）；新增测试覆盖。
+- 安装面回到 header-only：安装的 runner 自包含；不再安装/探测运行时库。
+
+**验证**：
+
+- 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
+- 34 套 212 用例全绿；`star check` 15/15；install-smoke 用安装树 runner 实跑；
+- shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
+- UBSan 构建 34/34 全绿（连续 3 次全量复跑）。
+
+详见 `docs/plugin_abi.md`。

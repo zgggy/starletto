@@ -17,5 +17,4 @@ executable(
         libraries_dep,
     ],
     install: true,
-    install_rpath: install_rpath,
 )

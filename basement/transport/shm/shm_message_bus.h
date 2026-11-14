@@ -197,7 +197,8 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         if (it == channels_.end()) {
             return std::nullopt;
         }
-        if (it->second.stats.write_count == 0 && it->second.stats.deliver_count == 0) {
+        if (it->second.stats.write_count == 0 && it->second.stats.deliver_count == 0 &&
+            it->second.stats.dropped_count == 0 && it->second.stats.callback_failures == 0) {
             return std::nullopt;
         }
         return make_stats_snapshot(channel_name, it->second.stats);
@@ -425,7 +426,12 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             if (it == channels_.end() or it->second.readers.empty()) {
                 return;
             }
-            build_shm_message_view(channel_name, slot, size, gen, it, message);
+            if (not build_shm_message_view(channel_name, slot, size, gen, it, message)) {
+                // v7 起槽内必须是带身份的帧；未加帧/损坏帧不再按 legacy 原始载荷放行
+                it->second.stats.record_drop(1);
+                logE << "ShmMessageBus: dropping malformed frame: channel=" << channel_name << ", size=" << size;
+                return;
+            }
             const auto& options = it->second.descriptor.options;
             callbacks.reserve(it->second.readers.size());
             for (const auto& [reader_id, callback] : it->second.readers) {
@@ -496,38 +502,35 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
         }
     }
 
-    void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint32_t gen, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
+    auto build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint32_t gen,
+                                std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) -> bool {
         msg.decode_policy = it->second.descriptor.options.decode_policy;
         msg.correlation_id = CorrelationId{};
         auto channel = it->second.channel;
         if (not channel) {
-            return;
+            return false;
         }
         const auto* base = channel->payload_ptr(slot);
-        auto sender = star::schema::SchemaTypeId{};
-        const auto* payload = base;
-        auto payload_size = size;
-        if (base != nullptr and size >= sizeof(ShmFrameHeader)) {
-            const auto frame = parse_shm_frame(std::span<const uint8_t>(base, size));
-            if (frame.has_value()) {
-                sender = frame->schema_type_id;
-                payload = frame->payload;
-                payload_size = frame->payload_size;
-            }
-            // 解析失败按 legacy 原始载荷处理（身份未知），不丢数据
+        if (base == nullptr or size < sizeof(ShmFrameHeader)) {
+            return false;
         }
-        msg.schema_type_id = sender;
+        const auto frame = parse_shm_frame(std::span<const uint8_t>(base, size));
+        if (not frame.has_value()) {
+            return false;
+        }
+        msg.schema_type_id = frame->schema_type_id;
         auto view = std::make_shared<ShmSlotView>();
         view->mapping = channel->mapping();
-        view->data = payload;
-        view->size = payload_size;
+        view->data = frame->payload;
+        view->size = frame->payload_size;
         view->channel_name = channel_name;
-        view->schema_type_id = sender;
+        view->schema_type_id = frame->schema_type_id;
         // 代际必须取自 read() 返回的 gen，而非此刻的实时值：
         // 只有前者才与 slot/size 同源，读侧据此在解码前后复核该槽
         view->gen_addr = channel->gen_addr(slot);
         view->observed_gen = gen;
         msg.payload = star::base::TypedConstPtr::from(std::move(view));
+        return true;
     }
 
     // reader 析构必须等到在途回调结束：轮询线程可能正持有一份 callback 拷贝。

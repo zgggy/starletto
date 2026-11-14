@@ -1,6 +1,6 @@
 project(
     'starletto',
-    ['cpp', 'c'],
+    'cpp',
     version: '0.1.0',
     default_options: [
         'cpp_std=c++20',
@@ -23,9 +23,6 @@ add_project_arguments(
     ]),
     language: 'cpp',
 )
-
-# 安装后的可执行文件按相对布局找共享库（bin/../lib）
-install_rpath = host_machine.system() == 'darwin' ? '@loader_path/../lib' : '$ORIGIN/../lib'
 
 subdir('basement')
 subdir('libraries')
@@ -56,10 +53,9 @@ install_subdir(
 pkgconfig = import('pkgconfig')
 pkgconfig.generate(
     name: 'starletto',
-    description: 'Starletto native runtime (header-only core + C ABI plugin library)',
+    description: 'Starletto native runtime (header-only)',
     version: meson.project_version(),
     subdirs: 'starletto',
-    libraries: [star_runtime_lib.get_shared_lib()],
     extra_cflags: ['-std=c++20'],
     variables: [
         'schemadir=${prefix}/share/starletto/schema',

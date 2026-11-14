@@ -407,7 +407,8 @@ magic(2) | encoding(1) | flags(1) | name_len(2) | reserved(2)
   - name 不同 → 配置/路由错误，任何策略都不能兜底；
   - version 不同 → 跨版本接收，字段差异交给 `decode_policy`；
   - version 相同但 hash 不同 → 按 `type_mismatch` 策略（默认 error）；
-- 解析失败（无 magic）按 legacy 原始载荷处理，身份为空，不丢数据；
+- 解析失败（无 magic/长度不合法）→ 该帧丢弃、`dropped_count` 递增并记 ERROR；
+  协议只接受带身份的 v7 帧，不再按 legacy 原始载荷放行；
 - 同进程跨版本收发需要走 shm/routed 或二进制载荷：inproc 的类型化指针路径
   按 C++ 类型匹配，不经过解码策略。
 
