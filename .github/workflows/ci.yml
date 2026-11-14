@@ -101,6 +101,7 @@ jobs:
             --exclude '.*/build-cov/.*' \
             --exclude '.*/tests/.*' \
             --exclude '.*/build-.*' \
+            --gcov-ignore-parse-errors skip \
             --print-summary 2>&1 | tee /tmp/cov.log || {
             tail -20 /tmp/cov.log | while IFS= read -r line; do echo "::error::$line"; done
             exit 1
