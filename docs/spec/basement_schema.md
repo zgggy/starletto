@@ -284,17 +284,23 @@ Schema 运行时至少提供：
 
 ### 8.1 兼容性规则表（v1 最小表）
 
-- 新增字段：允许
-- 删除字段：允许但必须 `reserved id/name`
+- 新增字段：允许（不需要升 version）
+- 删除字段：**必须同时满足** ① 文件 `version` 递增；② 被删 id 写入 `reserved`。
+  只满足其一 → breaking；两个都不满足 → breaking 并提示如何修
 - 重命名字段：允许（id 不变）
-- 改变字段 id：禁止
+- 改变字段 id：**禁止**，即使升 version 也 breaking（同一 id 换语义无法靠解码策略兜底）
 - 改变字段类型：
   - `uint32 -> uint64`：允许
   - `int32 -> int64`：允许
   - `float32 <-> float64`：禁止
   - `string <-> bytes`：禁止
   - `scalar <-> message`：禁止
+  - 其他类型互换：即使升 version 也 breaking，只能通过 `--allow-breaking` 显式覆盖（输出 WARN）
 - `repeated/optional` 互换：v1 禁止
+- `version` 降级：直接报错（返回码 2）
+
+门禁行为：`star check` 用 `star schema compat <HEAD 文件> <工作区文件>`；
+`--allow-breaking` 只用于有记录的一次性迁移，不作为常规路径。
 
 ### 8.2 lint 最小约束
 

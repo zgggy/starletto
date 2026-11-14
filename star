@@ -518,7 +518,7 @@ run_schema_tool() {
                 echo "用法:"
                 echo "  star schema fmt --schema=<file> [--output=<file>|--in-place]"
                 echo "  star schema gen --schema=<file> --output=<file>"
-                echo "  star schema compat <old.schema> <new.schema>"
+                echo "  star schema compat <old.schema> <new.schema> [--allow-breaking]"
                 echo "  star schema lint --schema=<file>"
                 echo "  star schema hash --schema=<file>   # 打印内容哈希（可钉在 schema 的 hash 行）"
                 return 0

@@ -20,6 +20,7 @@ from codegen.loader import load_schema  # noqa: E402
 from codegen.parser import Parser  # noqa: E402
 from codegen.text import format_schema  # noqa: E402
 import schema_codegen  # noqa: E402
+import schema_compat  # noqa: E402
 
 _failures: list[str] = []
 
@@ -82,6 +83,41 @@ with tempfile.TemporaryDirectory() as tmp:
     except ValueError as exc:
         missing_ok = "not found" in str(exc)
     check("missing import is rejected", missing_ok)
+
+# 版本演进与 compat 门禁：breaking 必须靠 version bump + reserved 放行
+with tempfile.TemporaryDirectory() as tmp:
+    base = pathlib.Path(tmp)
+    old_path = base / "old.schema"
+    new_path = base / "new.schema"
+    old_path.write_text("schema t.evolve\nversion 1\nroot R {\n    1 a : int\n    2 b : string\n}\n", encoding="utf-8")
+
+    def compat_rc(text: str, allow_breaking: bool = False) -> int:
+        new_path.write_text(text, encoding="utf-8")
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return schema_compat.run_compat(old_path, new_path, allow_breaking)
+
+    same_version_removal = compat_rc("schema t.evolve\nversion 1\nroot R {\n    1 a : int\n}\n")
+    check("removal without version bump is rejected", same_version_removal == 1, str(same_version_removal))
+
+    bumped_reserved = compat_rc("schema t.evolve\nversion 2\nroot R {\n    1 a : int\n    reserved 2;\n}\n")
+    check("removal with version bump and reserved is allowed", bumped_reserved == 0, str(bumped_reserved))
+
+    bumped_unreserved = compat_rc("schema t.evolve\nversion 2\nroot R {\n    1 a : int\n}\n")
+    check("removal with version bump but no reserved is rejected", bumped_unreserved == 1, str(bumped_unreserved))
+
+    type_changed = compat_rc("schema t.evolve\nversion 2\nroot R {\n    1 a : string\n    2 b : string\n}\n")
+    check("field type change stays breaking even with version bump", type_changed == 1, str(type_changed))
+
+    type_changed_allowed = compat_rc(
+        "schema t.evolve\nversion 2\nroot R {\n    1 a : string\n    2 b : string\n}\n",
+        allow_breaking=True,
+    )
+    check("--allow-breaking can explicitly override a type change", type_changed_allowed == 0, str(type_changed_allowed))
+
+    downgrade = compat_rc("schema t.evolve\nversion 0\nroot R {\n    1 a : int\n    2 b : string\n}\n")
+    check("version downgrade is rejected", downgrade == 2, str(downgrade))
 
 if _failures:
     print(f"\ncodegen selftest: {len(_failures)} failure(s)")

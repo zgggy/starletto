@@ -37,3 +37,4 @@
 | 2026-11-14 | 底层复审修复：① shm 允许空载荷（全 optional 消息的合法编码）；② NativeMessageBus reader 析构等待在途回调（含 cv 丢唤醒）；③ 服务通道升级为系统读写通道，跨进程 RPC 不再依赖路由计划推断客户端组；④ replay speed<=0 防护 | core/transport/runtime/apps | 2026-11-14 复审 |
 | 2026-11-14 | shm 段名改用跨工具链稳定的 FNV-1a（替换实现定义的 std::hash），`kShmVersion`→6；golden 单测锁定算法 | core/transport | 2026-11-14 复审 A6 |
 | 2026-11-14 | shm 帧头 v7：逐帧携带 schema name/version/hash，`MessageView.schema_type_id` 改为发送方身份；解码策略与诊断可感知对端版本 | transport/runtime/schema | P0.1 实时 wire 身份 |
+| 2026-11-14 | schema compat 与版本策略对齐：删字段需 version 递增 + reserved；类型/id 变更保持 breaking；`--allow-breaking` 显式覆盖 | schema/tools | P0.2 |

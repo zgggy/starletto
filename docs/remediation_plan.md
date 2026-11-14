@@ -210,3 +210,11 @@ flowchart LR
 - 回归：`runtime_wire_identity` 4 用例（v2→v1、v1→v2、name/hash 拒绝、固定布局）；
   sender 身份与校验逻辑均已双向验证（回退后用例失败）
 - 同进程跨版本仍走 inproc 类型化指针，不适用解码策略；文档已注明
+
+## 后续整改 P0.2：compat 与版本策略对齐（已完成 2026-11-14）
+
+- 规则：删字段必须「version 递增 + id reserved」；类型/id 变更即使升版本仍 breaking；
+  降版本直接错误；`--allow-breaking` 可显式覆盖并记录 WARN
+- 修复了「注册表支持多版本、但 CI 禁止发布多版本」的矛盾
+- 回归：codegen 自检新增 6 个 compat 用例（同版本删除、升版+reserved、升版无
+  reserved、类型变更、allow-breaking、降版本）

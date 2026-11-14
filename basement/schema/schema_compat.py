@@ -65,6 +65,7 @@ def compare_block(
     all_new_defs: dict[str, schema_codegen.DefBlock],
     issues: list[CompatIssue],
     visited: set[str],
+    version_bumped: bool,
 ) -> None:
     visit_key = f"{block_name}"
     if visit_key in visited:
@@ -78,7 +79,21 @@ def compare_block(
         path = f"{block_name}.{old_field.name}"
         new_field = new_fields.get(field_id)
         if new_field is None:
-            issues.append(CompatIssue("breaking", path, f"field removed: id={field_id}, name={old_field.name}"))
+            if field_id in set(new.reserved_ids):
+                if version_bumped:
+                    issues.append(CompatIssue("info", path, f"field removed (id reserved): id={field_id}, name={old_field.name}"))
+                else:
+                    issues.append(CompatIssue(
+                        "breaking",
+                        path,
+                        f"field removed (id reserved) but version was not bumped: id={field_id}, name={old_field.name}",
+                    ))
+            else:
+                issues.append(CompatIssue(
+                    "breaking",
+                    path,
+                    f"field removed without reserved id={field_id}; declare `reserved {field_id};` and bump version",
+                ))
             continue
         compare_type_ref(path, old_field.type_ref, new_field.type_ref, issues)
         if old_field.name != new_field.name:
@@ -89,7 +104,7 @@ def compare_block(
         old_ref = referenced_def_name(old_field.type_ref, all_old_defs)
         new_ref = referenced_def_name(new_field.type_ref, all_new_defs)
         if old_ref and new_ref:
-            compare_block(old_ref, all_old_defs[old_ref], all_new_defs[new_ref], all_old_defs, all_new_defs, issues, visited)
+            compare_block(old_ref, all_old_defs[old_ref], all_new_defs[new_ref], all_old_defs, all_new_defs, issues, visited, version_bumped)
         elif old_ref != new_ref:
             issues.append(CompatIssue("breaking", path, f"referenced type changed: {old_ref} -> {new_ref}"))
 
@@ -112,7 +127,7 @@ def parse_schema(path: pathlib.Path) -> schema_codegen.SchemaDoc:
     return schema_codegen.Parser(path.read_text(encoding="utf-8")).parse()
 
 
-def run_compat(old_path: pathlib.Path, new_path: pathlib.Path) -> int:
+def run_compat(old_path: pathlib.Path, new_path: pathlib.Path, allow_breaking: bool = False) -> int:
     try:
         old_doc = parse_schema(old_path)
         new_doc = parse_schema(new_path)
@@ -129,27 +144,55 @@ def run_compat(old_path: pathlib.Path, new_path: pathlib.Path) -> int:
         print(f"[E] new schema missing root def: {new_doc.root_name}", file=sys.stderr)
         return 2
 
+    if new_doc.version < old_doc.version:
+        print(f"[E] version downgrade is not allowed: old=v{old_doc.version}, new=v{new_doc.version}", file=sys.stderr)
+        return 2
+
+    version_bumped = new_doc.version > old_doc.version
     issues: list[CompatIssue] = []
     visited: set[str] = set()
-    compare_block(old_doc.root_name, old_defs[old_doc.root_name], new_defs[new_doc.root_name], old_defs, new_defs, issues, visited)
+    compare_block(
+        old_doc.root_name,
+        old_defs[old_doc.root_name],
+        new_defs[new_doc.root_name],
+        old_defs,
+        new_defs,
+        issues,
+        visited,
+        version_bumped,
+    )
 
     breaking = [item for item in issues if item.level == "breaking"]
     infos = [item for item in issues if item.level != "breaking"]
+
+    if breaking and not version_bumped:
+        print(
+            f"[BREAKING] version: breaking changes require a version bump "
+            f"(old=v{old_doc.version}, new=v{new_doc.version})"
+        )
+    if allow_breaking and breaking:
+        print(f"[WARN] --allow-breaking: {len(breaking)} breaking change(s) explicitly allowed")
+        breaking = []
 
     for item in breaking:
         print(f"[BREAKING] {item.path}: {item.message}")
     for item in infos:
         print(f"[INFO] {item.path}: {item.message}")
 
-    return 1 if breaking else 0
+    if breaking:
+        return 1
+    if version_bumped:
+        print(f"[INFO] version bumped: v{old_doc.version} -> v{new_doc.version}")
+    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("old_schema")
     parser.add_argument("new_schema")
+    parser.add_argument("--allow-breaking", action="store_true", help="显式允许 breaking 变更（会被记录为 WARN）")
     args = parser.parse_args()
-    return run_compat(pathlib.Path(args.old_schema), pathlib.Path(args.new_schema))
+    return run_compat(pathlib.Path(args.old_schema), pathlib.Path(args.new_schema), args.allow_breaking)
 
 
 if __name__ == "__main__":
