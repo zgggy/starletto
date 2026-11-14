@@ -90,5 +90,16 @@ jobs:
       - name: Test
         run: meson test -C build-cov --print-errorlogs
       - name: Coverage report
+        shell: bash
         run: |
-          gcovr -r . build-cov             --exclude '.*/build-cov/.*'             --exclude '.*/tests/.*'             --exclude '.*/build-.*'             --print-summary
+          gcovr --version
+          echo "gcda files: $(find build-cov -name '*.gcda' | wc -l)"
+          set -o pipefail
+          gcovr -r . build-cov \
+            --exclude '.*/build-cov/.*' \
+            --exclude '.*/tests/.*' \
+            --exclude '.*/build-.*' \
+            --print-summary 2>&1 | tee /tmp/cov.log || {
+            tail -20 /tmp/cov.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }

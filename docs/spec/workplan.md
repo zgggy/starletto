@@ -168,7 +168,7 @@ Spec: [basement_transport.md §10](basement_transport.md)
 - ✅ `DeliveryResult { accepted, message, latency_us }`
 - ✅ `DeliveryWriter : Writer` 抽象接口 + `write_with_delivery(msg, timeout) → future<DeliveryResult>`
 - ✅ `InprocSyncWriter` 同步 dispatch-all-readers 实现
-- ✅ Component 层 `declare_delivery_writer<T>()` / `write_with_delivery<T>()`
+- ✅ Component 层 `declare_delivery_writer<T>()` / `write_with_delivery<T>()`（2026-11-14 已随 `declare_*` 一并删除；传输层 DeliveryWriter 保留）
 
 验收：
 - ✅ 编译通过 + 单进程/多进程测试正常
