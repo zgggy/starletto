@@ -1,0 +1,8 @@
+schema test.wire.evolve
+version 1
+namespace star.test.wire.v1
+
+root Msg {
+    1 id : int
+    2 note : string = "v1"
+}

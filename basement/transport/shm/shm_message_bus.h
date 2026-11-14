@@ -26,6 +26,7 @@
 #include "basement/transport/common/channel_stats.h"
 #include "basement/transport/common/qos_manager.h"
 #include "basement/transport/shm/shm_channel.h"
+#include "basement/transport/shm/shm_frame.h"
 #include "basement/transport/shm/shm_views.h"
 
 namespace star::transport {
@@ -347,15 +348,16 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                 // 读侧按缺失策略解码（见 BinaryCodec::apply_missing_policy）
 
                 // 单帧超限是「这条消息太大」而非通道故障：显式判为 ENCODE_FAILED，
-                // 不能让 channel->write 抛异常被记成 EXCEPTION（那会触发通道降级）
-                if (bytes.size() > channel->slot_size()) {
+                // 不能让 write_framed 抛异常被记成 EXCEPTION（那会触发通道降级）
+                const auto frame_size = sizeof(ShmFrameHeader) + message.schema_type_id.name.size() + bytes.size();
+                if (frame_size > channel->slot_size()) {
                     auto out = WriteResult{};
                     out.status = WriteStatus::ENCODE_FAILED;
                     out.shm_required = true;
-                    out.error_message = "payload exceeds slot size: " + std::to_string(bytes.size()) + " > " + std::to_string(channel->slot_size());
+                    out.error_message = "framed payload exceeds slot size: " + std::to_string(frame_size) + " > " + std::to_string(channel->slot_size());
                     return out;
                 }
-                channel->write(bytes.data(), static_cast<uint32_t>(bytes.size()));
+                channel->write_framed(message.schema_type_id, static_cast<uint8_t>(ShmEncoding::kTlv), bytes.data(), static_cast<uint32_t>(bytes.size()));
                 auto out = WriteResult{};
                 out.status = WriteStatus::OK;
                 out.shm_ok = true;
@@ -370,15 +372,17 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
                 return out;
             }
             if (serializer->encode_into) {
-                auto loaned = channel->loan(channel->slot_size());
-                const auto size = serializer->encode_into(loaned.data(), loaned.capacity);
+                const auto budget = channel->slot_size() - sizeof(ShmFrameHeader) - message.schema_type_id.name.size();
+                auto buffer = std::vector<uint8_t>(budget);
+                const auto size = serializer->encode_into(buffer.data(), buffer.size());
                 if (size == 0) {
                     auto out = WriteResult{};
                     out.status = WriteStatus::ENCODE_FAILED;
                     out.shm_required = true;
                     return out;
                 }
-                loaned.commit(static_cast<uint32_t>(size));
+                buffer.resize(size);
+                channel->write_framed(message.schema_type_id, static_cast<uint8_t>(ShmEncoding::kFixedLayout), buffer.data(), size);
                 auto out = WriteResult{};
                 out.status = WriteStatus::OK;
                 out.shm_ok = true;
@@ -493,19 +497,32 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
     }
 
     void build_shm_message_view(const std::string& channel_name, uint32_t slot, uint32_t size, uint32_t gen, std::unordered_map<std::string, ChannelState>::iterator it, MessageView& msg) {
-        msg.schema_type_id = it->second.descriptor.schema_type_id;
         msg.decode_policy = it->second.descriptor.options.decode_policy;
         msg.correlation_id = CorrelationId{};
         auto channel = it->second.channel;
         if (not channel) {
             return;
         }
+        const auto* base = channel->payload_ptr(slot);
+        auto sender = star::schema::SchemaTypeId{};
+        const auto* payload = base;
+        auto payload_size = size;
+        if (base != nullptr and size >= sizeof(ShmFrameHeader)) {
+            const auto frame = parse_shm_frame(std::span<const uint8_t>(base, size));
+            if (frame.has_value()) {
+                sender = frame->schema_type_id;
+                payload = frame->payload;
+                payload_size = frame->payload_size;
+            }
+            // 解析失败按 legacy 原始载荷处理（身份未知），不丢数据
+        }
+        msg.schema_type_id = sender;
         auto view = std::make_shared<ShmSlotView>();
         view->mapping = channel->mapping();
-        view->data = channel->payload_ptr(slot);
-        view->size = size;
+        view->data = payload;
+        view->size = payload_size;
         view->channel_name = channel_name;
-        view->schema_type_id = it->second.descriptor.schema_type_id;
+        view->schema_type_id = sender;
         // 代际必须取自 read() 返回的 gen，而非此刻的实时值：
         // 只有前者才与 slot/size 同源，读侧据此在解码前后复核该槽
         view->gen_addr = channel->gen_addr(slot);

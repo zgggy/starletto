@@ -50,7 +50,10 @@ class Component {
     // 按帧头选择解码器：固定布局帧走 from_fixed_layout（内部校验 schema 身份），
     // 其余走二进制 TLV + 通道解码策略。录制回放、测试与组件共用这一个入口。
     template <typename _Msg>
-    static auto decode_payload(std::span<const uint8_t> bytes, const star::schema::DecodePolicy& policy) -> _Msg {
+    static auto decode_payload(std::span<const uint8_t> bytes,
+                               const star::schema::DecodePolicy& policy,
+                               const star::schema::SchemaTypeId& sender = {}) -> _Msg {
+        validate_sender<_Msg>(sender, policy);
         if constexpr (has_from_fixed_layout<_Msg>::value) {
             if (star::schema::is_fixed_layout_frame(bytes)) {
                 return _Msg::from_fixed_layout(bytes);
@@ -63,6 +66,38 @@ class Component {
             return _Msg::from_binary(bytes);
         } else {
             throw star::excep::RuntimeError("decode_payload failed, message type has no binary decoder");
+        }
+    }
+
+    // 发送方身份校验：帧里携带的 schema 身份与本编译单元的期望类型比对。
+    // - name 不同：配置/路由错误，任何策略都不能兜底
+    // - version 不同：跨版本接收，交给 decode_policy 处理（记录一条 debug）
+    // - version 相同但 hash 不同：同版本不同内容，按 type_mismatch 策略处理
+    template <typename _Msg>
+    static void validate_sender(const star::schema::SchemaTypeId& sender, const star::schema::DecodePolicy& policy) {
+        if constexpr (has_schema_type_id<_Msg>::value) {
+            const auto local = _Msg::schema_type_id();
+            if (sender.empty() or local.name.empty()) {
+                return;
+            }
+            if (sender.name != local.name) {
+                throw star::excep::RuntimeError(
+                    "payload schema name mismatch: sender=", sender.name, ", local=", local.name);
+            }
+            if (sender.version != local.version) {
+                logD << "cross-version decode: sender=" << sender.name << " v" << sender.version << " h" << sender.hash
+                     << ", local=v" << local.version << " h" << local.hash;
+                return;
+            }
+            if (sender.hash != 0 and local.hash != 0 and sender.hash != local.hash) {
+                if (policy.type_mismatch != star::schema::TypeMismatchPolicy::kBestEffort) {
+                    throw star::excep::RuntimeError(
+                        "payload schema hash mismatch (same version): sender=", sender.name, " v", sender.version,
+                        " h", sender.hash, ", local h", local.hash);
+                }
+                logW << "schema hash mismatch (same version), decoding with best_effort: sender=" << sender.name
+                     << " v" << sender.version << " h" << sender.hash << ", local h" << local.hash;
+            }
         }
     }
 
@@ -441,7 +476,7 @@ class Component {
                     }
                     // size==0 不是「没消息」：全 optional 的消息编码后就是空字节，交给 codec 按默认值解码
                     try {
-                        auto decoded = std::make_shared<_Msg>(decode_payload<_Msg>(slot->bytes(), msg.decode_policy));
+                        auto decoded = std::make_shared<_Msg>(decode_payload<_Msg>(slot->bytes(), msg.decode_policy, msg.schema_type_id));
                         // seqlock 后置复核：解码期间写方可能已开始覆写本槽，
                         // 此时解码结果可能来自撕裂数据，必须丢弃
                         if (not slot->stable()) {
@@ -461,7 +496,7 @@ class Component {
             if (const auto binary = msg.payload.as<star::transport::BinaryPayloadView>()) {
                 {
                     try {
-                        return std::make_shared<_Msg>(decode_payload<_Msg>(binary->bytes(), msg.decode_policy));
+                        return std::make_shared<_Msg>(decode_payload<_Msg>(binary->bytes(), msg.decode_policy, msg.schema_type_id));
                     } catch (const std::exception& ex) {
                         logE << "decode_message failed: channel=" << msg.schema_type_id.name << ", source=binary, size=" << binary->size << ", error=" << ex.what();
                         return nullptr;

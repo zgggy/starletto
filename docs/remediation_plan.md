@@ -196,3 +196,17 @@ flowchart LR
 | A4 | `replay speed<=0` 除法无防护 | `pace_to` 直接 `elapsed / speed`，0 会产生 inf/UB | 非正值退化为最快回放 |
 | A5 | selftest 用「空编码」当编码失败 | A1 修复后该场景合法，selftest 误报 | 改用 8MB 超槽位帧（真正的单帧过大） |
 | A6 | shm 段名用 `std::hash<std::string>`，实现定义 | libc++ 与 libstdc++ 算法不同 → 跨编译器构建的进程算出不同段名，各自 attach、写入/读取都「成功」但收不到对方数据 | 新增 `core/stable_hash.h`（FNV-1a），段名改用稳定哈希，`kShmVersion` 升到 6；golden 值单测锁定算法 |
+
+---
+
+## 后续整改 P0.1：实时 wire 身份（已完成 2026-11-14）
+
+- `kShmVersion` → 7；每个槽 payload 前增加逐帧帧头：
+  `magic|encoding|name_len|schema_version|schema_hash|payload_size|schema_name|payload`
+- 读侧 `MessageView.schema_type_id` 改为**发送方身份**（此前填本地 descriptor）
+- `Component::decode_payload` 校验发送方身份：name 不一致直接拒绝；version 不同
+  交给 `decode_policy`；同版本 hash 不同按 `type_mismatch`（默认 error）
+- 固定布局 payload 经外层帧传输，身份内外一致
+- 回归：`runtime_wire_identity` 4 用例（v2→v1、v1→v2、name/hash 拒绝、固定布局）；
+  sender 身份与校验逻辑均已双向验证（回退后用例失败）
+- 同进程跨版本仍走 inproc 类型化指针，不适用解码策略；文档已注明

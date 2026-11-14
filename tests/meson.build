@@ -5,6 +5,7 @@
 
 test_root_inc = include_directories('..')
 subdir('schema/imports')
+subdir('schema/wire')
 test_main = files('support/test_main.cc')
 
 test(
@@ -241,6 +242,16 @@ multi_root_schema = custom_target(
     ],
     depend_files: codegen_sources,
     build_by_default: true,
+)
+
+test(
+    'runtime_wire_identity',
+    executable(
+        'runtime_wire_identity_test',
+        files('runtime/wire_identity_test.cc') + test_main + [wire_schemas_gen],
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep, libraries_dep],
+    ),
 )
 
 test(

@@ -37,9 +37,10 @@ def cpp_namespace(doc: SchemaDoc) -> list[str]:
     return [part for part in re.split(r"[:.]+", raw) if part]
 
 
-def guard_name(schema_name: str) -> str:
+def guard_name(schema_name: str, version: int = 0) -> str:
+    # 版本进 guard：同名不同版本的两个生成头可能被同一个 TU include（跨版本收发/测试）
     text = schema_name.upper().replace(".", "_").replace("-", "_").replace("/", "_")
-    return f"__{text}__"
+    return f"__{text}_V{version}__"
 
 
 def cpp_type(type_ref: TypeRef, has_default: bool, externals: Externals | None = None) -> str:
@@ -211,7 +212,7 @@ def header_text(doc: SchemaDoc, output_path: pathlib.Path, include_root: pathlib
         visit(def_name)
 
     lines: list[str] = []
-    guard = guard_name(doc.schema_name)
+    guard = guard_name(doc.schema_name, doc.version)
     lines.extend([
         f"#ifndef {guard}",
         f"#define {guard}",

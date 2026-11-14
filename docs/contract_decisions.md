@@ -146,6 +146,9 @@ flowchart LR
 - 阶段三：`basement/schema/decode_policy.h`（unknown=error/keep/drop、missing=error/default、type_mismatch=error/best_effort）；`BinaryCodec` 解码带策略，缺失字段补默认/空数组，类型不一致可安全转换；`component.conf` 的 `readers/writers` 端口新增 `decode_policy` 块，经 plan → 通道描述符 → `MessageView` 传到解码点；`Component::decode_payload` 按帧头选择固定布局或 TLV 解码器。
   - **同时修掉一个此前未被覆盖的缺陷**：shm 写路径优先固定布局、读路径固定调用 `from_binary`，生成消息跨进程必然解错（固定布局帧以 `0x5354` 开头，`from_binary` 会按 TLV 解析失败）。现在 shm 默认写二进制 TLV，固定布局帧头升级为 v2 并携带 `schema_version`/`schema_hash`，读取方按帧头识别、校验身份；固定布局仅用于同版本。
 - 阶段四：录制格式 v2（v1 仍可读）。头部增加墙钟/单调时钟双锚点，条目携带 `schema name+version+hash`；`MessageReplayer` 提供 `summaries()`（按通道聚合版本与时间范围）、`wall_clock_ns()`（单调时间戳换算墙钟）、`validate_against()`（回放前把录制身份与本地编译身份逐通道比对，缺注册/版本不同会报告，hash 未知不阻断）。`star record info` 现在能打印格式版本、墙钟时间与每通道 schema 版本。
+  - 补充（2026-11-14）：实时 shm 帧头 v7 逐帧携带 `schema name/version/hash`，
+    `MessageView.schema_type_id` 改为发送方身份，解码策略与诊断可感知对端版本；
+    此前只有录制条目带身份，实时链路只能按字段形状容错。
   - 说明：没有采用「固定头部通道表」，而是**每条消息自带身份**——严格更强（同通道运行中重新声明版本时不会被后来的声明覆盖），通道表由 `summaries()` 按需聚合。
 - 阶段五：服务并入通道。删除 `ServiceBus`/`ServiceClient`/`ServiceServer` 接口与 `NativeServiceBus`/`ShmServiceBus` 两套实现（含工厂的 `dynamic_cast` 选择），新增 `basement/transport/rpc/rpc.h`：
   - `RpcClient`/`RpcServer` 只依赖 `MessageBus` 的 `create_writer`/`create_reader`；`<service>/request`、`<service>/response` 是普通通道，自动进路由计划、录制、统计与类型校验。

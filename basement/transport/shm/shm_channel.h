@@ -19,16 +19,19 @@
 #include "basement/core/fd_guard.h"
 #include "basement/core/logger/logger.h"
 #include "basement/core/futex_compat.h"
+#include "basement/transport/shm/shm_frame.h"
 
 namespace star::transport {
 
 static constexpr uint32_t kShmMaxSlots = 16;
 static constexpr uint64_t kShmMagic = 0x535441524c455454ULL;
-// v6：段名改用 FNV-1a（跨工具链稳定），替换实现定义的 std::hash<std::string>。
+// v7：槽内 payload 前增加逐帧 schema 身份头（name/version/hash + encoding），
+//     用于跨版本实时收发与诊断。
+// v6：段名改用 FNV-1a（跨工具链稳定）。
 // v5：header 增加持有者 pid 表，attach 时清扫孤儿段。
 // v4：新增 per-slot 代际 gen[]，用于正确的 seqlock 复核。
 // 旧版本的段名都带各自的 kShmVersion，升级后不会被命中（旧段成为不可达残留）。
-static constexpr uint32_t kShmVersion = 6;
+static constexpr uint32_t kShmVersion = 7;
 // 每个进程的每个通道占一个槽位；超限说明同一进程开了过多同通道实例
 static constexpr uint32_t kShmMaxHolders = 32;
 static constexpr uint32_t kShmCapacity = 4 * 1024 * 1024;
@@ -494,6 +497,37 @@ class ShmChannel {
         out.capacity = slot_size_;
         out.seq = next_seq;
         return out;
+    }
+
+    // 写入一帧：槽内布局 = 帧头 + schema 身份 + payload。身份逐帧携带，
+    // 因为滚动升级时同一通道上可能同时存在不同版本的生产者。
+    void write_framed(const star::schema::SchemaTypeId& schema_id, uint8_t encoding, const uint8_t* payload, uint32_t size) {
+        if (schema_id.name.size() > kShmFrameMaxNameLen) {
+            throw star::excep::RuntimeError("ShmChannel write_framed failed, schema name too long: ", schema_id.name.size());
+        }
+        const auto header_size = sizeof(ShmFrameHeader) + schema_id.name.size();
+        const auto total = header_size + static_cast<size_t>(size);
+        if (total > slot_size_) {
+            throw star::excep::RuntimeError("ShmChannel write_framed failed, frame exceeds slot: ", total, " > ", slot_size_);
+        }
+        auto loaned = loan(static_cast<uint32_t>(total));
+        auto header = ShmFrameHeader{};
+        header.magic = kShmFrameMagic;
+        header.encoding = encoding;
+        header.flags = 0;
+        header.name_len = static_cast<uint16_t>(schema_id.name.size());
+        header.schema_version = schema_id.version;
+        header.schema_hash = schema_id.hash;
+        header.payload_size = size;
+        std::memcpy(loaned.slot_ptr, &header, sizeof(header));
+        if (not schema_id.name.empty()) {
+            std::memcpy(loaned.slot_ptr + sizeof(header), schema_id.name.data(), schema_id.name.size());
+        }
+        if (size > 0 and payload != nullptr) {
+            std::memcpy(loaned.slot_ptr + header_size, payload, size);
+        }
+        header_->write_ns[loaned.slot].store(now_steady_ns(), std::memory_order_relaxed);
+        loaned.commit(static_cast<uint32_t>(total));
     }
 
     void write(const void* data, uint32_t size) {

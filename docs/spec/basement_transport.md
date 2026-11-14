@@ -388,6 +388,31 @@ Transport 层当前不提供独立的 ACK 通道与 reader 确认语义；可靠
 - Futex 等待/唤醒实现高效同步
 - Loan/Commit 模式支持零拷贝
 
+### 7.1.1 槽内帧格式（v7 起）
+
+每个槽的 payload 前有逐帧 schema 身份头：
+
+```
+magic(2) | encoding(1) | flags(1) | name_len(2) | reserved(2)
+| schema_version(8) | schema_hash(8) | payload_size(4)
+| schema_name(name_len) | payload(payload_size)
+```
+
+- `encoding`：`tlv`（binary）或 `fixed_layout`；
+- 身份逐帧携带，而不是通道级：滚动升级时同一通道上可能同时存在 v1/v2 生产者，
+  通道级身份会在首写时被冻结，无法表达后续版本；
+- 读侧把帧里的身份填进 `MessageView.schema_type_id`（发送方身份），
+  `Component::decode_payload` 据此校验：
+  - name 不同 → 配置/路由错误，任何策略都不能兜底；
+  - version 不同 → 跨版本接收，字段差异交给 `decode_policy`；
+  - version 相同但 hash 不同 → 按 `type_mismatch` 策略（默认 error）；
+- 解析失败（无 magic）按 legacy 原始载荷处理，身份为空，不丢数据；
+- 同进程跨版本收发需要走 shm/routed 或二进制载荷：inproc 的类型化指针路径
+  按 C++ 类型匹配，不经过解码策略。
+
+固定布局帧的 payload 内部仍有自己的 `FixedLayoutHeader`（含身份），外层帧头
+用于统一的发送方身份与诊断。
+
 ### 7.2 路由决策
 
 `ChannelRegistry` 维护进程组间的路由信息：
