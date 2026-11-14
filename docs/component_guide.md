@@ -43,6 +43,28 @@ flowchart TB
 
 ---
 
+## 1.5 快速开始：先让脚手架生成骨架
+
+```bash
+star new module my_module               # modules/my_module/{module.conf, meson.build}
+star new component my_module/my_node    # 6 个文件 + 自动登记 module.conf / meson
+star build
+star run my_module
+```
+
+生成物已经保证三处一致：`component_library = libmy_node.so`、`component_class =
+star::my_module::MyNode`、`register_native_components` 注册同一字符串；父
+`module.conf` 的 `components` 列表与 `meson.build` 的 `subdir` 也会自动补上。
+
+之后只需要：
+
+1. 在 `my_node_processor.h` 写算法；
+2. 在 `my_node_component.h` 用 `read_latest<T>("port")` / `write("port", msg)` 接线；
+3. 在 `component.conf` 补 `readers`/`writers`（键名与代码字符串一致）。
+
+脚手架不覆盖已有文件，也不允许非法名字；重复执行或模块不存在会直接报错。
+下面第 2 节是每个文件的职责说明，需要手改时对照即可。
+
 ## 2. 逐文件模板
 
 ### 2.1 `module.conf` —— 模块清单
@@ -386,13 +408,13 @@ flowchart LR
 
 | 改进 | 具体做法 | 收益 |
 |---|---|---|
-| **P1 脚手架** | `star new component <module>/<name>` 生成 6 个文件（含 TODO 注释），自动登记 module.conf | 从"查文档拼 6 个文件"变成"改 1 个文件" |
+| **P1 脚手架** ✅ | `star new module/component` 生成 6 个文件，自动登记 module.conf / meson；`tools/tests/scaffold_selftest.py` 进 CI 锁定接线正确性 | 从"查文档拼 6 个文件"变成"改 1 个文件"（2026-11-14 完成） |
 | **P1 端口常量** | codegen 为每个组件生成 `ports.h`：`constexpr auto kWriterTrajectory = "trajectory";` | 端口名从字符串变成编译期常量 |
 | **P2 conf 校验** | 用 `component.schema` 的 descriptor 驱动 conf lint（现在只在加载时校验） | 提交前发现 conf 错误 |
 | **P2 最小示例** | 新增 `examples/minimal_component/`，约 60 行，去掉一切演示代码 | 新人 10 分钟能跑通 |
 | **P3 端口自动推导** | 由 schema 类型反推端口名，conf 只写 channel | 再少一层重复 |
 
-**判断标准**：一个熟练工程师加一个"读一路数据、发一路数据"的组件，应该 **< 30 分钟、只改 2 个文件**。当前是 ~2 小时、6 个文件。
+**判断标准**：一个熟练工程师加一个"读一路数据、发一路数据"的组件，应该 **< 30 分钟、只改 2 个文件**。脚手架落地后，文件生成本身已经不需要时间，剩余成本集中在端口接线与算法本身。
 
 ---
 
@@ -401,6 +423,7 @@ flowchart LR
 新加一个组件时按此顺序：
 
 ```
+[ ] 0. 跑脚手架（或手写 6 个文件）         → star new component <mod>/<name>
 [ ] 1. 定义 schema（如需要新消息）        → modules/<mod>/schema/xxx.schema
 [ ] 2. 写 processor（纯算法）             → modules/<mod>/<name>/<name>_processor.h
 [ ] 3. 写 component（适配层）             → modules/<mod>/<name>/<name>_component.h

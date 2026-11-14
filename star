@@ -31,6 +31,8 @@ show_help() {
     echo "  star record info <文件>             查看录制文件信息（消息数/topics/时间范围）"
     echo "  star replay <文件> [speed] [--publish] [--channel=] [--repeat=]  回放；--publish 写回通道"
     echo "  star monitor [--monitor-ms=<ms>] [--once]  实时查看各 worker 的通道统计（频率/延迟/丢帧/QoS）"
+    echo "  star new module <名称>             创建模块骨架（module.conf + meson 接线）"
+    echo "  star new component <模块>/<名称>   创建组件骨架（conf/register/component/processor/meson）"
     echo "  star check [参数...] [目标...]      CI Guard: 构建后自动化验证（build + doctor + smoke）"
     echo "  star test [参数...]                 运行单元测试（Meson test）"
     echo "  star help                           显示帮助信息"
@@ -495,6 +497,16 @@ run_parameter_tool() {
     exec "$tool" "${args[@]+"${args[@]}"}"
 }
 
+# 模块/组件脚手架：生成骨架并把三处易错接线（库名/类名/父清单）一次写对
+run_scaffold_tool() {
+    local tool="${PROJECT_ROOT}/tools/new_component/scaffold.py"
+    if [ ! -f "$tool" ]; then
+        log_error "找不到脚手架工具: ${tool}"
+        return 1
+    fi
+    python3 "$tool" "$@"
+}
+
 run_schema_tool() {
     local tool="${PROJECT_ROOT}/basement/schema/schema_codegen.py"
     local args=()
@@ -674,6 +686,20 @@ check_codegen_selftest() {
     return 0
 }
 
+# 脚手架自检：生成结构 / 三处接线 / 错误路径（不触碰真实 modules/）
+check_scaffold_selftest() {
+    local script="${PROJECT_ROOT}/tools/tests/scaffold_selftest.py"
+    if [ ! -f "$script" ]; then
+        log_error "找不到脚手架自检脚本: ${script}"
+        return 1
+    fi
+    if ! python3 "$script"; then
+        log_error "脚手架自检失败"
+        return 1
+    fi
+    return 0
+}
+
 # schema compat：以 git HEAD 为基线，改动不得破坏与已提交版本的兼容性
 # （对应 spec 的演进禁令：改字段 id、类型互换、删字段等）
 check_schema_compat() {
@@ -728,7 +754,7 @@ run_ci_guard() {
                 echo ""
                 echo "验证项:"
                 echo "  1. build      — 编译产物存在且可执行"
-                echo "  2. schema     — 生成物未入源码树 + lint + 与 HEAD 的兼容性检查 + codegen 自检"
+                echo "  2. schema     — 生成物未入源码树 + lint + 与 HEAD 的兼容性检查 + codegen/脚手架自检"
                 echo "  3. unit-test  — 单元测试全部通过"
                 echo "  4. selftest   — transport 自检通过"
                 echo "  5. doctor     — 模块/组件清单诊断通过"
@@ -798,6 +824,7 @@ run_ci_guard() {
     _check_step "schema-lint" check_schema_lint
     _check_step "schema-compat" check_schema_compat
     _check_step "codegen-selftest" check_codegen_selftest
+    _check_step "scaffold-selftest" check_scaffold_selftest
 
     log_info "--- CI Guard: Step 3/8 Unit Test ---"
     _check_step "unit-test" meson test -C "$build_dir"
@@ -901,6 +928,10 @@ case "${1:-}" in
     monitor)
         shift
         invoke_runner --monitor "$@"
+        ;;
+    new)
+        shift
+        run_scaffold_tool "$@"
         ;;
     check)
         shift

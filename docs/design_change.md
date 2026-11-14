@@ -32,3 +32,4 @@
 | 2026-11-12 | 新增跨进程 RPC 端到端测试：fork 两进程经 shm 路由完成 request/response（P1-1 遗留的最后验证缺口） | tests/transport | remediation_plan P1-1 遗留 |
 | 2026-11-14 | 回放写回通道：新增 `MessagePublisher` 与 `star replay --publish/--channel/--repeat/--strict`，录制字节原样发布、schema 身份随行；回放前用 registry 校验身份 | transport/apps | record v2 收口 |
 | 2026-11-14 | shm header v5：持有者 pid 表 + attach/析构时清扫已死进程，孤儿段（`_exit`/SIGKILL）自动重建；段名随版本更新，v4 旧段不可达 | transport | remediation_plan P1-4 遗留 |
+| 2026-11-14 | 新增 `star new module/component` 脚手架：生成 6 个文件并自动登记父 module.conf/meson，三处命名一次写对；脚手架自检进 CI（12/12） | tools/docs | component_guide 易用性路线 |
