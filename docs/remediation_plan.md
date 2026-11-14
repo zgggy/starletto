@@ -358,7 +358,7 @@ flowchart LR
   - 测试插件用 `cc -std=c11` 编译，`otool -L` 只依赖 libSystem，无 libc++，
     未定义符号仅 `calloc/free/malloc/memcpy/strcmp`；
   - `install-smoke` 用安装出头在源码树外编译纯 C 插件，`doctor --deep` 与运行通过；
-  - 34 套 212 用例、`star check` 15/15。
+  - 34 套 212 用例、`star check` 15/15；UBSan 构建（`build-ubsan`）同样 34/34 全绿。
 - **评估结论**：暂不把 `Component` 整体改成 C ABI、也不拆
   Lifecycle/Ports/Config/Service。原因：端口是模板、解码依赖生成类型的编译期
   信息；完整 C ABI 需要运期 schema 描述符，是独立工程。拆分只改契约、无正确性
