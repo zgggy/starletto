@@ -46,6 +46,11 @@ STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 因此 C ABI v1 与 `libstar_runtime` 过渡库已整体撤销，不再以「新入口 + 旧入口
 并存」的方式演进。
 
+**术语边界**：schema 多版本（`SchemaTypeId` name/version/hash、registry 多版本
+共存、逐通道 decode policy）与录制 v2 读 v1，属于**数据版本功能**——同一条实现
+读取不同版本的数据，是滚动升级/历史回放能力；本节删除的是**底层代码的版本双轨**
+（同一功能两套实现/入口）。两者不能混为一谈。
+
 ## 3. 必须一致的项
 
 插件与宿主之间传递的是 C++ ABI：虚表布局、`std::string`/`std::function`/
