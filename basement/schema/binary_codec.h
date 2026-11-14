@@ -7,6 +7,7 @@
 #include "basement/schema/schema_value.h"
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <map>
@@ -331,10 +332,14 @@ private:
             }
             if (best_effort) {
                 if (wire_type == static_cast<uint8_t>(WireType::FIXED64)) {
-                    return star::schema::SchemaValue(static_cast<int64_t>(std::bit_cast<double>(read_fixed64(cur))));
+                    if (const auto converted = double_to_int64(std::bit_cast<double>(read_fixed64(cur))); converted.has_value()) {
+                        return star::schema::SchemaValue(*converted);
+                    }
                 }
                 if (wire_type == static_cast<uint8_t>(WireType::FIXED32)) {
-                    return star::schema::SchemaValue(static_cast<int64_t>(std::bit_cast<float>(read_fixed32(cur))));
+                    if (const auto converted = double_to_int64(static_cast<double>(std::bit_cast<float>(read_fixed32(cur)))); converted.has_value()) {
+                        return star::schema::SchemaValue(*converted);
+                    }
                 }
                 if (wire_type == static_cast<uint8_t>(WireType::BYTES)) {
                     const auto data = read_bytes(cur);
@@ -407,6 +412,19 @@ private:
             }
         }
         throw star::excep::RuntimeError("BinaryCodec decode failed, unknown field kind: ", path);
+    }
+
+    // NaN/Inf/超出 int64 范围的浮点转整数是 UB；best_effort 只做安全范围内的转换
+    static auto double_to_int64(double value) -> std::optional<int64_t> {
+        if (not std::isfinite(value)) {
+            return std::nullopt;
+        }
+        constexpr auto kMin = -9223372036854775808.0;
+        constexpr auto kMaxExclusive = 9223372036854775808.0;
+        if (value < kMin or value >= kMaxExclusive) {
+            return std::nullopt;
+        }
+        return static_cast<int64_t>(value);
     }
 
     static auto type_mismatch_error(const std::string& path, const char* expected, uint8_t wire_type, bool best_effort)

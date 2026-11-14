@@ -293,3 +293,15 @@ flowchart LR
 - 新增 `plan_diagnostics.h`：同一通道两端声明的类型不一致在 `doctor` 启动期报错；
   新增 plan 测试（冲突/一致）
 - 30 套 202 用例、star check 14/14
+
+## 后续整改 P2.3：随机输入与 sanitizer（已完成 2026-11-14）
+
+- 新增确定性随机测试：binary codec（三种策略）、schema 值解析器、原生 schema
+  loader、固定布局帧变异/随机帧；采样次数可用 `STAR_FUZZ_ITERS` 调整
+- UBSan 全量跑 32 套用例（`-Db_sanitize=undefined`），发现并修复两处真实 UB：
+  1. `FixedLayoutView` 槽位在 packed 26 字节帧头后不满足 8 字节对齐，改为 memcpy 读槽
+  2. `BinaryCodec` best-effort 将 NaN/Inf/越界 double 强转 int64；改为范围检查后失败
+- ASan 在本机 macOS 27 + Apple clang 上 dyld 初始化死锁（非项目代码），记录在
+  docs/testing.md；ASan 交给 Linux CI
+- 新增 `.github/workflows/ci.yml`（build/test/check + UBSan job），尚未实际启用
+- 32 套 206 用例；正常构建与 UBSan 构建均全绿

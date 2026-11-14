@@ -239,26 +239,26 @@ class FixedLayoutView {
     }
 
     auto get_bool(size_t index) const -> std::optional<bool> {
-        auto* slot = get_slot(index);
-        if (slot == nullptr || slot->type_tag != FixedFieldSlot::kTagBool) return std::nullopt;
+        const auto slot = read_slot(index);
+        if (not slot.has_value() || slot->type_tag != FixedFieldSlot::kTagBool) return std::nullopt;
         return slot->data.bool_val;
     }
 
     auto get_int64(size_t index) const -> std::optional<int64_t> {
-        auto* slot = get_slot(index);
-        if (slot == nullptr || slot->type_tag != FixedFieldSlot::kTagInt64) return std::nullopt;
+        const auto slot = read_slot(index);
+        if (not slot.has_value() || slot->type_tag != FixedFieldSlot::kTagInt64) return std::nullopt;
         return slot->data.int64_val;
     }
 
     auto get_float64(size_t index) const -> std::optional<double> {
-        auto* slot = get_slot(index);
-        if (slot == nullptr || slot->type_tag != FixedFieldSlot::kTagFloat64) return std::nullopt;
+        const auto slot = read_slot(index);
+        if (not slot.has_value() || slot->type_tag != FixedFieldSlot::kTagFloat64) return std::nullopt;
         return slot->data.float64_val;
     }
 
     auto get_string(size_t index) const -> std::optional<std::string_view> {
-        auto* slot = get_slot(index);
-        if (slot == nullptr || slot->type_tag != FixedFieldSlot::kTagString) return std::nullopt;
+        const auto slot = read_slot(index);
+        if (not slot.has_value() || slot->type_tag != FixedFieldSlot::kTagString) return std::nullopt;
         const auto fixed_size = reinterpret_cast<const FixedLayoutHeader*>(data_)->fixed_section_size;
         const auto var_base = data_ + fixed_size;
         if (slot->data.var_ref.offset + slot->data.var_ref.length > size_ - fixed_size) {
@@ -274,28 +274,32 @@ class FixedLayoutView {
     auto get_map_bytes(size_t index) const -> std::optional<std::span<const uint8_t>> { return get_var_ref_bytes(index, FixedFieldSlot::kTagMap); }
 
     auto is_null(size_t index) const -> bool {
-        auto* slot = get_slot(index);
-        return slot == nullptr || slot->type_tag == FixedFieldSlot::kTagNull;
+        const auto slot = read_slot(index);
+        return not slot.has_value() || slot->type_tag == FixedFieldSlot::kTagNull;
     }
 
     auto type_tag(size_t index) const -> uint8_t {
-        auto* slot = get_slot(index);
-        return slot ? slot->type_tag : FixedFieldSlot::kTagNull;
+        const auto slot = read_slot(index);
+        return slot.has_value() ? slot->type_tag : FixedFieldSlot::kTagNull;
     }
 
     auto raw_data() const -> const uint8_t* { return data_; }
     auto raw_size() const -> size_t { return size_; }
 
   private:
-    auto get_slot(size_t index) const -> const FixedFieldSlot* {
-        if (!valid()) return nullptr;
-        if (index >= field_count()) return nullptr;
-        return reinterpret_cast<const FixedFieldSlot*>(data_ + sizeof(FixedLayoutHeader)) + index;
+    // 帧头是 packed 的 26 字节，槽位起点不满足 FixedFieldSlot 的 8 字节对齐要求；
+    // 直接 reinterpret_cast 是未定义行为（UBSan 可复现），必须 memcpy 出来再读。
+    auto read_slot(size_t index) const -> std::optional<FixedFieldSlot> {
+        if (!valid()) return std::nullopt;
+        if (index >= field_count()) return std::nullopt;
+        auto slot = FixedFieldSlot{};
+        std::memcpy(&slot, data_ + sizeof(FixedLayoutHeader) + index * sizeof(FixedFieldSlot), sizeof(slot));
+        return slot;
     }
 
     auto get_var_ref_bytes(size_t index, uint8_t expected_tag) const -> std::optional<std::span<const uint8_t>> {
-        auto* slot = get_slot(index);
-        if (slot == nullptr || slot->type_tag != expected_tag) return std::nullopt;
+        const auto slot = read_slot(index);
+        if (not slot.has_value() || slot->type_tag != expected_tag) return std::nullopt;
         const auto fixed_size = reinterpret_cast<const FixedLayoutHeader*>(data_)->fixed_section_size;
         const auto var_base = data_ + fixed_size;
         if (slot->data.var_ref.offset + slot->data.var_ref.length > size_ - fixed_size) {

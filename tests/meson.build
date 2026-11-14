@@ -69,6 +69,17 @@ test(
 )
 
 test(
+    'runtime_frame_robustness',
+    executable(
+        'runtime_frame_robustness_test',
+        files('runtime/frame_robustness_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [runtime_native_dep, libraries_dep],
+    ),
+    timeout: 120,
+)
+
+test(
     'runtime_component',
     executable(
         'runtime_component_test',
@@ -323,6 +334,17 @@ test(
         include_directories: test_root_inc,
         dependencies: [schema_dep, libraries_dep],
     ),
+)
+
+test(
+    'schema_robustness',
+    executable(
+        'schema_robustness_test',
+        files('schema/robustness_test.cc') + test_main,
+        include_directories: test_root_inc,
+        dependencies: [schema_dep, libraries_dep],
+    ),
+    timeout: 120,
 )
 
 test(
