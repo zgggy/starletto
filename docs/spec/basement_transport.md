@@ -597,6 +597,20 @@ star replay /tmp/rec.starrec --publish --strict       # 录制 schema 未注册/
 
 ***
 
+### 9.4 shm 段的持有者与孤儿回收
+
+header（v5）内维护 `holder_pids[32]` 持有者表，每次 attach 占一个槽、析构释放；
+`attach` 与析构时都用 `kill(pid, 0)` 清扫已死进程的槽位：
+
+- 清扫后仍存活的持有者 > 0：正常 attach，数据保留；
+- 清扫后为 0：判定为孤儿段（进程 `_exit`/SIGKILL 跳过了析构），原地重建
+  （重置 header/seq/gen，`holder_recoveries` +1），旧数据丢弃；
+- 初始化中途崩溃（`init_state` 未就绪）：只有确认无存活持有者才重建，
+  否则报 init timeout。
+
+段名带 `kShmVersion`，升级后旧版本段不再被命中。macOS 的 shm fd 不支持
+`flock`（ENOTSUP），因此用 pid 存活性而不是内核文件锁做 liveness。
+
 ## 11. ChannelRegistry 路由表
 
 ```mermaid

@@ -146,7 +146,7 @@
 
 - attach 现在校验 magic / version / header 大小 / 布局，且不再回写别人的共享头
 - 段名带版本号，旧布局段不再被误 attach
-- **遗留**：`_exit` 跳过析构导致 ref_count 不减、段不被 unlink。当前由 supervisor 回收进程 + 段名带版本缓解；根治需要「创建者持有 pid 并在启动时清扫孤儿段」，留 P2。
+- **已根治（2026-11-14）**：header v5 增加持有者 pid 表（最多 32 个/段），attach 与析构时用 `kill(pid,0)` 清扫已死进程的槽位；清扫后无存活持有者即判定为孤儿段并原地重建（`holder_recoveries` 计数可观测）。不再依赖 ref_count。回归：`orphan shm segment is reclaimed...`、`shm segment with a live holder is never treated as orphan`，均已双向验证。
 
 ### P1-5 `peek_view` 无稳定性校验 ✅ 已随 P0-1 修复
 

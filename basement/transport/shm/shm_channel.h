@@ -24,9 +24,12 @@ namespace star::transport {
 
 static constexpr uint32_t kShmMaxSlots = 16;
 static constexpr uint64_t kShmMagic = 0x535441524c455454ULL;
-// v4：新增 per-slot 代际 gen[]，用于正确的 seqlock 复核（v3 的全局 seq 判定
-// 无法覆盖「写方正在 memcpy、seq 尚未推进」的窗口）
-static constexpr uint32_t kShmVersion = 4;
+// v5：header 增加持有者 pid 表，attach 时清扫「进程已死但段还在」的孤儿段。
+// v4 及更早的段名里带版本号，升级后不会被命中（旧段成为不可达残留，重启可清）。
+// v4：新增 per-slot 代际 gen[]，用于正确的 seqlock 复核。
+static constexpr uint32_t kShmVersion = 5;
+// 每个进程的每个通道占一个槽位；超限说明同一进程开了过多同通道实例
+static constexpr uint32_t kShmMaxHolders = 32;
 static constexpr uint32_t kShmCapacity = 4 * 1024 * 1024;
 static constexpr uint32_t kShmSlotCount = 4;
 static constexpr uint32_t kShmSlotSize = kShmCapacity / kShmSlotCount;
@@ -53,7 +56,12 @@ struct ShmHeader {
     // 否则后续写入的 +1 会让它变偶数，读方将把「已损坏的槽」当成稳定
     std::atomic<uint32_t> gen_parity_dirty;
     std::atomic<uint32_t> init_state;
-    std::atomic<uint32_t> ref_count;
+    // 持有者 pid 表：进程异常退出（_exit/SIGKILL）时内核不会帮我们减引用计数，
+    // 用 pid 存活性在 attach 时清扫孤儿段。0 = 空槽。
+    std::atomic<uint32_t> holder_lock;
+    std::atomic<int32_t> holder_lock_owner_pid;
+    std::atomic<uint32_t> holder_recoveries;
+    std::atomic<int32_t> holder_pids[kShmMaxHolders];
     uint32_t slot_size;
     uint32_t slot_count;
     uint32_t capacity;
@@ -151,6 +159,118 @@ inline void spin_unlock(ShmHeader* header) {
     star::base::futex_wake(&header->write_lock, 1);
 }
 
+// ── 持有者表：孤儿段检测与回收 ──────────────────────────────────
+inline auto process_is_alive(int32_t pid) -> bool {
+    if (pid <= 0) {
+        return false;
+    }
+    if (::kill(pid, 0) == 0) {
+        return true;
+    }
+    // EPERM 说明进程存在但无权限（仍算活着）；只有 ESRCH 才是确定已死
+    return errno != ESRCH;
+}
+
+inline void holder_lock(ShmHeader* header) {
+    if (header->holder_lock.exchange(1, std::memory_order_acquire) == 0) {
+        header->holder_lock_owner_pid.store(static_cast<int32_t>(::getpid()), std::memory_order_relaxed);
+        return;
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (header->holder_lock.load(std::memory_order_relaxed) == 0) {
+            if (header->holder_lock.exchange(1, std::memory_order_acquire) == 0) {
+                header->holder_lock_owner_pid.store(static_cast<int32_t>(::getpid()), std::memory_order_relaxed);
+                return;
+            }
+            continue;
+        }
+        // 临界区里没有阻塞调用；持锁进程若已死或持锁过久，强制复位，避免永久卡住
+        const auto owner = header->holder_lock_owner_pid.load(std::memory_order_relaxed);
+        const auto waited_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+        if ((owner != 0 && not process_is_alive(owner)) || waited_ms > 5000) {
+            header->holder_lock.store(0, std::memory_order_release);
+        }
+    }
+}
+
+inline void holder_unlock(ShmHeader* header) {
+    header->holder_lock_owner_pid.store(0, std::memory_order_relaxed);
+    header->holder_lock.store(0, std::memory_order_release);
+    star::base::futex_wake(&header->holder_lock, 1);
+}
+
+// 返回清扫后仍存活的持有者数量；已死进程的槽位顺手清掉
+inline auto sweep_dead_holders(ShmHeader* header) -> int32_t {
+    int32_t live = 0;
+    for (uint32_t i = 0; i < kShmMaxHolders; ++i) {
+        const auto pid = header->holder_pids[i].load(std::memory_order_acquire);
+        if (pid == 0) {
+            continue;
+        }
+        if (process_is_alive(pid)) {
+            ++live;
+        } else {
+            header->holder_pids[i].store(0, std::memory_order_release);
+        }
+    }
+    return live;
+}
+
+inline auto add_holder(ShmHeader* header) -> bool {
+    const auto self = static_cast<int32_t>(::getpid());
+    for (uint32_t i = 0; i < kShmMaxHolders; ++i) {
+        if (header->holder_pids[i].load(std::memory_order_acquire) == 0) {
+            header->holder_pids[i].store(self, std::memory_order_release);
+            return true;
+        }
+    }
+    return false;
+}
+
+// 移除自己的一个槽位并清扫死进程；返回剩余存活持有者数量
+inline auto remove_holder(ShmHeader* header) -> int32_t {
+    const auto self = static_cast<int32_t>(::getpid());
+    for (uint32_t i = 0; i < kShmMaxHolders; ++i) {
+        if (header->holder_pids[i].load(std::memory_order_acquire) == self) {
+            header->holder_pids[i].store(0, std::memory_order_release);
+            break;
+        }
+    }
+    return sweep_dead_holders(header);
+}
+
+inline void initialize_header(ShmHeader* header, uint32_t slot_size, uint32_t slot_count, uint32_t capacity) {
+    // 调用方必须持有 holder_lock；init_state 最后置 1，attach 侧据此等待
+    header->init_state.store(0, std::memory_order_relaxed);
+    header->write_lock.store(0, std::memory_order_relaxed);
+    header->write_lock_owner_pid.store(0, std::memory_order_relaxed);
+    header->write_lock_owner_ns.store(0, std::memory_order_relaxed);
+    header->lock_recovery.store(0, std::memory_order_relaxed);
+    header->lock_recoveries.store(0, std::memory_order_relaxed);
+    header->gen_parity_dirty.store(0, std::memory_order_relaxed);
+    header->holder_lock.store(0, std::memory_order_relaxed);
+    header->holder_lock_owner_pid.store(0, std::memory_order_relaxed);
+    header->holder_recoveries.store(0, std::memory_order_relaxed);
+    for (uint32_t i = 0; i < kShmMaxHolders; ++i) {
+        header->holder_pids[i].store(0, std::memory_order_relaxed);
+    }
+    header->magic = kShmMagic;
+    header->version = kShmVersion;
+    header->header_bytes = sizeof(ShmHeader);
+    header->seq.store(0, std::memory_order_relaxed);
+    header->notify_seq.store(0, std::memory_order_relaxed);
+    header->slot_size = slot_size;
+    header->slot_count = slot_count;
+    header->capacity = capacity;
+    for (uint32_t i = 0; i < kShmMaxSlots; ++i) {
+        header->sizes[i].store(0, std::memory_order_relaxed);
+        header->write_ns[i].store(0, std::memory_order_relaxed);
+        header->gen[i].store(0, std::memory_order_relaxed);
+    }
+}
+
 class ShmChannel {
   public:
     ShmChannel(std::string name, uint32_t capacity) : name_(std::move(name)), capacity_(capacity) {
@@ -203,55 +323,72 @@ class ShmChannel {
         header_ = static_cast<ShmHeader*>(mapping_.get());
 
         if (created) {
-            header_->init_state.store(0, std::memory_order_relaxed);
-            header_->write_lock.store(0, std::memory_order_relaxed);
-            header_->write_lock_owner_pid.store(0, std::memory_order_relaxed);
-            header_->write_lock_owner_ns.store(0, std::memory_order_relaxed);
-            header_->lock_recovery.store(0, std::memory_order_relaxed);
-            header_->lock_recoveries.store(0, std::memory_order_relaxed);
-            header_->gen_parity_dirty.store(0, std::memory_order_relaxed);
-            header_->ref_count.store(0, std::memory_order_relaxed);
-            header_->magic = kShmMagic;
-            header_->version = kShmVersion;
-            header_->header_bytes = sizeof(ShmHeader);
-            header_->seq.store(0, std::memory_order_relaxed);
-            header_->notify_seq.store(0, std::memory_order_relaxed);
-            header_->slot_size = slot_size;
-            header_->slot_count = slot_count;
-            header_->capacity = cap;
-            for (uint32_t i = 0; i < kShmMaxSlots; ++i) {
-                header_->sizes[i].store(0, std::memory_order_relaxed);
-                header_->write_ns[i].store(0, std::memory_order_relaxed);
-                header_->gen[i].store(0, std::memory_order_relaxed);
+            // 先把 header 与持有者表写完整，再置 init_state=1 放行 attach 方；
+            // 即使本进程在初始化中途崩溃，留下的也是可被清扫的结构
+            holder_lock(header_);
+            initialize_header(header_, slot_size, slot_count, cap);
+            if (not add_holder(header_)) {
+                holder_unlock(header_);
+                throw star::excep::RuntimeError("ShmChannel failed, too many holders: ", name_);
             }
-            header_->ref_count.fetch_add(1, std::memory_order_acq_rel);
             header_->init_state.store(1, std::memory_order_release);
+            holder_unlock(header_);
         } else {
+            bool ready = false;
             for (int i = 0; i < kInitRetryCount; ++i) {
                 if (header_->init_state.load(std::memory_order_acquire) == 1) {
+                    ready = true;
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-            if (header_->init_state.load(std::memory_order_acquire) != 1) {
-                throw star::excep::RuntimeError("ShmChannel init timeout: ", name_);
+
+            holder_lock(header_);
+            auto recovered = false;
+            if (not ready) {
+                // 创建者在初始化中途崩溃：只有确认没有存活持有者才重建
+                if (sweep_dead_holders(header_) == 0) {
+                    initialize_header(header_, slot_size, slot_count, cap);
+                    recovered = true;
+                } else {
+                    holder_unlock(header_);
+                    throw star::excep::RuntimeError("ShmChannel init timeout: ", name_);
+                }
+            } else {
+                const auto live = sweep_dead_holders(header_);
+                if (live == 0) {
+                    // 孤儿段：所有持有者进程都已退出（_exit/SIGKILL 跳过了析构）
+                    initialize_header(header_, slot_size, slot_count, cap);
+                    recovered = true;
+                } else {
+                    // attach 前校验段布局：旧版本/损坏段若继续使用，会按错误布局解析内存
+                    if (header_->magic != kShmMagic) {
+                        holder_unlock(header_);
+                        throw star::excep::RuntimeError("ShmChannel attach failed, bad magic: ", name_);
+                    }
+                    if (header_->version != kShmVersion) {
+                        holder_unlock(header_);
+                        throw star::excep::RuntimeError("ShmChannel attach failed, version mismatch: ", name_, ", segment=", header_->version, ", expected=", kShmVersion);
+                    }
+                    if (header_->header_bytes != sizeof(ShmHeader)) {
+                        holder_unlock(header_);
+                        throw star::excep::RuntimeError("ShmChannel attach failed, header size mismatch: ", name_, ", segment=", header_->header_bytes, ", expected=", sizeof(ShmHeader));
+                    }
+                    if (header_->slot_count == 0 || header_->slot_count > kShmMaxSlots || header_->slot_size == 0) {
+                        holder_unlock(header_);
+                        throw star::excep::RuntimeError("ShmChannel attach failed, invalid layout: ", name_);
+                    }
+                }
             }
-            // attach 前校验段布局：旧版本/损坏段若继续使用，会按错误布局解析内存
-            // （越界或静默读错）。校验失败时不得回写别人的 header。
-            if (header_->magic != kShmMagic) {
-                throw star::excep::RuntimeError("ShmChannel attach failed, bad magic: ", name_);
+            if (not add_holder(header_)) {
+                holder_unlock(header_);
+                throw star::excep::RuntimeError("ShmChannel failed, too many holders: ", name_);
             }
-            if (header_->version != kShmVersion) {
-                throw star::excep::RuntimeError("ShmChannel attach failed, version mismatch: ", name_, ", segment=", header_->version, ", expected=", kShmVersion,
-                                                "（旧版本段残留，请清理该段或更换段名）");
+            if (recovered) {
+                header_->holder_recoveries.fetch_add(1, std::memory_order_relaxed);
             }
-            if (header_->header_bytes != sizeof(ShmHeader)) {
-                throw star::excep::RuntimeError("ShmChannel attach failed, header size mismatch: ", name_, ", segment=", header_->header_bytes, ", expected=", sizeof(ShmHeader));
-            }
-            if (header_->slot_count == 0 || header_->slot_count > kShmMaxSlots || header_->slot_size == 0) {
-                throw star::excep::RuntimeError("ShmChannel attach failed, invalid layout: ", name_);
-            }
-            header_->ref_count.fetch_add(1, std::memory_order_acq_rel);
+            header_->init_state.store(1, std::memory_order_release);
+            holder_unlock(header_);
         }
 
         slot_size_ = header_->slot_size;
@@ -260,12 +397,15 @@ class ShmChannel {
     }
 
     ~ShmChannel() {
-        if (header_ != nullptr) {
-            const auto remaining = header_->ref_count.fetch_sub(1, std::memory_order_acq_rel);
-            if (remaining == 1) {
-                ::shm_unlink(name_.c_str());
-            }
+        if (header_ == nullptr) {
+            return;
         }
+        holder_lock(header_);
+        const auto live = remove_holder(header_);
+        if (live == 0) {
+            ::shm_unlink(name_.c_str());
+        }
+        holder_unlock(header_);
     }
 
     auto capacity() const -> uint32_t { return capacity_; }
@@ -274,6 +414,9 @@ class ShmChannel {
 
     // 观测：本通道发生过多少次写锁 owner-death 恢复
     auto lock_recovery_count() const -> uint32_t { return header_ != nullptr ? header_->lock_recoveries.load(std::memory_order_relaxed) : 0; }
+
+    // 观测：该段被多少次 attach 判定为孤儿并重建（持有者进程全部已死）
+    auto orphan_recovery_count() const -> uint32_t { return header_ != nullptr ? header_->holder_recoveries.load(std::memory_order_relaxed) : 0; }
 
     struct Loan {
         ShmHeader* header{nullptr};

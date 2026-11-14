@@ -1,5 +1,8 @@
 #include <atomic>
 #include <chrono>
+#include <csignal>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -381,4 +384,87 @@ TEST_CASE("each channel with readers owns exactly one polling thread") {
     reader_a2.reset();
     reader_b.reset();
     REQUIRE_EQ(bus->poller_count(), size_t{0});
+}
+
+// P0-2 遗留：进程 _exit/SIGKILL 跳过了析构，段不会被 unlink。
+// 新进程 attach 时必须识别「所有持有者都已死」并重建，而不是永久卡在孤儿段上。
+TEST_CASE("orphan shm segment is reclaimed after the last holder dies without cleanup") {
+    const auto name = make_name();
+    const auto payload = std::vector<uint8_t>(32, 0x5A);
+
+    const auto pid = ::fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        auto channel = std::make_shared<ShmChannel>(name, 1024 * 1024);
+        channel->write(payload.data(), static_cast<uint32_t>(payload.size()));
+        ::_exit(0);  // 跳过析构：段与持有者记录都留在原地
+    }
+    int status = 0;
+    REQUIRE(::waitpid(pid, &status, 0) == pid);
+    REQUIRE(WIFEXITED(status));
+
+    auto channel = std::make_shared<ShmChannel>(name, 1024 * 1024);
+    REQUIRE_EQ(channel->orphan_recovery_count(), 1U);
+
+    // 重建后的段是干净的：旧数据不应残留
+    uint64_t last_seq = 0;
+    REQUIRE(not channel->read(&last_seq).has_value());
+
+    channel->write(payload.data(), static_cast<uint32_t>(payload.size()));
+    const auto result = channel->read(&last_seq);
+    REQUIRE(result.has_value());
+    REQUIRE_EQ(result->size, payload.size());
+
+    channel.reset();
+    // 最后一个持有者正常退出后段应被 unlink
+    errno = 0;
+    const auto fd = ::shm_open(name.c_str(), O_RDWR, 0666);
+    REQUIRE(fd < 0);
+    REQUIRE(errno == ENOENT);
+}
+
+// 还有存活持有者时绝不能重建：否则会把正在使用的段清空
+TEST_CASE("shm segment with a live holder is never treated as orphan") {
+    const auto name = make_name();
+    auto first = std::make_shared<ShmChannel>(name, 1024 * 1024);
+    const auto payload = std::vector<uint8_t>(16, 0x33);
+    first->write(payload.data(), static_cast<uint32_t>(payload.size()));
+
+    int ready_pipe[2]{};
+    REQUIRE(::pipe(ready_pipe) == 0);
+    const auto pid = ::fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        ::close(ready_pipe[0]);
+        auto child_channel = std::make_shared<ShmChannel>(name, 1024 * 1024);
+        const char ready = 'R';
+        (void)::write(ready_pipe[1], &ready, 1);
+        // 持有段直到被 SIGKILL
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+    ::close(ready_pipe[1]);
+    char ready = 0;
+    REQUIRE(::read(ready_pipe[0], &ready, 1) == 1);
+    ::close(ready_pipe[0]);
+
+    // 同一进程再开一个实例：存活持有者 >0，不能重建
+    auto second = std::make_shared<ShmChannel>(name, 1024 * 1024);
+    REQUIRE_EQ(second->orphan_recovery_count(), 0U);
+
+    ::kill(pid, SIGKILL);
+    int status = 0;
+    REQUIRE(::waitpid(pid, &status, 0) == pid);
+
+    // 子进程死后，父进程的实例仍存活：新的 attach 只清扫死槽，不重建
+    auto third = std::make_shared<ShmChannel>(name, 1024 * 1024);
+    REQUIRE_EQ(third->orphan_recovery_count(), 0U);
+
+    uint64_t last_seq = 0;
+    const auto result = third->read(&last_seq);
+    REQUIRE(result.has_value());
+    const auto* data = third->payload_ptr(result->slot);
+    REQUIRE(data != nullptr);
+    REQUIRE(std::memcmp(data, payload.data(), payload.size()) == 0);
 }
