@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -179,15 +180,25 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
     }
 
   private:
+    // 回调可能在写方线程上执行，而 Reader 可能在另一个线程析构（组件卸载）。
+    // 仅从 map 里删掉回调不够：已拷贝出去的那份仍可能正在执行，捕获的 this/状态
+    // 已经销毁 → use-after-free。in_flight 计数让析构等待在途回调结束。
+    struct ReaderSlot {
+        Reader::Callback callback;
+        std::atomic<int> in_flight{0};
+        std::mutex wait_mutex;
+        std::condition_variable wait_cv;
+    };
+
     struct ChannelState {
         ChannelDescriptor descriptor;
-        std::unordered_map<uint64_t, Reader::Callback> readers;
+        std::unordered_map<uint64_t, std::shared_ptr<ReaderSlot>> readers;
         std::unordered_map<uint64_t, std::deque<MessageView>> reader_history;
         ChannelStats stats;
     };
 
     void write_internal(const std::string& channel_name, const MessageView& message, const MessageSerializer* serializer) {
-        std::vector<std::pair<uint64_t, Reader::Callback>> reader_callbacks;
+        std::vector<std::shared_ptr<ReaderSlot>> reader_callbacks;
         std::shared_ptr<MessageRecorder> recorder;
         bool should_record = false;
         std::string record_type_name;
@@ -215,7 +226,7 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
             delivered = message;
             delivered.decode_policy = options.decode_policy;
             reader_callbacks.reserve(it->second.readers.size());
-            for (const auto& [reader_id, cb] : it->second.readers) {
+            for (const auto& [reader_id, slot] : it->second.readers) {
                 if (options.depth > 0) {
                     auto& history = it->second.reader_history[reader_id];
                     auto result = apply_qos(history, delivered, options, it->second.stats);
@@ -223,7 +234,8 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
                         continue;
                     }
                 }
-                reader_callbacks.emplace_back(reader_id, cb);
+                slot->in_flight.fetch_add(1, std::memory_order_acq_rel);
+                reader_callbacks.push_back(slot);
             }
             auto payload_size = estimate_payload_size(message, serializer);
             it->second.stats.record_write(payload_size);
@@ -235,10 +247,10 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
             record_schema_type_id = it->second.descriptor.schema_type_id;
         }
 
-        for (const auto& [_, cb] : reader_callbacks) {
+        for (const auto& slot : reader_callbacks) {
             // 回调异常不得杀死发布方线程，但必须计数可见
             try {
-                cb(delivered);
+                slot->callback(delivered);
             } catch (const std::exception& e) {
                 record_callback_failure(channel_name);
                 logE << "NativeMessageBus: reader callback threw: channel=" << channel_name << ", err=" << e.what();
@@ -246,6 +258,13 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
                 record_callback_failure(channel_name);
                 logE << "NativeMessageBus: reader callback threw unknown exception: channel=" << channel_name;
             }
+            // 递减必须与析构方的 predicate 在同一把锁下，否则 notify 可能落在
+            // 「predicate 检查完、wait 尚未阻塞」之间而丢失，析构方永久等待
+            {
+                std::lock_guard<std::mutex> lock(slot->wait_mutex);
+                slot->in_flight.fetch_sub(1, std::memory_order_acq_rel);
+            }
+            slot->wait_cv.notify_all();
         }
 
         if (should_record) {
@@ -274,13 +293,26 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
     }
 
     void erase_reader(const std::string& channel_name, uint64_t id) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = channels_.find(channel_name);
-        if (it == channels_.end()) {
+        std::shared_ptr<ReaderSlot> slot;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = channels_.find(channel_name);
+            if (it == channels_.end()) {
+                return;
+            }
+            const auto slot_it = it->second.readers.find(id);
+            if (slot_it != it->second.readers.end()) {
+                slot = slot_it->second;
+                it->second.readers.erase(slot_it);
+            }
+            it->second.reader_history.erase(id);
+        }
+        if (not slot) {
             return;
         }
-        it->second.readers.erase(id);
-        it->second.reader_history.erase(id);
+        // 等已拷贝出去的回调执行完再返回：调用方随后会销毁捕获的状态
+        std::unique_lock<std::mutex> lock(slot->wait_mutex);
+        slot->wait_cv.wait(lock, [&slot]() { return slot->in_flight.load(std::memory_order_acquire) == 0; });
     }
 
     static auto estimate_payload_size(const MessageView& message, const MessageSerializer* serializer) -> uint64_t {
@@ -358,7 +390,9 @@ inline auto NativeMessageBus::create_reader(const ChannelDescriptor& descriptor,
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto& channel = channels_[descriptor.name];
-        channel.readers.emplace(id, std::move(callback));
+        auto slot = std::make_shared<ReaderSlot>();
+        slot->callback = std::move(callback);
+        channel.readers.emplace(id, std::move(slot));
     }
     return std::make_shared<NativeReader>(this->shared_from_this(), descriptor.name, id);
 }

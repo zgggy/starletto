@@ -74,6 +74,10 @@ static auto parse_args(int argc, char** argv) -> Inputs {
             inputs.options.route_plan = a.substr(std::string("--route-plan=").size());
             continue;
         }
+        if (a.rfind("--system-channels=", 0) == 0) {
+            inputs.options.system_channels = a.substr(std::string("--system-channels=").size());
+            continue;
+        }
         if (a == "--worker") { inputs.options.worker = true; continue; }
         if (a == "--multi-process") { inputs.options.multi_process = true; continue; }
         if (auto v = parse_i64_arg(a, "--frames=")) { inputs.options.frames = *v; continue; }

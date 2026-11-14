@@ -18,6 +18,8 @@ struct RunOptions {
     std::string route_plan;
     std::string shm_pub_topics;
     std::string shm_sub_topics;
+    // 服务等「任意进程都可能读写」的通道：始终走 shm，不依赖路由计划推断生产者
+    std::string system_channels;
     bool deep{false};
     std::string log_file;
     std::string log_dir;

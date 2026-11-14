@@ -517,6 +517,13 @@ sequenceDiagram
 pending 并返回 `ok=false`。因为两条都是普通通道，路由计划、录制、统计、类型校验与
 解码策略**全部自动生效**，不需要为服务单独实现。
 
+### 8.2.1 跨进程服务的通道标记
+
+服务通道（`<service>/request`、`<service>/response`）在运行时登记为**系统读写通道**：
+无论本进程在路由计划里是什么角色，它们始终走 shm，且读写两侧都可用。
+原因：客户端所在的进程组不在 `component.conf` 里，路由计划推不出 request 的生产者。
+多进程 supervisor 会把所有服务通道路径通过 `--system-channels` 广播给每个 worker。
+
 ### 8.3 为什么不再有 ServiceBus
 
 旧的 `NativeServiceBus`（进程内函数调用）与 `ShmServiceBus`（SHM 通道）是同一件事的
@@ -572,6 +579,9 @@ replayer.play_all_entries(fn, speed);              // 完整条目（含 schema 
 ```
 
 ### 9.3 MessagePublisher（回放写回通道）
+
+空字节是合法载荷（全 optional 消息），shm 写路径按 size=0 正常入环；
+读侧按缺失策略解码。
 
 回放**不重新编码**：录制里存的是当时写出的字节，原样写回才能验证
 「旧数据在新代码里怎么解码」——这正是 per-channel 解码策略生效的场景。

@@ -65,7 +65,13 @@ auto run_server_child(const std::string& service,
     if (not bus->shm_available()) {
         return 3;
     }
-    bus->configure_route_registry("server", route_plan);
+    if (not route_plan.empty()) {
+        bus->configure_route_registry("server", route_plan);
+    } else {
+        // 无路由计划：服务通道按系统通道处理（任何进程都可能读/写，始终走 shm）
+        bus->register_system_channel(service + "/request");
+        bus->register_system_channel(service + "/response");
+    }
     auto server = RpcServer{*bus, service, [](const ServiceRequest& request) -> SerializedServiceResponse {
         auto bytes = std::vector<uint8_t>{};
         if (const auto binary = request.body.payload.as<BinaryPayloadView>()) {
@@ -147,6 +153,56 @@ TEST_CASE("rpc works across two processes over shm") {
     ::close(done_pipe[1]);
     ::close(ready_pipe[0]);
 
+    int status = 0;
+    REQUIRE(::waitpid(pid, &status, 0) == pid);
+    REQUIRE(WIFEXITED(status));
+    REQUIRE_EQ(WEXITSTATUS(status), 0);
+}
+
+// 多进程服务真正的部署形态：客户端组不在 component.conf 里，路由计划推不出
+// request 的生产者。服务通道作为系统通道后，无需手写路由计划也能跨进程调用。
+TEST_CASE("rpc works across processes through system service channels") {
+    const auto unique = std::to_string(static_cast<long>(::getpid())) + "_" +
+                        std::to_string(static_cast<long>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xffff));
+    const auto service = "test.rpc.system." + unique;
+
+    int ready_pipe[2]{};
+    int done_pipe[2]{};
+    REQUIRE(::pipe(ready_pipe) == 0);
+    REQUIRE(::pipe(done_pipe) == 0);
+
+    const auto pid = ::fork();
+    REQUIRE(pid >= 0);
+    if (pid == 0) {
+        ::close(ready_pipe[0]);
+        ::close(done_pipe[1]);
+        const auto rc = run_server_child(service, "", ready_pipe[1], done_pipe[0]);
+        ::close(ready_pipe[1]);
+        ::close(done_pipe[0]);
+        ::_exit(rc);
+    }
+
+    ::close(ready_pipe[1]);
+    ::close(done_pipe[0]);
+    REQUIRE(read_ready_byte(ready_pipe[0], 5000));
+
+    auto client_bus = std::make_shared<ShmRoutedMessageBus>();
+    REQUIRE(client_bus->shm_available());
+    client_bus->register_system_channel(service + "/request");
+    client_bus->register_system_channel(service + "/response");
+    auto client = RpcClient{*client_bus, service, 3000};
+
+    const auto payload = std::vector<uint8_t>{0x5A, 0x5B};
+    const auto response = client.call_serialized(make_request_message(payload));
+    REQUIRE(response.ok);
+    const auto echoed = response.body.payload.as<BinaryPayloadView>();
+    REQUIRE(echoed != nullptr);
+    REQUIRE_EQ(std::vector<uint8_t>(echoed->data, echoed->data + echoed->size), payload);
+
+    const char done = 'D';
+    REQUIRE(::write(done_pipe[1], &done, 1) == 1);
+    ::close(done_pipe[1]);
+    ::close(ready_pipe[0]);
     int status = 0;
     REQUIRE(::waitpid(pid, &status, 0) == pid);
     REQUIRE(WIFEXITED(status));

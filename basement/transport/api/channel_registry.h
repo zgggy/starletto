@@ -55,6 +55,21 @@ public:
         return system_pub_channels_.count(channel) > 0;
     }
 
+    // 系统读写通道（服务 request/response）：任何进程都既可能写也可能读，
+    // 且不依赖路由计划推断生产者（客户端组不在 component.conf 里）。
+    void register_system_channel(const std::string& channel) {
+        if (channel.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        system_rw_channels_.insert(channel);
+    }
+
+    auto is_system_channel(const std::string& channel) const -> bool {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return system_pub_channels_.count(channel) > 0 || system_rw_channels_.count(channel) > 0;
+    }
+
     void register_writer(const std::string& channel, const std::string& process_group) {
         if (channel.empty() || process_group.empty()) {
             return;
@@ -116,6 +131,9 @@ public:
 
 private:
     auto shm_route_mode_locked(const std::string& channel) const -> ShmRouteMode {
+        if (system_rw_channels_.count(channel) > 0) {
+            return ShmRouteMode::SHM_READ_WRITE;
+        }
         const bool system_pub = system_pub_channels_.count(channel) > 0;
         if (not local_group_.empty()) {
             const auto it = route_registry_.find(channel);
@@ -156,6 +174,7 @@ private:
     std::unordered_set<std::string> shm_pub_channels_;
     std::unordered_set<std::string> shm_sub_channels_;
     std::unordered_set<std::string> system_pub_channels_;
+    std::unordered_set<std::string> system_rw_channels_;
 };
 
 }  // namespace star::transport

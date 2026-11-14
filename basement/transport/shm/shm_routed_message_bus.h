@@ -45,6 +45,9 @@ class ShmRoutedMessageBus final : public MessageBus, public RecordableBus, publi
     // 系统通道（统计）由本进程发布、其它进程订阅：即使不在业务路由计划里也必须走 shm
     void register_system_publisher(const std::string& channel) { channel_registry_->register_system_publisher(channel); }
 
+    // 系统读写通道（服务 request/response）：任何进程都可能读或写，始终走 shm
+    void register_system_channel(const std::string& channel) { channel_registry_->register_system_channel(channel); }
+
     // 录制委托给内部 NativeMessageBus：routed 写路径本来就先走 inproc，
     // 因此录制发生在 inproc 侧即可覆盖全部发布；此前未继承 RecordableBus，
     // 导致 record:true 在路由模式下静默无效
@@ -104,7 +107,12 @@ class ShmRoutedMessageBus final : public MessageBus, public RecordableBus, publi
         }
 
         const auto mode = channel_registry_->shm_route_mode(descriptor.name);
-        if (mode == ChannelRegistry::ShmRouteMode::SHM_READ) {
+        // 系统服务通道必须挂 shm reader：本进程读不到其它进程写入的消息。
+        // 普通 READ_WRITE（pub/sub 集合重叠）保持原来的 inproc 读：本地写入
+        // 不经过 4 槽 shm 环，不会被成批覆盖。
+        const bool system_channel = channel_registry_->is_system_channel(descriptor.name);
+        if (mode == ChannelRegistry::ShmRouteMode::SHM_READ or
+            (mode == ChannelRegistry::ShmRouteMode::SHM_READ_WRITE and system_channel)) {
             try {
                 reader_shm = shm_->create_reader(descriptor, callback);
             } catch (const star::excep::RuntimeError& e) {
@@ -282,7 +290,7 @@ class ShmRoutedMessageBus final : public MessageBus, public RecordableBus, publi
         if (channel_registry_ == nullptr || not channel_registry_->has_route_plan()) {
             return;
         }
-        if (channel_registry_->is_in_route_plan(channel_name) or channel_registry_->is_system_publisher(channel_name)) {
+        if (channel_registry_->is_in_route_plan(channel_name) or channel_registry_->is_system_channel(channel_name)) {
             return;
         }
         {

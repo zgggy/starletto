@@ -74,6 +74,38 @@ namespace star::native_runner {
             }
         }
 
+        // 服务通道：本进程声明的 commands + supervisor 广播的服务通道列表
+        if (auto* routed = dynamic_cast<star::transport::ShmRoutedMessageBus*>(&context->message_bus())) {
+            auto mark = [routed](const std::string& channel) {
+                if (not channel.empty()) {
+                    routed->register_system_channel(channel);
+                }
+            };
+            for (const auto& plan : component_plans) {
+                if (not plan.services.has_value()) {
+                    continue;
+                }
+                for (const auto& svc : *plan.services) {
+                    const auto channel = svc.channel.value_or(svc.name);
+                    if (channel.empty()) {
+                        continue;
+                    }
+                    mark(channel + "/request");
+                    mark(channel + "/response");
+                }
+            }
+            auto remaining = options.system_channels;
+            while (not remaining.empty()) {
+                const auto pos = remaining.find(',');
+                const auto item = remaining.substr(0, pos);
+                mark(item);
+                if (pos == std::string::npos) {
+                    break;
+                }
+                remaining = remaining.substr(pos + 1);
+            }
+        }
+
         const auto process_plan = star::runtime::plan::build_process_plan(component_plans);
         host.set_process_plan(process_plan);
         host.set_process_group(options.process_group);
@@ -147,6 +179,30 @@ namespace star::native_runner {
         const auto log_dir = resolve_log_dir(options);
         const auto ts = make_timestamp();
         auto orchestrator = star::runtime::process::ProcessOrchestrator(g_argv0);
+        // 服务通道的「生产者组」无法从 component.conf 推出（客户端组不在 conf 里），
+        // 作为系统通道广播给所有 worker：任何进程都可能读或写，始终走 shm
+        auto service_channels = std::unordered_set<std::string>{};
+        for (const auto& plan : component_plans) {
+            if (not plan.services.has_value()) {
+                continue;
+            }
+            for (const auto& svc : *plan.services) {
+                const auto channel = svc.channel.value_or(svc.name);
+                if (channel.empty()) {
+                    continue;
+                }
+                service_channels.insert(channel + "/request");
+                service_channels.insert(channel + "/response");
+            }
+        }
+        auto system_channels_csv = std::string{};
+        for (const auto& channel : service_channels) {
+            if (not system_channels_csv.empty()) {
+                system_channels_csv.push_back(',');
+            }
+            system_channels_csv += channel;
+        }
+
         const auto route_plan = orchestrator.build_route_plan(channel_producers, channel_consumers);
 
         auto pids = std::vector<pid_t>{};
@@ -160,6 +216,7 @@ namespace star::native_runner {
             config.group = group;
             config.component_conf_paths = paths;
             config.route_plan = route_plan;
+            config.system_channels = system_channels_csv;
             config.frames = options.frames;
             config.sleep_ms = options.sleep_ms;
             if (not log_dir.empty()) {
@@ -454,7 +511,8 @@ namespace star::native_runner {
             bad.view.schema_type_id = star::schema::SchemaTypeId{};
             bad.view.correlation_id = star::transport::CorrelationId{};
             bad.serializer.payload_size_hint = 0;
-            bad.serializer.encode_binary = []() -> std::vector<uint8_t> { return {}; };
+            // 单帧超过槽位大小：真正的「这一帧太大」，区别于合法的空编码
+            bad.serializer.encode_binary = []() -> std::vector<uint8_t> { return std::vector<uint8_t>(8 * 1024 * 1024, 0xEE); };
 
             const auto bad_r = degrade_writer->write_serialized(bad);
             if (bad_r.status != star::transport::WriteStatus::ENCODE_FAILED || !bad_r.shm_required || !bad_r.inproc_ok) {

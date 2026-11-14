@@ -240,6 +240,10 @@ class MessageReplayer final {
 
   private:
     static void pace_to(int64_t elapsed_ns, std::chrono::steady_clock::time_point play_begin, double speed) {
+        // speed<=0 会让目标时间变成 inf/负值；回放退化为「尽快发完」
+        if (speed <= 0.0) {
+            speed = 1000000.0;
+        }
         const auto target_us = static_cast<int64_t>(elapsed_ns / 1000.0 / speed);
         const auto actual_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - play_begin).count();
         if (target_us > actual_us) {

@@ -342,12 +342,9 @@ class ShmMessageBus final : public MessageBus, public std::enable_shared_from_th
             // 固定布局没有字段 id，只能同版本通信；仅当消息没有二进制编码器时才用它。
             if (serializer->encode_binary) {
                 const auto bytes = serializer->encode_binary();
-                if (bytes.empty()) {
-                    auto out = WriteResult{};
-                    out.status = WriteStatus::ENCODE_FAILED;
-                    out.shm_required = true;
-                    return out;
-                }
+                // 空字节是合法编码（全 optional 的消息），不是编码失败；
+                // 读侧按缺失策略解码（见 BinaryCodec::apply_missing_policy）
+
                 // 单帧超限是「这条消息太大」而非通道故障：显式判为 ENCODE_FAILED，
                 // 不能让 channel->write 抛异常被记成 EXCEPTION（那会触发通道降级）
                 if (bytes.size() > channel->slot_size()) {

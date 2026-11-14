@@ -183,3 +183,15 @@ flowchart LR
 **不建议跳阶段**：P1/P2 的改动都建立在 P0 的 shm 头变更之上（`kShmVersion` 升级），先做 P0 可以避免二次改格式。
 
 > 说明：P0-1 是上一轮修复引入的缺陷，应最先修，并在提交信息里注明「修正此前的 seqlock 判定逻辑」。
+
+---
+
+## 附：2026-11-14 底层复审（已修）
+
+| # | 问题 | 证据 | 修复 |
+|---|---|---|---|
+| A1 | 空载荷被 shm 写路径判为编码失败 | `shm_message_bus.h` 对 `bytes.empty()` 直接返回 `ENCODE_FAILED`；而全 optional 消息的合法编码就是空字节（读侧已有缺失策略） | 允许 size=0 写入；`shm accepts an empty payload as a valid message`，已双向验证 |
+| A2 | `NativeMessageBus` reader 析构不等在途回调 | 写方拷贝回调后释放锁再执行；组件卸载（reader 析构）时回调可能仍在跑，捕获的 `this` 已销毁 | `ReaderSlot{in_flight, cv}`；析构等 in_flight 归零。递减与 predicate 同锁（避免丢唤醒）；`destroying a reader waits for its in-flight callback` |
+| A3 | 多进程服务通道无法路由 | `build_process_plan` 只知道 server 组；客户端组不在 component.conf 里，`run_multi_process` 推不出 `request` 的生产者，跨进程调用退化为 inproc | 服务通道登记为系统读写通道（始终 shm），supervisor 用 `--system-channels` 广播给所有 worker；`rpc works across processes through system service channels`，已双向验证 |
+| A4 | `replay speed<=0` 除法无防护 | `pace_to` 直接 `elapsed / speed`，0 会产生 inf/UB | 非正值退化为最快回放 |
+| A5 | selftest 用「空编码」当编码失败 | A1 修复后该场景合法，selftest 误报 | 改用 8MB 超槽位帧（真正的单帧过大） |

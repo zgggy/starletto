@@ -115,3 +115,34 @@ TEST_CASE("shm accepts a same-name message from a different schema version") {
 }
 
 }  // namespace
+
+// 空字节是合法编码（全 optional 的消息）：shm 写路径不能把它判成编码失败
+TEST_CASE("shm accepts an empty payload as a valid message") {
+    const auto bus = std::make_shared<ShmMessageBus>();
+    auto descriptor = ChannelDescriptor{};
+    descriptor.name = "test.payload.empty";
+    descriptor.type_name = "test.empty";
+
+    auto received = std::atomic<int>{0};
+    auto size = std::atomic<size_t>{1};
+    const auto reader = bus->create_reader(descriptor, [&](const MessageView& msg) {
+        if (const auto slot = msg.payload.as<ShmSlotView>()) {
+            size.store(slot->size, std::memory_order_relaxed);
+        }
+        received.fetch_add(1, std::memory_order_relaxed);
+    });
+    const auto writer = bus->create_writer(descriptor);
+
+    auto message = SerializedMessage{};
+    message.view.payload = TypedConstPtr::from(std::make_shared<std::vector<uint8_t>>());
+    message.serializer.encode_binary = []() { return std::vector<uint8_t>{}; };
+    const auto result = writer->write_serialized(message);
+    REQUIRE(result.ok());
+    REQUIRE(result.shm_ok);
+
+    for (int i = 0; i < 100 && received.load() == 0; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE_EQ(received.load(), 1);
+    REQUIRE_EQ(size.load(), size_t{0});
+}

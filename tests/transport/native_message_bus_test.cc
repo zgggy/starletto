@@ -258,3 +258,40 @@ TEST_CASE("write on a mismatched schema type reports EXCEPTION") {
 }
 
 }  // namespace
+
+// Reader 可能在写方回调执行期间被另一个线程析构（组件卸载）。析构必须等在途回调
+// 结束，否则回调会踩到已销毁的捕获状态。
+TEST_CASE("destroying a reader waits for its in-flight callback") {
+    const auto bus = make_bus();
+    const auto descriptor = make_descriptor("test.reader.lifetime");
+
+    auto started = std::atomic<bool>{false};
+    auto release = std::atomic<bool>{false};
+    auto destroyed = std::atomic<bool>{false};
+
+    auto reader = bus->create_reader(descriptor, [&](const MessageView&) {
+        started.store(true, std::memory_order_relaxed);
+        while (not release.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+    const auto writer = bus->create_writer(descriptor);
+
+    auto publisher = std::thread([&]() { (void)writer->write(make_message(1)); });
+    for (int i = 0; i < 200 && not started.load(std::memory_order_relaxed); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(started.load(std::memory_order_relaxed));
+
+    auto destroyer = std::thread([&]() {
+        reader.reset();
+        destroyed.store(true, std::memory_order_relaxed);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    REQUIRE(not destroyed.load(std::memory_order_relaxed));
+
+    release.store(true, std::memory_order_relaxed);
+    publisher.join();
+    destroyer.join();
+    REQUIRE(destroyed.load(std::memory_order_relaxed));
+}
