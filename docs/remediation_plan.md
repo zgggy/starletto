@@ -317,3 +317,14 @@ flowchart LR
 - 纯移动，行为不变；`star check` 14/14、32 套 206 用例、list/monitor/doctor 实跑通过
 - **待做**：`Component` 基类拆分（Lifecycle/Ports/Config/Service）与运行时错误模型统一，
   属于 API 变更，放到共享库阶段一起评估
+
+## 后续整改 P1.1 B1：安装面（已完成 2026-11-14）
+
+- `install_subdir` 安装 `basement/` 与 `libraries/` 头，安装脚本删除 `.h/.hpp`
+  之外的 meson.build/.schema/Python，避免 include 树变成第二份源码树
+- 生成的 builtin `.s.h` 随 custom_target 安装；schema 工具安装到
+  `share/starletto/schema`；生成 `starletto.pc`
+- 新增 `tools/tests/oot_plugin_smoke.sh`：临时 DESTDIR 安装 → 用安装的 codegen
+  生成模块 schema → 源码树外编译插件 → `doctor --deep` → 运行
+- `star check` 新增 `install-smoke` 门禁（15/15）
+- **待做（B2）**：抽 `libstar_runtime.so` + C ABI 插件入口，放宽跨编译器约束

@@ -21,6 +21,7 @@ flowchart LR
 | [`component_guide.md`](component_guide.md) | **组件开发指南**：写一个组件要动哪些文件、三重一致性陷阱、易用性改进路线 | 要加模块的人 |
 | [`arch.md`](arch.md) | 系统架构（简版，Mermaid 三图 + 关键决策表） | 快速总览 |
 | [`spec/`](spec/) | 设计契约：system_vision、basement_design/schema/transport/runtime_*、workplan | 改底座前必读 |
+| [`installation.md`](installation.md) | 安装树、源码树外插件开发、pkg-config | 插件作者 |
 | [`testing.md`](testing.md) | 测试、确定性随机输入、UBSan/ASan 配方与 CI 模板 | 开发者 |
 | [`remediation_plan.md`](remediation_plan.md) | 底层缺陷修复方案（2026-11-11 复审，P0/P1/P2 分级 + 验收） | 系统工程师 |
 | [`contract_decisions.md`](contract_decisions.md) | **契约决策（已确认）**：多版本 Schema 演进 + 服务并入通道；实施计划五阶段 | 系统工程师 |
@@ -44,7 +45,7 @@ flowchart LR
 |---|---|
 | 构建 | 0 错误 0 警告（5 类告警提为 `-Werror`） |
 | 测试 | 32 套 206 用例 |
-| CI 门禁 | `star check` 14/14 |
+| CI 门禁 | `star check` 15/15 |
 | 业务模块 | setting/config、setting/parameter、planning/motion（示例）、control/pid |
 | 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 已修 P2-1/P2-2/P2-3/P2-5/P2-7/P2-8/P2-9（多版本 schema、解码策略、线程模型、结构化日志、跨进程解码、录制 v2、服务并入通道）；P2-2/P2-4 已完成（多版本 schema、reserved、codegen 拆层/多 root/跨文件 import/ODR）；**P2 全部收口** |
 | 算法资产 | `libraries/` 约 3500 行未接线，等 localization/perception 等模块落地 |

@@ -685,6 +685,22 @@ check_app_module_boundary() {
     return 0
 }
 
+# 安装面冒烟：meson install 到临时 DESTDIR，源码树外生成 schema、编译插件、
+# doctor --deep 与 run 全部通过（headers + 生成头 + schema 工具 + pc 文件）
+check_install_smoke() {
+    local build_dir="$1"
+    local script="${PROJECT_ROOT}/tools/tests/oot_plugin_smoke.sh"
+    if [ ! -f "$script" ]; then
+        log_error "找不到安装面冒烟脚本: ${script}"
+        return 1
+    fi
+    if ! bash "$script" "$build_dir"; then
+        log_error "安装面冒烟失败"
+        return 1
+    fi
+    return 0
+}
+
 # 运行时冒烟：真的装配一次组件并启动/停止调度器。
 # 单元测试不经过 App::run，曾漏掉「context 被 move 后仍被解引用」这类装配期崩溃。
 check_runtime_smoke() {
@@ -866,6 +882,7 @@ run_ci_guard() {
     _check_step "unit-test" meson test -C "$build_dir"
     _check_step "runtime-smoke" check_runtime_smoke "$runner"
     _check_step "app-boundary" check_app_module_boundary
+    _check_step "install-smoke" check_install_smoke "$build_dir"
 
     log_info "--- CI Guard: Step 4/8 Selftest ---"
     # 注意：不能调用 run_transport_selftest，它内部用 exec 会替换当前进程

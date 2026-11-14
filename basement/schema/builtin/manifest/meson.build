@@ -13,5 +13,7 @@ schema_gen_basement_schema_builtin_manifest = custom_target(
         '--include-root', meson.project_source_root(),
     ],
     depend_files: codegen_sources,
+    install: true,
+    install_dir: get_option('includedir') / 'starletto' / 'basement' / 'schema' / 'builtin' / 'manifest',
     build_by_default: true,
 )

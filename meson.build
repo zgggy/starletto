@@ -29,3 +29,35 @@ subdir('libraries')
 subdir('modules')
 subdir('apps')
 subdir('tests')
+
+# ── 安装面：公共头 + 生成的 builtin 头 + schema 工具 + pkg-config ──────────
+# install_subdir 保留 basement/... 的目录结构；安装脚本随后删除 .h/.hpp 之外的
+# 文件（meson.build/.schema/Python），避免 include 树变成第二份源码树。
+install_subdir('basement', install_dir: get_option('includedir') / 'starletto')
+install_subdir('libraries', install_dir: get_option('includedir') / 'starletto')
+meson.add_install_script('tools/install_surface/prune_include_tree.py', get_option('includedir') / 'starletto')
+
+# schema 工具：源码树外的模块用它生成自己的 .s.h
+install_data(
+    'basement/schema/schema_codegen.py',
+    'basement/schema/schema_compat.py',
+    install_dir: get_option('datadir') / 'starletto' / 'schema',
+)
+install_subdir(
+    'basement/schema/codegen',
+    install_dir: get_option('datadir') / 'starletto' / 'schema' / 'codegen',
+    strip_directory: true,
+    exclude_directories: ['__pycache__'],
+)
+
+pkgconfig = import('pkgconfig')
+pkgconfig.generate(
+    name: 'starletto',
+    description: 'Starletto native runtime (header-only)',
+    version: meson.project_version(),
+    subdirs: 'starletto',
+    extra_cflags: ['-std=c++20'],
+    variables: [
+        'schemadir=${prefix}/share/starletto/schema',
+    ],
+)

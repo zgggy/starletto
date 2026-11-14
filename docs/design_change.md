@@ -47,3 +47,4 @@
 | 2026-11-14 | 文档/拓扑修正：README 不再宣称 shm 零拷贝（明确跨进程编码+拷贝、View 当前不适用）；资产状态说明；doctor 增加通道两端类型一致性检查 | docs/runtime | P2.2 |
 | 2026-11-14 | 随机输入测试 + UBSan：修复固定布局槽位未对齐访问、NaN/越界 double→int64；新增 docs/testing.md 与 CI 模板 | schema/tests/docs | P2.3 |
 | 2026-11-14 | app.cc 1140 行按职责拆 5 个 TU（run/inspect/selftest/monitor/common），纯移动、行为不变 | apps | P2.4 |
+| 2026-11-14 | 安装面：headers/生成头/schema 工具/pkg-config 安装；新增 oot_plugin_smoke 与 install-smoke 门禁（15/15） | build/docs | P1.1 B1 |

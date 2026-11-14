@@ -1,6 +1,6 @@
 # 插件 ABI 契约
 
-> 状态：第一阶段（可检查契约）已落地；共享运行时库为后续阶段。
+> 状态：第一阶段（可检查契约）与安装面（headers/pc/schema 工具）已落地；共享运行时库为下一阶段。
 > 适用对象：写 `modules/` 插件的人、需要分发预编译插件的人。
 
 ## 1. 当前模型
@@ -51,7 +51,11 @@ ABI 宏、`__cplusplus`、指针宽度、NDEBUG）。
 
 指纹是**发现混编**，不是 ABI 稳定性保证。
 
-## 5. 后续阶段
+## 5. 进展与后续阶段
+
+已完成：工具链指纹 + `doctor --deep` 校验；`meson install` 安装 headers、
+生成头、schema 工具与 `starletto.pc`；源码树外插件冒烟（`star check` 的
+`install-smoke`）。
 
 1. 抽出 `libstar_runtime.so`（core/schema/transport/runtime 的非模板部分），插件链接它；
 2. 插件入口改为 C ABI（函数表/`void*`），STL 类型留在库内；
