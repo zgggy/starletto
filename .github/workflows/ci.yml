@@ -18,7 +18,13 @@ jobs:
       - name: Unit tests
         run: ./star test
       - name: CI guard
-        run: ./star check --skip-build
+        shell: bash
+        run: |
+          set -o pipefail
+          ./star check --skip-build 2>&1 | tee /tmp/check.log || {
+            tail -60 /tmp/check.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
 
   ubsan:
     runs-on: ubuntu-24.04
@@ -36,7 +42,7 @@ jobs:
         run: meson test -C build-ubsan --print-errorlogs
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -61,4 +67,10 @@ jobs:
       - name: Build
         run: meson compile -C build-asan
       - name: Test
-        run: meson test -C build-asan --print-errorlogs
+        shell: bash
+        run: |
+          set -o pipefail
+          meson test -C build-asan --print-errorlogs 2>&1 | tee /tmp/asan.log || {
+            grep -E "FAIL|ERROR: AddressSanitizer|SUMMARY|LeakSanitizer|runtime error|Aborted" /tmp/asan.log | tail -20 | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          }
