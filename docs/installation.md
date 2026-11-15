@@ -90,8 +90,15 @@ tools/tests/oot_plugin_smoke.sh build
 
 ```bash
 ./star build                          # 同时构建 native_runner 与 native_runner_static
-./star run --static planning          # 静态 runner 跑内置模块
-# 或直接：build/apps/native_runner/native_runner_static <module.conf>
+./star run --static --frames=20 --sleep-ms=50 \
+  modules/setting/config/component.conf \
+  modules/setting/parameter/component.conf \
+  modules/perception/prediction/component.conf \
+  modules/localization/pose/component.conf \
+  modules/control/chassis/component.conf \
+  modules/planning/motion/component.conf \
+  modules/control/pid/component.conf
+# 或直接：build/apps/native_runner/native_runner_static <component.conf>...
 ```
 
 组件 conf 用 `static_link = true` 明确声明“必须已静态注册”；此时加载器

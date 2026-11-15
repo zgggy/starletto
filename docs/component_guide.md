@@ -471,7 +471,14 @@ static_component_static_libs += [motion_static_lib]
 时，宿主不会 dlopen；类未静态注册会启动失败并提示使用静态 runner。
 
 ```bash
-./star run --static planning
+./star run --static --frames=20 --sleep-ms=50 \
+  modules/setting/config/component.conf \
+  modules/setting/parameter/component.conf \
+  modules/perception/prediction/component.conf \
+  modules/localization/pose/component.conf \
+  modules/control/chassis/component.conf \
+  modules/planning/motion/component.conf \
+  modules/control/pid/component.conf
 ```
 
 静态 runner 的模块列表来自 `modules/meson.build` 的

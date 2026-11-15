@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -60,6 +61,7 @@ class NativeComponentHost final {
         register_plan_ports(plan);
         component->set_context(context_);
         component->set_load_plan(plan);
+        validate_declared_trigger_ports(*component, plan);
         components_.push_back(std::move(component));
         plans_.push_back(plan);
         component_failed_.push_back(false);
@@ -361,6 +363,7 @@ class NativeComponentHost final {
                 star::transport::ChannelDescriptor d;
                 d.name = channel;
                 d.type_name = port->type_name.value_or("");
+                star::runtime::plan::apply_port_options(*port, d);
                 auto reader = context_->message_bus().create_reader(d, [sync_trigger, channel](const star::transport::MessageView& message) {
                     sync_trigger->on_message(channel, message);
                 });
@@ -380,6 +383,7 @@ class NativeComponentHost final {
             star::transport::ChannelDescriptor d;
             d.name = port->channel.value_or("");
             d.type_name = port->type_name.value_or("");
+            star::runtime::plan::apply_port_options(*port, d);
             auto reader = context_->message_bus().create_reader(d, [this, task_name, reader_name](const star::transport::MessageView& message) {
                 const auto snapshot = star::runtime::snapshot_trigger_message(message);
                 if (not snapshot.has_value()) {
@@ -397,6 +401,43 @@ class NativeComponentHost final {
             if (reader) {
                 trigger_readers_.push_back(std::move(reader));
             }
+        }
+    }
+
+    static auto validate_declared_trigger_ports(const Component& component, const star::runtime::plan::ComponentLoadPlan& plan) -> void {
+        const auto declared = component.declared_trigger_ports();
+        if (declared.empty()) {
+            return;  // 普通 Component（timer 等）没有编译期 trigger 声明，不做此检查
+        }
+        auto planned = std::unordered_set<std::string_view>{};
+        if (plan.trigger.has_value() and plan.trigger->readers.has_value()) {
+            for (const auto& reader : *plan.trigger->readers) {
+                planned.insert(reader);
+            }
+        }
+        auto declared_set = std::unordered_set<std::string_view>{};
+        for (const auto port : declared) {
+            if (not declared_set.insert(port).second) {
+                throw star::excep::RuntimeError("duplicate declared trigger port: component=", plan.component_name, ", port=", port);
+            }
+        }
+        if (declared_set != planned) {
+            auto message = std::string("declared trigger ports mismatch: component=") + plan.component_name + ", cpp=[";
+            auto first = true;
+            for (const auto port : declared) {
+                if (not first) { message += ","; }
+                first = false;
+                message += port;
+            }
+            message += "], plan=[";
+            first = true;
+            for (const auto port : planned) {
+                if (not first) { message += ","; }
+                first = false;
+                message += port;
+            }
+            message += "]";
+            throw star::excep::RuntimeError(message);
         }
     }
 

@@ -60,6 +60,11 @@ class TypedComponent : public Component {
         return invoke_typed(raw, std::index_sequence_for<TriggerTypes...>{});
     }
 
+    auto declared_trigger_ports() const -> std::span<const std::string_view> final {
+        static constexpr std::array<std::string_view, sizeof...(TriggerTypes)> ports{TriggerTypes::name.view()...};
+        return ports;
+    }
+
   private:
     template <std::size_t... I>
     auto invoke_typed(const FrameInputs& raw, std::index_sequence<I...>) -> bool {

@@ -64,6 +64,9 @@ TEST_CASE("TypedComponent adapts FrameInputs into component-specific typed input
     raw.messages.emplace("left", make_message(11));
     raw.messages.emplace("right", make_message(22));
 
+    REQUIRE_EQ(probe.declared_trigger_ports().size(), 2U);
+    REQUIRE_EQ(probe.declared_trigger_ports()[0], std::string_view("left"));
+    REQUIRE_EQ(probe.declared_trigger_ports()[1], std::string_view("right"));
     REQUIRE(static_cast<star::runtime::Component&>(probe).process_once(raw));
     REQUIRE_EQ(probe.seen_left, 11);
     REQUIRE_EQ(probe.seen_right, 22);

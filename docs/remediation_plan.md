@@ -369,7 +369,7 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 35 套 216 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
+- 35 套 218 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
 - UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
 - Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用
@@ -404,7 +404,10 @@ flowchart LR
   触发它的那条消息；三路消息同帧进入 `FrameInputs`；
 - `TypedComponent<Derived, TriggerInput<T, "port">...>`：trigger 消息编译期解码后
   直接作为 `process_once(const auto&...)` 参数，类型只写一次，无 make_inputs/输入 struct；
-  motion/control 已迁移。
+  motion/control 已迁移；
+- trigger reader 与普通 reader 共用端口选项：decode_policy/QoS 不再被 trigger 路径漏掉；
+- plan 校验 trigger 类型白名单、reader 必须对应已声明 input 且不重复，未知/空 trigger
+  配置在启动期直接失败。
 
 ### `declare_*` 删除
 

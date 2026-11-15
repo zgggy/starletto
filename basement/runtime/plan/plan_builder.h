@@ -6,6 +6,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -292,14 +293,48 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
         const auto type = plan.trigger->type.value_or("");
         const auto has_readers = plan.trigger->readers.has_value() and not plan.trigger->readers->empty();
         const auto has_cycle = plan.trigger->cycle_ms.value_or(0) > 0;
+        if (type != "" and type != "timer" and type != "channel" and type != "sync_topic") {
+            throw star::excep::RuntimeError("unknown trigger type: ", type, ", component=", plan.component_name);
+        }
         if (type == "timer" and has_readers) {
             throw star::excep::RuntimeError("trigger type=timer must not declare readers: component=", plan.component_name);
         }
         if ((type == "channel" or type == "sync_topic") and has_cycle) {
             throw star::excep::RuntimeError("trigger type=", type, " must not declare cycle_ms: component=", plan.component_name);
         }
+        if (type == "timer" and not has_cycle) {
+            throw star::excep::RuntimeError("trigger type=timer requires cycle_ms>0: component=", plan.component_name);
+        }
+        if ((type == "channel" or type == "sync_topic") and not has_readers) {
+            throw star::excep::RuntimeError("trigger type=", type, " requires trigger.readers: component=", plan.component_name);
+        }
         if (type.empty() and has_cycle and has_readers) {
             throw star::excep::RuntimeError("ambiguous trigger: set type=timer or type=channel: component=", plan.component_name);
+        }
+        if (type.empty() and not has_cycle and not has_readers) {
+            throw star::excep::RuntimeError("component trigger declares neither cycle_ms nor readers: component=", plan.component_name);
+        }
+        if (has_readers) {
+            auto input_channels = std::unordered_map<std::string, std::string>{};
+            for (const auto& input : plan.inputs.value_or(std::vector<PortPlan>{})) {
+                input_channels.emplace(input.name, input.channel.value_or(""));
+            }
+            auto seen_ports = std::unordered_set<std::string>{};
+            auto seen_channels = std::unordered_set<std::string>{};
+            for (const auto& reader : *plan.trigger->readers) {
+                const auto input = input_channels.find(reader);
+                if (input == input_channels.end()) {
+                    throw star::excep::RuntimeError("trigger reader is not a declared input port: component=", plan.component_name, ", reader=", reader);
+                }
+                if (not seen_ports.insert(reader).second) {
+                    throw star::excep::RuntimeError("duplicate trigger reader: component=", plan.component_name, ", reader=", reader);
+                }
+                // SyncTrigger 以 channel 为键；两个 trigger 端口共用同一 channel 会互相覆盖，
+                // 导致 FrameInputs 缺少一个端口，必须视为装配错误。
+                if (not seen_channels.insert(input->second).second) {
+                    throw star::excep::RuntimeError("duplicate trigger channel: component=", plan.component_name, ", channel=", input->second);
+                }
+            }
         }
     }
     return plan;

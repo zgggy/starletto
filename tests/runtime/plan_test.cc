@@ -183,6 +183,72 @@ TEST_CASE("plan rejects a relative or dotted channel address") {
     REQUIRE(threw);
 }
 
+// trigger 的 reader 必须是已声明输入端口；类型也要在白名单内
+TEST_CASE("plan rejects invalid trigger readers and trigger types") {
+    using star::generated::manifest::component::ComponentConf;
+
+    const auto build = [](const std::string& text) {
+        const auto value = star::schema::SchemaParser{text}.parse();
+        const auto conf = ComponentConf::from_value(value);
+        auto ctx = star::runtime::plan::LoadContext{};
+        ctx.module_name = "planning";
+        return star::runtime::plan::build_component_load_plan(conf, ctx);
+    };
+
+    const auto expect_throw = [&build](const std::string& text) {
+        auto threw = false;
+        try {
+            (void)build(text);
+        } catch (const star::excep::RuntimeError&) {
+            threw = true;
+        }
+        return threw;
+    };
+
+    REQUIRE(expect_throw(
+        "component { name = x; type = planning; component_class = X } "
+        "trigger { type = channel readers [missing_reader] }"));
+    REQUIRE(expect_throw(
+        "component { name = x; type = planning; component_class = X } "
+        "trigger { type = not_a_trigger; cycle_ms = 10 }"));
+    REQUIRE(expect_throw(
+        "component { name = x; type = planning; component_class = X } "
+        "trigger { type = timer }"));
+    REQUIRE(expect_throw(
+        "component { name = x; type = planning; component_class = X } "
+        "trigger { type = channel }"));
+    REQUIRE(expect_throw(
+        "component { name = x; type = planning; component_class = X } "
+        "readers { a { channel = /test/a } b { channel = /test/a } } "
+        "trigger { type = channel readers [a, b] }"));
+}
+
+// trigger reader 与普通 reader 必须使用同一套端口 QoS/decode_policy
+TEST_CASE("port options apply qos and decode policy to channel descriptors") {
+    using star::generated::runtime::component_load_plan::DecodePolicyPlan;
+    using star::generated::runtime::component_load_plan::PortPlan;
+
+    auto port = PortPlan{};
+    port.name = "in";
+    port.channel = "/test/port/options";
+    port.qos_depth = int64_t{4};
+    port.qos_drop_policy = std::string("drop_newest");
+    auto policy = DecodePolicyPlan{};
+    policy.unknown = std::string("drop");
+    policy.missing = std::string("error");
+    policy.type_mismatch = std::string("best_effort");
+    port.decode_policy = std::move(policy);
+
+    auto descriptor = star::transport::ChannelDescriptor{};
+    star::runtime::plan::apply_port_options(port, descriptor);
+
+    REQUIRE_EQ(descriptor.options.depth, uint32_t{4});
+    REQUIRE(descriptor.options.drop_policy == star::transport::DropPolicy::DROP_NEWEST);
+    REQUIRE(descriptor.options.decode_policy.unknown == star::schema::UnknownFieldPolicy::kDrop);
+    REQUIRE(descriptor.options.decode_policy.missing == star::schema::MissingFieldPolicy::kError);
+    REQUIRE(descriptor.options.decode_policy.type_mismatch == star::schema::TypeMismatchPolicy::kBestEffort);
+}
+
 // P2.1：conf 未知键必须报错；此前拼错 readers 会静默不订阅
 TEST_CASE("component.conf rejects unknown keys but allows opaque parameters") {
     char path[96]{};

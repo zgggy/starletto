@@ -8,10 +8,10 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -19,6 +19,7 @@
 #include "basement/core/logger/logger.h"
 #include "basement/runtime/context/frame_context.h"
 #include "basement/runtime/component/frame_inputs.h"
+#include "basement/runtime/plan/port_options.h"
 #include "basement/runtime/context/runtime_context.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/transport/api/message_bus.h"
@@ -33,6 +34,10 @@ class Component {
 
     virtual void init() {}
     virtual auto process_once(const FrameInputs&) -> bool { return true; }
+
+    // TypedComponent 用它声明编译期 trigger 端口；宿主在装配时和 plan 对比，
+    // C++ 端口名写错时启动即报错，而不是第一帧才 missing trigger。
+    virtual auto declared_trigger_ports() const -> std::span<const std::string_view> { return {}; }
     virtual void shutdown() {}
 
     void set_context(std::shared_ptr<RuntimeContext> context) { context_ = std::move(context); }
@@ -120,16 +125,7 @@ class Component {
                 auto d = star::transport::ChannelDescriptor{};
                 d.name = e.channel.value_or(e.name);
                 d.type_name = e.type_name.value_or("");
-                if (e.has_qos_depth()) {
-                    d.options.depth = static_cast<uint32_t>(e.qos_depth.value());
-                }
-                if (e.has_qos_drop_policy()) {
-                    const auto& policy_str = e.qos_drop_policy.value();
-                    if (policy_str == "drop_newest") {
-                        d.options.drop_policy = star::transport::DropPolicy::DROP_NEWEST;
-                    }
-                }
-                d.options.decode_policy = decode_policy_for(e);
+                star::runtime::plan::apply_port_options(e, d);
                 auto port_name = e.name;
                 auto reader = bus.create_reader(d, [this, port_name](const star::transport::MessageView& msg) {
                     std::lock_guard<std::mutex> lock(*latest_mutex_);
@@ -143,7 +139,7 @@ class Component {
                 auto d = star::transport::ChannelDescriptor{};
                 d.name = e.channel.value_or(e.name);
                 d.type_name = e.type_name.value_or("");
-                d.options.decode_policy = decode_policy_for(e);
+                star::runtime::plan::apply_port_options(e, d);
                 writers_[e.name] = bus.create_writer(d);
                 if (e.record.value_or(false)) {
                     if (auto* recordable = context_->recordable_bus()) {
@@ -157,7 +153,6 @@ class Component {
                         latest_messages_[port_name] = msg;
                     });
                     readers_[e.name] = std::move(bidi_reader);
-                    bidirectional_channels_.insert(e.name);
                 }
             }
         }
@@ -344,74 +339,6 @@ class Component {
         return star::transport::SerializedServiceResponse{response, {}};
     }
 
-    auto resolve_channel(const std::string& port_name, bool is_reader) const -> std::string {
-        if (const auto* plan = load_plan()) {
-            const auto& endpoints = is_reader ? plan->inputs : plan->outputs;
-            if (endpoints.has_value()) {
-                for (const auto& e : *endpoints) {
-                    if (e.name == port_name && e.channel.has_value() && !e.channel->empty()) {
-                        return *e.channel;
-                    }
-                }
-            }
-        }
-        return port_name;
-    }
-
-    template <typename _Msg>
-    auto resolve_type_name(const std::string& port_name, bool is_reader) const -> std::string {
-        if (const auto* plan = load_plan()) {
-            const auto& endpoints = is_reader ? plan->inputs : plan->outputs;
-            if (endpoints.has_value()) {
-                for (const auto& e : *endpoints) {
-                    if (e.name == port_name && e.type_name.has_value() && !e.type_name->empty()) {
-                        return *e.type_name;
-                    }
-                }
-            }
-        }
-        return "";
-    }
-
-    // 端口策略来自 component.conf 的 decode_policy 块（经 plan 传下来）。
-    // 取值非法属于装配错误，直接抛异常并带上通道名——静默退回默认会让线上行为不可解释。
-    static auto decode_policy_for(const star::generated::runtime::component_load_plan::PortPlan& endpoint)
-        -> star::schema::DecodePolicy {
-        auto policy = star::schema::DecodePolicy{};
-        if (not endpoint.decode_policy.has_value()) {
-            return policy;
-        }
-        const auto& conf = *endpoint.decode_policy;
-        const auto unknown = conf.unknown.value_or("");
-        const auto missing = conf.missing.value_or("");
-        const auto mismatch = conf.type_mismatch.value_or("");
-        if (not star::schema::parse_decode_policy(unknown, missing, mismatch, &policy)) {
-            throw star::excep::RuntimeError("component decode_policy invalid: channel=",
-                                            endpoint.channel.value_or(endpoint.name),
-                                            ", unknown=",
-                                            unknown,
-                                            ", missing=",
-                                            missing,
-                                            ", type_mismatch=",
-                                            mismatch);
-        }
-        return policy;
-    }
-
-    auto resolve_decode_policy(const std::string& port_name, bool is_reader) const -> star::schema::DecodePolicy {
-        if (const auto* plan = load_plan()) {
-            const auto& endpoints = is_reader ? plan->inputs : plan->outputs;
-            if (endpoints.has_value()) {
-                for (const auto& e : *endpoints) {
-                    if (e.name == port_name) {
-                        return decode_policy_for(e);
-                    }
-                }
-            }
-        }
-        return star::schema::DecodePolicy{};
-    }
-
     template <typename _Snapshot, typename _Target>
     auto decode_snapshot_entry(const std::shared_ptr<const _Snapshot>& snap, const std::string& key, const std::string& expected_schema) const -> std::optional<_Target> {
         if (not snap) {
@@ -573,7 +500,6 @@ class Component {
     std::optional<star::generated::runtime::component_load_plan::ComponentLoadPlan> plan_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::Reader>> readers_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::Writer>> writers_;
-    std::unordered_set<std::string> bidirectional_channels_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::RpcClient>> service_clients_;
     std::unordered_map<std::string, std::shared_ptr<star::transport::RpcServer>> service_servers_;
     std::shared_ptr<std::mutex> latest_mutex_;

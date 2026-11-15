@@ -58,3 +58,4 @@
 | 2026-11-15 | trigger 消息随 `process_once(FrameInputs)` 传入：trigger 端口不再建 latest 缓存；普通输入仍 `read_latest`；SyncTrigger 快照三路消息保证同帧 | runtime/transport/modules/tests/docs | 输入语义收敛 |
 | 2026-11-15 | 新增 `TypedComponent<Derived, Inputs>`：框架仍只调 `process_once(FrameInputs)`，组件用 `make_inputs()` 把 trigger 消息映射成自有类型化参数；motion/control 迁移 | runtime/modules/tests/docs | 输入 API |
 | 2026-11-15 | TypedComponent 终版：TriggerInput<T,"port"> + `const auto&` 参数，去掉 make_inputs/输入 struct/类内 using；motion/control 迁移 | runtime/modules/tests/docs | 输入 API |
+| 2026-11-15 | trigger reader 统一套用端口 QoS/decode_policy；plan 校验 trigger 类型白名单、reader 必须存在且不重复 | runtime/plan/docs/tests | 装配期诊断 |

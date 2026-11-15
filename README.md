@@ -17,7 +17,7 @@ basement/    运行时底座（自底向上）
              └── runtime   组件模型 / 调度 / 插件 / 进程编排 / 健康与观测
 libraries/   算法与通用库（禁止依赖 transport/runtime）
              element（领域类型）/ method（规划算法）/ machine（行为树）/ common / tool
-modules/     业务组件（setting / planning / control）
+modules/     业务组件（setting / perception / localization / planning / control）
 apps/        宿主程序与工具（native_runner 及各 demo/工具）
 data/        标定与地图数据
 ```
@@ -81,11 +81,8 @@ data/        标定与地图数据
 ./star build --reconfigure
 ./star build --build-dir=build
 
-# 运行 native runner（单进程装配 module.conf / component.conf）
-./star run planning
-
-# 车上静态装配（内置模块已编入，不 dlopen）
-./star run --static planning
+# planning 的 trigger 需要三路输入；用下面的假上游闭环运行。
+# 车上静态装配：同一命令加 --static。
 
 # 假上游联调：三个 stub 节点驱动 planning + control 闭环
 ./star run --frames=20 --sleep-ms=50 \
