@@ -27,7 +27,7 @@ inline constexpr const char* kHealthChannelName = "/starletto/health";
 
 // 把 HealthChecker 从「只有单测」变成运行时能力：
 // 周期评估每个组件（频率 + 资源），严重度变化时写日志，并把报告发布到普通通道
-// starletto.health，供 monitor / 录制 / 外部工具消费。
+// /starletto/health，供 monitor / 录制 / 外部工具消费。
 class HealthMonitor final {
   public:
     struct Rule {

@@ -1,4 +1,4 @@
-# 观测 schema：worker 周期发布到 starletto.stats 普通通道，monitor 作为普通订阅者读取
+# 观测 schema：worker 周期发布到 /starletto/stats 普通通道，monitor 作为普通订阅者读取
 schema_gen_basement_schema_builtin_observability = custom_target(
     'gen_basement_schema_builtin_observability',
     input: files('worker_stats.schema', 'worker_health.schema'),

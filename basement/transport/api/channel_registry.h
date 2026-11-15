@@ -40,7 +40,7 @@ public:
         shm_sub_channels_ = parse_channel_set(shm_sub_channels_csv);
     }
 
-    // 系统通道（如 starletto.stats）：不在业务路由计划里，但必须走 shm，
+    // 系统通道（如 /starletto/stats）：不在业务路由计划里，但必须走 shm，
     // 否则其它进程（monitor）看不到。生产者显式登记，路由模式覆盖为 SHM_WRITE。
     void register_system_publisher(const std::string& channel) {
         if (channel.empty()) {
