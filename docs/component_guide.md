@@ -366,6 +366,51 @@ class MotionComponent : public star::runtime::Component {
 所以普通 `write()` 产生的帧不能被 View 读取。等 per-channel `encoding=fixed`
 配置落地后再在业务中使用；现在请用 `read_latest<T>`。
 
+### 2.4.1 类型化 `process_once`（推荐）
+
+trigger 消息可以直接变成组件自己的参数结构，业务方法里不再写
+`trigger_input<T>(inputs, "port")`：
+
+```cpp
+struct MotionTriggerInputs {
+    std::shared_ptr<const Prediction> prediction;
+    std::shared_ptr<const Pose> localization;
+    std::shared_ptr<const Chassis> chassis;
+};
+
+class MotionComponent final
+    : public star::runtime::TypedComponent<MotionComponent, MotionTriggerInputs> {
+  public:
+    using Base = star::runtime::TypedComponent<MotionComponent, MotionTriggerInputs>;
+    using Base::process_once;
+
+    // 端口名 → 类型的映射只写这一次
+    auto make_inputs(const star::runtime::FrameInputs& raw) -> MotionTriggerInputs {
+        return {
+            trigger_input<Prediction>(raw, "prediction"),
+            trigger_input<Pose>(raw, "localization"),
+            trigger_input<Chassis>(raw, "chassis"),
+        };
+    }
+
+    // 业务方法：参数就是三个 trigger 的类型化视图
+    auto process_once(const MotionTriggerInputs& inputs) -> bool {
+        auto input = MotionInput{};
+        if (inputs.localization) { input.vehicle_x = inputs.localization->x; /* ... */ }
+        if (inputs.chassis) { input.vehicle_velocity = inputs.chassis->speed; }
+        write("trajectory", processor_.process(input));
+        return true;
+    }
+};
+```
+
+- 框架边界仍只有一个虚函数 `process_once(const FrameInputs&)`；
+  `TypedComponent` 是 CRTP 适配层，注册/调度/插件加载都不变；
+- 每个组件的业务 `process_once` 参数可以不同，这是有意设计的；
+- timer 组件不需要 trigger 输入，继续直接继承 `Component` 写
+  `process_once(const FrameInputs&)` 即可；
+- 非 trigger 输入仍然 `read_latest<T>()`。
+
 ### 2.5 `*_processor.h` —— 纯算法（算法工程师的主战场）
 
 ```cpp

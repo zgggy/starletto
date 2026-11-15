@@ -369,7 +369,7 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 34 套 214 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
+- 35 套 216 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
 - UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
 - Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用
@@ -401,7 +401,9 @@ flowchart LR
 - trigger 端口不再由 `auto_configure()` 建 latest 缓存，避免“触发帧”和“最新值”混用；
 - 非 trigger 输入（参数/配置快照）继续 `read_latest<T>()`；
 - SyncTrigger 在触发线程上把 shm 载荷拷成不可变快照，保证 process_once 看到的就是
-  触发它的那条消息；三路消息同帧进入 `FrameInputs`。
+  触发它的那条消息；三路消息同帧进入 `FrameInputs`；
+- `TypedComponent<Derived, Inputs>`：组件用 `make_inputs()` 一次性把 trigger 消息
+  映射成自有类型化参数，业务 `process_once` 不再写模板+字符串取值；motion/control 已迁移。
 
 ### `declare_*` 删除
 

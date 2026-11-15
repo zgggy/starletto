@@ -56,3 +56,4 @@
 | 2026-11-14 | CI 增加 Coverage job（Meson coverage + 最新 gcovr）与 testing.md 覆盖率/required checks 说明 | .github/docs | 工程门禁 |
 | 2026-11-15 | 通道地址统一为绝对路径 `/...`（生产者在前），schema/组件逻辑 ID 用点；服务通道 `<service>/request|response`；list/graph 组件 ID 用 `module.component`；plan 校验拒绝非 `/` 通道 | transport/runtime/apps/modules/docs/tests | 命名终态 |
 | 2026-11-15 | trigger 消息随 `process_once(FrameInputs)` 传入：trigger 端口不再建 latest 缓存；普通输入仍 `read_latest`；SyncTrigger 快照三路消息保证同帧 | runtime/transport/modules/tests/docs | 输入语义收敛 |
+| 2026-11-15 | 新增 `TypedComponent<Derived, Inputs>`：框架仍只调 `process_once(FrameInputs)`，组件用 `make_inputs()` 把 trigger 消息映射成自有类型化参数；motion/control 迁移 | runtime/modules/tests/docs | 输入 API |

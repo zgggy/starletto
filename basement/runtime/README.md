@@ -21,7 +21,8 @@
 2. host 构造 `ComponentLoadPlan`，设置 context/plan；
 3. `auto_configure()` 建好 reader/writer/service；
 4. `init()` 只做非端口初始化；
-5. 调度器调用 `process_once()`，组件用 `read_latest<T>()` / `write()`。
+5. 调度器调用 `process_once(inputs)`：trigger 消息随 `FrameInputs` 传入，
+   可用 `TypedComponent<Derived, Inputs>` 转成组件自有参数；非 trigger 用 `read_latest<T>()` / `write()`。
 
 没有 `declare_reader/writer`，也没有第二套端口创建路径。
 

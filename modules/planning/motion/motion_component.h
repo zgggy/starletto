@@ -6,6 +6,7 @@
 #include "basement/core/logger/logger.h"
 #include "basement/runtime/component/component.h"
 #include "basement/runtime/component/component_registry.h"
+#include "basement/runtime/component/typed_component.h"
 #include "modules/planning/motion/motion_processor.h"
 #include "modules/setting/schema/control/chassis.s.h"
 #include "modules/setting/schema/localization/pose.s.h"
@@ -14,26 +15,43 @@
 
 namespace star::planning {
 
-class MotionComponent : public star::runtime::Component {
+struct MotionTriggerInputs {
+    std::shared_ptr<const star::perception::prediction::Prediction> prediction;
+    std::shared_ptr<const star::localization::pose::Pose> localization;
+    std::shared_ptr<const star::control::chassis::Chassis> chassis;
+};
+
+class MotionComponent final : public star::runtime::TypedComponent<MotionComponent, MotionTriggerInputs> {
   public:
-    auto process_once(const star::runtime::FrameInputs& inputs) -> bool override {
+    using Base = star::runtime::TypedComponent<MotionComponent, MotionTriggerInputs>;
+    using Base::process_once;
+
+    auto make_inputs(const star::runtime::FrameInputs& raw) -> MotionTriggerInputs {
+        return {
+            trigger_input<star::perception::prediction::Prediction>(raw, "prediction"),
+            trigger_input<star::localization::pose::Pose>(raw, "localization"),
+            trigger_input<star::control::chassis::Chassis>(raw, "chassis"),
+        };
+    }
+
+    auto process_once(const MotionTriggerInputs& inputs) -> bool {
         const auto& frame = context()->current_frame();
         if (frame.frame_id > 0) {
             logI << "MotionComponent processing frame=" << frame.frame_id;
         }
         auto input = MotionInput{};
-        if (auto pose = trigger_input<star::localization::pose::Pose>(inputs, "localization")) {
-            input.vehicle_x = pose->x;
-            input.vehicle_y = pose->y;
-            input.vehicle_heading = pose->heading;
-            input.vehicle_velocity = pose->linear_velocity;
+        if (inputs.localization) {
+            input.vehicle_x = inputs.localization->x;
+            input.vehicle_y = inputs.localization->y;
+            input.vehicle_heading = inputs.localization->heading;
+            input.vehicle_velocity = inputs.localization->linear_velocity;
         }
-        if (auto chassis = trigger_input<star::control::chassis::Chassis>(inputs, "chassis")) {
+        if (inputs.chassis) {
             // 底盘反馈优先于定位里的速度
-            input.vehicle_velocity = chassis->speed;
+            input.vehicle_velocity = inputs.chassis->speed;
         }
-        if (auto prediction = trigger_input<star::perception::prediction::Prediction>(inputs, "prediction")) {
-            logD << "MotionComponent inputs: predicted_objects=" << prediction->objects.size() << ", v=" << input.vehicle_velocity;
+        if (inputs.prediction) {
+            logD << "MotionComponent inputs: predicted_objects=" << inputs.prediction->objects.size() << ", v=" << input.vehicle_velocity;
         }
         auto output = processor_.process(input);
         if (not output.points.empty()) {

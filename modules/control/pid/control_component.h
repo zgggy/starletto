@@ -8,24 +8,36 @@
 
 #include "basement/core/logger/logger.h"
 #include "basement/runtime/component/component.h"
+#include "basement/runtime/component/typed_component.h"
 #include "modules/control/pid/pid_controller.h"
 #include "modules/setting/schema/control/command.s.h"
 #include "modules/setting/schema/planning/trajectory.s.h"
 
 namespace star::control {
 
-class ControlComponent : public star::runtime::Component {
+struct ControlTriggerInputs {
+    std::shared_ptr<const star::setting::planning::TrajectoryOutput> planning_trajectory;
+};
+
+class ControlComponent final : public star::runtime::TypedComponent<ControlComponent, ControlTriggerInputs> {
   public:
+    using Base = star::runtime::TypedComponent<ControlComponent, ControlTriggerInputs>;
+    using Base::process_once;
+
     void init() override { logI << "ControlComponent initialized, reading from planning.trajectory, writing control.command"; }
 
-    auto process_once(const star::runtime::FrameInputs& inputs) -> bool override {
+    auto make_inputs(const star::runtime::FrameInputs& raw) -> ControlTriggerInputs {
+        return {trigger_input<star::setting::planning::TrajectoryOutput>(raw, "planning_trajectory")};
+    }
+
+    auto process_once(const ControlTriggerInputs& inputs) -> bool {
         const auto& frame = context()->current_frame();
         if (frame.frame_id > 0) {
             logI << "ControlComponent processing frame=" << frame.frame_id;
         }
-        // 轨迹是 trigger 输入：随本次 FrameInputs 到达，不再走 latest 缓存
-        if (auto traj = trigger_input<star::setting::planning::TrajectoryOutput>(inputs, "planning_trajectory")) {
-            latest_trajectory_ = std::move(traj);
+        // 轨迹是 trigger 输入：随本次 typed 参数到达，不再走 latest 缓存
+        if (inputs.planning_trajectory) {
+            latest_trajectory_ = inputs.planning_trajectory;
         }
         if (not latest_trajectory_) {
             return true;
