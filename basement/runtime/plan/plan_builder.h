@@ -288,6 +288,20 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
     if (plan.health.has_value() and plan.health->channel.has_value()) {
         validate_channel_address(*plan.health->channel, "health.channel");
     }
+    if (plan.trigger.has_value()) {
+        const auto type = plan.trigger->type.value_or("");
+        const auto has_readers = plan.trigger->readers.has_value() and not plan.trigger->readers->empty();
+        const auto has_cycle = plan.trigger->cycle_ms.value_or(0) > 0;
+        if (type == "timer" and has_readers) {
+            throw star::excep::RuntimeError("trigger type=timer must not declare readers: component=", plan.component_name);
+        }
+        if ((type == "channel" or type == "sync_topic") and has_cycle) {
+            throw star::excep::RuntimeError("trigger type=", type, " must not declare cycle_ms: component=", plan.component_name);
+        }
+        if (type.empty() and has_cycle and has_readers) {
+            throw star::excep::RuntimeError("ambiguous trigger: set type=timer or type=channel: component=", plan.component_name);
+        }
+    }
     return plan;
 }
 

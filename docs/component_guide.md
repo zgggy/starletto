@@ -122,12 +122,24 @@ component {
 }
 
 trigger {                          # 什么时候调 process_once
-    readers [parameter_snapshot, config_snapshot]   # SyncTrigger：两路到齐才跑
-    cycle_ms = 100
+    type = channel                 # timer | channel | sync_topic
+    readers [prediction, localization, chassis]   # 三路到齐才跑
 }
 
 readers {                          # 订阅的通道；键名 = 代码里的端口名
-    parameter_snapshot {
+    prediction {
+        channel = /perception/prediction
+        type = star::perception::prediction::Prediction
+    }
+    localization {
+        channel = /localization/pose
+        type = star::localization::pose::Pose
+    }
+    chassis {
+        channel = /control/chassis
+        type = star::control::chassis::Chassis
+    }
+    parameter_snapshot {           # 非 trigger：read_latest 读取
         channel = /setting/parameter/snapshot
         type = star::generated::setting::parameter::snapshot::ParameterSnapshot
     }
@@ -146,11 +158,18 @@ writers {                          # 发布的通道
 }
 ```
 
+Trigger 规则（plan 会校验）：
+
+- `type=timer`：只允许 `cycle_ms`，不能声明 `trigger.readers`；
+- `type=channel`：`readers` 至少一路；多路时按 SyncTrigger 等全部到齐；
+- `type=sync_topic`：显式多路同步，等价于多 reader 的 channel；
+- trigger 端口的消息随 `process_once(inputs)` 传入；非 trigger 端口才用 `read_latest`。
+
 **三个必须一致的地方**（当前靠人肉保证，见第 4 节）：
 
 1. `component_library` = meson 里 `shared_library('motion', ...)` 的产物名
 2. `component_class` = `register_native_components` 里注册的字符串
-3. `readers/writers` 的**键名** = 代码里 `read_latest("...")` / `write("...", ...)` 的字符串
+3. `readers/writers` 的**键名** = 代码里 `trigger_input(..., "...")` / `read_latest("...")` / `write("...", ...)` 的字符串
 
 #### 跨版本通信：`decode_policy`（可选）
 

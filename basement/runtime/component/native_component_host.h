@@ -291,11 +291,12 @@ class NativeComponentHost final {
                 continue;
             }
 
-            const auto is_timer_trigger = p.trigger.has_value() && (p.trigger->type.value_or("") == "timer" || (p.trigger->type.value_or("").empty() && p.trigger->cycle_ms.value_or(0) > 0));
-            const auto is_channel_trigger =
-                p.trigger.has_value() && (p.trigger->type.value_or("") == "channel" || (p.trigger->type.value_or("").empty() && p.trigger->readers.has_value() && !p.trigger->readers->empty()));
-            const auto is_sync_channel_trigger = p.trigger.has_value() && (p.trigger->type.value_or("") == "sync_topic" ||
-                                                                           (p.trigger->type.value_or("") == "channel" && p.trigger->readers.has_value() && p.trigger->readers->size() > 1));
+            const auto trigger_type = p.trigger.has_value() ? p.trigger->type.value_or("") : std::string{};
+            const auto has_readers = p.trigger.has_value() && p.trigger->readers.has_value() && not p.trigger->readers->empty();
+            const auto is_timer_trigger = p.trigger.has_value() && (trigger_type == "timer" || (trigger_type.empty() && p.trigger->cycle_ms.value_or(0) > 0));
+            const auto is_channel_trigger = p.trigger.has_value() && (trigger_type == "channel" || trigger_type == "sync_topic" || (trigger_type.empty() && has_readers));
+            const auto is_sync_channel_trigger = p.trigger.has_value() && (trigger_type == "sync_topic" ||
+                                                                           (trigger_type == "channel" && has_readers && p.trigger->readers->size() > 1));
 
             star::runtime::TaskDescriptor desc;
             desc.name = task_name;
