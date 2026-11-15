@@ -1,30 +1,82 @@
 #ifndef __STAR_RUNTIME_COMPONENT_TYPED_COMPONENT_H__
 #define __STAR_RUNTIME_COMPONENT_TYPED_COMPONENT_H__
 
+#include <array>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <tuple>
+#include <utility>
+
 #include "basement/runtime/component/component.h"
 
 namespace star::runtime {
 
-// 框架边界仍是唯一的 process_once(FrameInputs)；这里把「trigger 消息 → 组件自己的
-// 类型化输入结构」的转换收敛到组件侧的一次 make_inputs()，业务方法就不必再写
-// trigger_input<T>(inputs, "port") 这种模板+字符串取值。
+// 编译期字符串，作为 TriggerInput 的端口名模板参数。
+template <std::size_t N>
+struct FixedString {
+    char value[N]{};
+
+    constexpr FixedString(const char (&text)[N]) {
+        for (std::size_t i = 0; i < N; ++i) {
+            value[i] = text[i];
+        }
+    }
+
+    constexpr auto view() const -> std::string_view { return std::string_view{value, N - 1}; }
+};
+
+template <std::size_t N>
+FixedString(const char (&)[N]) -> FixedString<N>;
+
+// TriggerInput：一个 trigger 端口 + 它的消息类型。
+// 端口名是编译期常量，类型只写这一处；业务 process_once 用 const auto& 参数。
+template <typename T, FixedString Name>
+struct TriggerInput {
+    using type = T;
+    static constexpr auto name = Name;
+};
+
+// 框架边界仍是唯一的 Component::process_once(FrameInputs)；这里把 TriggerInput...
+// 逐个解码成 typed 参数，再调用派生类自己的 process_once(const auto&...)。
 //
 // 用法：
-//   struct MotionInputs { std::shared_ptr<const Prediction> prediction; ... };
-//   class Motion final : public TypedComponent<Motion, MotionInputs> {
+//   class Motion final : public TypedComponent<
+//       Motion,
+//       TriggerInput<Prediction, "prediction">,
+//       TriggerInput<Pose, "localization">,
+//       TriggerInput<Chassis, "chassis">> {
 //     public:
-//       auto make_inputs(const FrameInputs& raw) -> MotionInputs;
-//       auto process_once(const MotionInputs& inputs) -> bool;
+//       auto process_once(const auto& prediction, const auto& pose,
+//                         const auto& chassis) -> bool;
 //   };
-//
-// 组件之间的 process_once 参数可以不同；宿主/调度器只看到 Component 虚函数，
-// 适配由 TypedComponent 完成。
-template <typename _Derived, typename _Inputs>
+template <typename Derived, typename... TriggerTypes>
 class TypedComponent : public Component {
+    static_assert(sizeof...(TriggerTypes) > 0, "TypedComponent requires at least one TriggerInput");
+
   public:
     auto process_once(const FrameInputs& raw) -> bool final {
-        auto* self = static_cast<_Derived*>(this);
-        return self->process_once(self->make_inputs(raw));
+        return invoke_typed(raw, std::index_sequence_for<TriggerTypes...>{});
+    }
+
+  private:
+    template <std::size_t... I>
+    auto invoke_typed(const FrameInputs& raw, std::index_sequence<I...>) -> bool {
+        auto messages = std::tuple{decode_one<TriggerTypes>(raw)...};
+        constexpr std::array<std::string_view, sizeof...(I)> ports{TriggerTypes::name.view()...};
+
+        auto missing = std::string{};
+        ((std::get<I>(messages) ? (void)0 : (void)(missing = std::string(ports[I]))), ...);
+        if (not missing.empty()) {
+            throw star::excep::RuntimeError("TypedComponent: missing trigger message for port=", missing);
+        }
+        return static_cast<Derived*>(this)->process_once(*std::get<I>(messages)...);
+    }
+
+    template <typename TriggerT>
+    auto decode_one(const FrameInputs& raw) -> std::shared_ptr<const typename TriggerT::type> {
+        return this->template trigger_input<typename TriggerT::type>(raw, TriggerT::name.view());
     }
 };
 

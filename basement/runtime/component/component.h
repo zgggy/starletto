@@ -316,7 +316,7 @@ class Component {
 
   protected:
     template <typename _Msg>
-    auto trigger_input(const FrameInputs& inputs, const std::string& port_name) -> std::shared_ptr<const _Msg> {
+    auto trigger_input(const FrameInputs& inputs, std::string_view port_name) -> std::shared_ptr<const _Msg> {
         const auto* view = inputs.find(port_name);
         if (view == nullptr) {
             return nullptr;

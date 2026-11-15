@@ -30,23 +30,14 @@ struct TestMsg {
     }
 };
 
-struct ProbeInputs {
-    std::shared_ptr<const TestMsg> left;
-    std::shared_ptr<const TestMsg> right;
-};
-
-class TypedProbe final : public star::runtime::TypedComponent<TypedProbe, ProbeInputs> {
+class TypedProbe final
+    : public star::runtime::TypedComponent<TypedProbe,
+          star::runtime::TriggerInput<TestMsg, "left">,
+          star::runtime::TriggerInput<TestMsg, "right">> {
   public:
-    using Base = star::runtime::TypedComponent<TypedProbe, ProbeInputs>;
-    using Base::process_once;
-
-    auto make_inputs(const star::runtime::FrameInputs& raw) -> ProbeInputs {
-        return {trigger_input<TestMsg>(raw, "left"), trigger_input<TestMsg>(raw, "right")};
-    }
-
-    auto process_once(const ProbeInputs& inputs) -> bool {
-        seen_left = inputs.left ? inputs.left->value : -1;
-        seen_right = inputs.right ? inputs.right->value : -1;
+    auto process_once(const auto& left, const auto& right) -> bool {
+        seen_left = left.value;
+        seen_right = right.value;
         return true;
     }
 
@@ -73,17 +64,23 @@ TEST_CASE("TypedComponent adapts FrameInputs into component-specific typed input
     raw.messages.emplace("left", make_message(11));
     raw.messages.emplace("right", make_message(22));
 
-    REQUIRE(probe.process_once(raw));
+    REQUIRE(static_cast<star::runtime::Component&>(probe).process_once(raw));
     REQUIRE_EQ(probe.seen_left, 11);
     REQUIRE_EQ(probe.seen_right, 22);
 }
 
-TEST_CASE("TypedComponent leaves missing trigger inputs null") {
+TEST_CASE("TypedComponent rejects a missing trigger message") {
     auto probe = TypedProbe{};
     auto raw = star::runtime::FrameInputs{};
     raw.messages.emplace("left", make_message(11));
 
-    REQUIRE(probe.process_once(raw));
-    REQUIRE_EQ(probe.seen_left, 11);
+    auto threw = false;
+    try {
+        (void)static_cast<star::runtime::Component&>(probe).process_once(raw);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
+    REQUIRE_EQ(probe.seen_left, -1);
     REQUIRE_EQ(probe.seen_right, -1);
 }

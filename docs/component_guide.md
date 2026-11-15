@@ -368,47 +368,40 @@ class MotionComponent : public star::runtime::Component {
 
 ### 2.4.1 类型化 `process_once`（推荐）
 
-trigger 消息可以直接变成组件自己的参数结构，业务方法里不再写
-`trigger_input<T>(inputs, "port")`：
+trigger 消息直接作为业务参数，不需要 `make_inputs`、输入 struct 或类内 `using`：
 
 ```cpp
-struct MotionTriggerInputs {
-    std::shared_ptr<const Prediction> prediction;
-    std::shared_ptr<const Pose> localization;
-    std::shared_ptr<const Chassis> chassis;
-};
-
 class MotionComponent final
-    : public star::runtime::TypedComponent<MotionComponent, MotionTriggerInputs> {
+    : public star::runtime::TypedComponent<
+          MotionComponent,
+          star::runtime::TriggerInput<Prediction, "prediction">,
+          star::runtime::TriggerInput<Pose, "localization">,
+          star::runtime::TriggerInput<Chassis, "chassis">> {
   public:
-    using Base = star::runtime::TypedComponent<MotionComponent, MotionTriggerInputs>;
-    using Base::process_once;
-
-    // 端口名 → 类型的映射只写这一次
-    auto make_inputs(const star::runtime::FrameInputs& raw) -> MotionTriggerInputs {
-        return {
-            trigger_input<Prediction>(raw, "prediction"),
-            trigger_input<Pose>(raw, "localization"),
-            trigger_input<Chassis>(raw, "chassis"),
-        };
-    }
-
-    // 业务方法：参数就是三个 trigger 的类型化视图
-    auto process_once(const MotionTriggerInputs& inputs) -> bool {
+    auto process_once(const auto& prediction,
+                      const auto& pose,
+                      const auto& chassis) -> bool {
         auto input = MotionInput{};
-        if (inputs.localization) { input.vehicle_x = inputs.localization->x; /* ... */ }
-        if (inputs.chassis) { input.vehicle_velocity = inputs.chassis->speed; }
+        input.vehicle_x = pose.x;
+        input.vehicle_y = pose.y;
+        input.vehicle_heading = pose.heading;
+        input.vehicle_velocity = chassis.speed;
         write("trajectory", processor_.process(input));
         return true;
     }
 };
 ```
 
+- `TriggerInput<T, "port">` 同时声明消息类型和端口名，类型只写一次；
+- `const auto&` 是 abbreviated function template；框架按 TriggerInput 的类型/顺序
+  解码并传入，业务里没有 `trigger_input<T>(...)`、没有字符串查表；
 - 框架边界仍只有一个虚函数 `process_once(const FrameInputs&)`；
-  `TypedComponent` 是 CRTP 适配层，注册/调度/插件加载都不变；
+  TypedComponent 是 header-only CRTP 适配器，注册/调度/插件加载都不变；
+- 不需要 `using Base::process_once`；如果用**显式类型参数**而不是 `auto`，
+  那个 `using` 只是用来消除 `-Woverloaded-virtual` 警告；
 - 每个组件的业务 `process_once` 参数可以不同，这是有意设计的；
-- timer 组件不需要 trigger 输入，继续直接继承 `Component` 写
-  `process_once(const FrameInputs&)` 即可；
+- timer 组件不需要 trigger 输入，继续直接继承 `Component`，写
+  `process_once(const FrameInputs&)`；
 - 非 trigger 输入仍然 `read_latest<T>()`。
 
 ### 2.5 `*_processor.h` —— 纯算法（算法工程师的主战场）

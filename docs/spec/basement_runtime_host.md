@@ -134,10 +134,11 @@ class ControlComponent final : public star::runtime::Component {
 
 ### 7.2.1 类型化输入（可选，推荐）
 
-`TypedComponent<Derived, Inputs>` 把 `FrameInputs` 适配成组件自己的输入结构；
+`TypedComponent<Derived, TriggerInput<T, "port">...>` 在编译期把 trigger 消息
+解码成 typed 引用，直接传给组件的 `process_once(const auto&...)`；
 框架仍然只调用唯一的 `process_once(FrameInputs)`，组件业务方法可以有不同参数。
-端口名 → 类型的映射写在 `make_inputs()` 一次，业务方法不再出现模板+字符串取值。
-见 `basement/runtime/component/typed_component.h`。
+不需要 `make_inputs`/输入 struct/类内 `using`。见
+`basement/runtime/component/typed_component.h`。
 
 ### 7.3 Host 调用顺序
 

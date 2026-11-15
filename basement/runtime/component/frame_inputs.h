@@ -1,10 +1,12 @@
 #ifndef __STAR_RUNTIME_COMPONENT_FRAME_INPUTS_H__
 #define __STAR_RUNTIME_COMPONENT_FRAME_INPUTS_H__
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,11 +24,16 @@ struct FrameInputs {
     int64_t timestamp_ns{0};
     std::unordered_map<std::string, star::transport::MessageView> messages;
 
-    auto contains(const std::string& port) const -> bool { return messages.find(port) != messages.end(); }
+    auto contains(std::string_view port) const -> bool { return find(port) != nullptr; }
 
-    auto find(const std::string& port) const -> const star::transport::MessageView* {
-        const auto it = messages.find(port);
-        return it == messages.end() ? nullptr : &it->second;
+    // 端口数很少（通常 1~3），线性比较避免每次 trigger 为 string_view 分配 std::string。
+    auto find(std::string_view port) const -> const star::transport::MessageView* {
+        for (const auto& [name, message] : messages) {
+            if (name.size() == port.size() && std::equal(name.begin(), name.end(), port.begin())) {
+                return &message;
+            }
+        }
+        return nullptr;
     }
 };
 

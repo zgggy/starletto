@@ -16,7 +16,7 @@ Runtime 必须拆分为多个子模块，避免形成一个不可维护的巨型
     - `Component` 基类：`read_latest<T>(name)` / `write(name, msg)`
     - **`auto_configure()`** — 从 conf 自动创建所有 reader/writer（唯一装配路径）
     - `read_latest<T>(name)` — 类型安全的最新消息读取（非 trigger 输入）
-    - `TypedComponent<Derived, Inputs>` — trigger 消息 → 组件自有类型化参数
+    - `TypedComponent<Derived, TriggerInput<T, "port">...>` — trigger 消息直接作为 typed 参数
     - `decode_snapshot_entry<Snap, T>(snap, key, schema)` — 通用 snapshot 条目解码模板方法
     - 自动 inproc/SHM 双路径解码（SFINAE 检测 from_binary）
     - `ComponentRegistry` + `schema_registry()` — 插件注册 + schema 自注册

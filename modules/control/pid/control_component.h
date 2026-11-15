@@ -15,39 +15,23 @@
 
 namespace star::control {
 
-struct ControlTriggerInputs {
-    std::shared_ptr<const star::setting::planning::TrajectoryOutput> planning_trajectory;
-};
-
-class ControlComponent final : public star::runtime::TypedComponent<ControlComponent, ControlTriggerInputs> {
+class ControlComponent final
+    : public star::runtime::TypedComponent<ControlComponent,
+          star::runtime::TriggerInput<star::setting::planning::TrajectoryOutput, "planning_trajectory">> {
   public:
-    using Base = star::runtime::TypedComponent<ControlComponent, ControlTriggerInputs>;
-    using Base::process_once;
-
     void init() override { logI << "ControlComponent initialized, reading from planning.trajectory, writing control.command"; }
 
-    auto make_inputs(const star::runtime::FrameInputs& raw) -> ControlTriggerInputs {
-        return {trigger_input<star::setting::planning::TrajectoryOutput>(raw, "planning_trajectory")};
-    }
-
-    auto process_once(const ControlTriggerInputs& inputs) -> bool {
+    auto process_once(const auto& trajectory) -> bool {
         const auto& frame = context()->current_frame();
         if (frame.frame_id > 0) {
             logI << "ControlComponent processing frame=" << frame.frame_id;
         }
-        // 轨迹是 trigger 输入：随本次 typed 参数到达，不再走 latest 缓存
-        if (inputs.planning_trajectory) {
-            latest_trajectory_ = inputs.planning_trajectory;
-        }
-        if (not latest_trajectory_) {
-            return true;
-        }
         auto now_ns = static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-        auto e2e_latency_us = (now_ns - latest_trajectory_->timestamp_ns) / 1000.0;
+        auto e2e_latency_us = (now_ns - trajectory.timestamp_ns) / 1000.0;
         record_latency(e2e_latency_us);
-        auto cmd = controller_.compute(*latest_trajectory_, current_velocity_);
+        auto cmd = controller_.compute(trajectory, current_velocity_);
         logI << "ControlCommand: throttle=" << cmd.throttle << ", brake=" << cmd.brake << ", steering=" << cmd.steering << ", gear=" << cmd.gear
-             << ", target_vel=" << (latest_trajectory_->points.empty() ? 0.0 : latest_trajectory_->points.front().velocity) << ", e2e_latency_us=" << static_cast<int64_t>(e2e_latency_us);
+             << ", target_vel=" << (trajectory.points.empty() ? 0.0 : trajectory.points.front().velocity) << ", e2e_latency_us=" << static_cast<int64_t>(e2e_latency_us);
         write("command", cmd);
         current_velocity_ = cmd.throttle > 0 ? cmd.throttle * 10.0 : std::max(0.0, current_velocity_ - cmd.brake * 5.0);
         maybe_dump_latency_stats();
@@ -76,7 +60,6 @@ class ControlComponent final : public star::runtime::TypedComponent<ControlCompo
 
     PidController controller_{PidConfig{}};
     double current_velocity_{5.0};
-    std::shared_ptr<const star::setting::planning::TrajectoryOutput> latest_trajectory_;
     std::mutex latency_mutex_;
     int64_t latency_count_{0};
     double latency_sum_{0.0};

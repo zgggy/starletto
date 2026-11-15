@@ -402,8 +402,9 @@ flowchart LR
 - 非 trigger 输入（参数/配置快照）继续 `read_latest<T>()`；
 - SyncTrigger 在触发线程上把 shm 载荷拷成不可变快照，保证 process_once 看到的就是
   触发它的那条消息；三路消息同帧进入 `FrameInputs`；
-- `TypedComponent<Derived, Inputs>`：组件用 `make_inputs()` 一次性把 trigger 消息
-  映射成自有类型化参数，业务 `process_once` 不再写模板+字符串取值；motion/control 已迁移。
+- `TypedComponent<Derived, TriggerInput<T, "port">...>`：trigger 消息编译期解码后
+  直接作为 `process_once(const auto&...)` 参数，类型只写一次，无 make_inputs/输入 struct；
+  motion/control 已迁移。
 
 ### `declare_*` 删除
 
