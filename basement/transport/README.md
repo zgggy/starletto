@@ -24,7 +24,9 @@
   一个指向源码文件，一个指向运行期数据；
 - shm 槽内必须是 v7 帧（magic/encoding/schema name+version+hash/payload）；
   未加帧或损坏帧会被丢弃、`dropped_count` 递增并记 ERROR；
-- 跨进程是编码后拷贝；`ShmSlotView` 的零拷贝读取不用于跨进程交付承诺。
+- 跨进程是编码后拷贝；`ShmSlotView` 的零拷贝读取不用于跨进程交付承诺；
+- trigger 消息会在触发线程复制成不可变 `FrameInputs` 快照（shm 载荷），
+  保证 `process_once` 看到的就是触发它的那条消息；非 trigger 输入仍走 latest 缓存。
 
 ## 测试
 
