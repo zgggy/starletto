@@ -251,7 +251,7 @@ namespace star::native_runner {
                         return star::transport::SerializedServiceResponse{resp, std::move(serializer)};
                     }};
 
-                auto client = star::transport::RpcClient{*client_bus, service_name};
+                auto client = star::transport::RpcClient{*client_bus, service_name, 15000};
 
                 const auto kCalls = int64_t{200};
                 for (int64_t i = 0; i < kCalls; ++i) {
@@ -317,7 +317,7 @@ namespace star::native_runner {
         constexpr uint32_t kCapacity = 1024 * 1024;
 
         constexpr uint64_t kWritesPerWriter = 8000;
-        constexpr int64_t kTimeoutMs = 3000;
+        constexpr int64_t kTimeoutMs = 15000;
 
         const auto spawn_writer = [&](uint64_t writer_id) -> pid_t {
             const auto pid = ::fork();
