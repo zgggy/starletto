@@ -17,3 +17,11 @@
 - Manifest（清单即类型）：[basement_manifest.md](basement_manifest.md)
 - Tools（star/runner/诊断/record/replay）：[basement_tools.md](basement_tools.md)
 - Core（日志/异常/时间/基础设施）：[basement_core.md](basement_core.md)
+
+## 联调命令说明（2026-11-15）
+
+`planning.motion` 的主 trigger 现在需要三路输入：`/perception/prediction`、
+`/localization/pose`、`/control/chassis`。本目录早期验收记录里的
+`star run planning` 只加载 planning 模块，没有上游时不会出帧，属于历史命令；
+完整假上游联调命令见根目录 README 的“假上游联调”，或
+`modules/planning/motion/README.md`。
