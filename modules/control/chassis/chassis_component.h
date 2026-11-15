@@ -39,7 +39,7 @@ class ChassisComponent final : public star::runtime::Component {
 };
 
 inline auto register_chassis_components(star::runtime::ComponentRegistry& registry) -> void {
-    registry.register_component<ChassisComponent>("star::control::ChassisComponent");
+    registry.register_component<ChassisComponent>("star::control::Chassis");
 }
 
 }  // namespace star::control

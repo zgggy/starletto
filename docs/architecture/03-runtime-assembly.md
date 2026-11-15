@@ -113,7 +113,7 @@ flowchart LR
 |---|---|---|
 | `setting.config` | Timer 1000ms | 每秒发一次快照 |
 | `setting.parameter` | Timer 1000ms | 每秒发一次快照 |
-| `planning.motion` | Sync（两路快照） | 配置和参数都到了才跑，保证同一帧看到一致数据 |
+| `planning.motion` | Sync（三路 trigger） | prediction/localization/chassis 都到了才跑，保证同一帧 |
 | `control.pid` | 数据驱动 | 来一帧轨迹算一次控制 |
 
 > **对算法工程师的意义**：你不需要自己写 while 循环、不需要自己起线程。写 `process_once()` 就行，触发由框架负责。

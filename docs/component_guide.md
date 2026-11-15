@@ -139,14 +139,6 @@ readers {                          # 订阅的通道；键名 = 代码里的端�
         channel = /control/chassis
         type = star::control::chassis::Chassis
     }
-    parameter_snapshot {           # 非 trigger：read_latest 读取
-        channel = /setting/parameter/snapshot
-        type = star::generated::setting::parameter::snapshot::ParameterSnapshot
-    }
-    config_snapshot {
-        channel = /setting/config/snapshot
-        type = star::generated::setting::config::snapshot::ConfigSnapshot
-    }
 }
 
 writers {                          # 发布的通道
@@ -336,13 +328,12 @@ class MotionComponent : public star::runtime::Component {
         // 1a. trigger 输入：本次触发的消息随 process_once 传入
         const auto pose = trigger_input<Pose>(inputs, "localization");
 
-        // 1b. 非 trigger 输入：仍读取 latest 缓存
-        const auto snap = read_latest<ParamSnapshot>("parameter_snapshot");
+        // 1b. 如有非 trigger 输入，才用 read_latest：
+        //     const auto snap = read_latest<ParamSnapshot>("parameter_snapshot");
 
         // 2. 组装成纯算法输入
         auto input = MotionInput{};
         if (pose) { input.xxx = pose->xxx; }
-        if (snap) { input.xxx = snap->xxx; }
 
         // 3. 调算法
         const auto output = processor_.process(input);
@@ -453,10 +444,20 @@ static_component_static_libs += [motion_static_lib]
 
 ## 3. 真实示例拆解：`motion` 里哪些是必需的
 
-`motion_component.h` 有 95 行，但真正必需的只有约 25 行：
+`motion_component.h` 约 57 行，真正必需的是端口读取 + 算法调用 + 写入：
 
-| 代码块 | 行数 | 必需？ | 说明 |
-|---|---|---|---|
+| 代码块 | 说明 |
+|---|---|
+| 8 个 include | basement + processor + 3 个上游 schema + trajectory |
+| `process_once(const FrameInputs&)` | 核心：`trigger_input` 取三路消息 → 算 → `write` |
+| frame/trajectory 日志 | 可选的运行观测，不属于组件装配必需项 |
+| `register_native_components()` | 注册唯一类名 `star::planning::Motion` |
+| 成员 `processor_` | 纯算法对象 |
+
+组件里不再出现“参数快照打印”这类只用于演示的代码；需要非 trigger 输入时用
+`read_latest<T>()`，并在 `component.conf` 声明对应 reader。
+
+---|---|---|---|
 | 9 个 include | 9 | ✅ | 4 个 basement + 1 processor + 4 个 schema |
 | `process_once(const FrameInputs&)` | 20 | ✅ | 核心：取 trigger 消息 → 算 → 发 |
 | `maybe_log_first_parameter_snapshot()` | 30 | ❌ **演示用** | 只是打印一次参数，可删 |

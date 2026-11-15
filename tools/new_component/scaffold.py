@@ -162,7 +162,6 @@ class {cls}Component final : public star::runtime::Component {{
 
 inline auto register_native_components(star::runtime::ComponentRegistry& registry) -> void {{
     registry.register_component<{cls}Component>("star::{module}::{cls}");
-    registry.register_component<{cls}Component>("star::{module}::{cls}Component");
 }}
 
 }}  // namespace star::{module}

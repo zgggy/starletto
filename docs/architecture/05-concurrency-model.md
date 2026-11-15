@@ -109,8 +109,8 @@ sequenceDiagram
     Note over MOT: trigger_input<T>(inputs, port) 拿到同帧消息
 ```
 
-非 trigger 输入（`parameter_snapshot`、`config_snapshot`）仍由普通 reader 缓存，
-组件在 `process_once` 里用 `read_latest<T>()` 读取；它们不参与触发条件。
+若组件还有非 trigger 输入（例如未来接入的参数/配置快照），它们由普通 reader 缓存，
+在 `process_once` 里用 `read_latest<T>()` 读取，不参与触发条件。
 
 ## 4. 锁与并发注意事项
 

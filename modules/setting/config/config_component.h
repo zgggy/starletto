@@ -241,7 +241,6 @@ class ConfigComponent : public star::runtime::Component {
 };
 
 inline auto register_native_config_components(star::runtime::ComponentRegistry& registry) -> void {
-    registry.register_component<ConfigComponent>("star::setting::ConfigComponent");
     registry.register_component<ConfigComponent>("star::setting::Config");
 }
 

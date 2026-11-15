@@ -73,7 +73,6 @@ class ControlComponent : public star::runtime::Component {
 };
 
 inline auto register_control_components(star::runtime::ComponentRegistry& registry) -> void {
-    registry.register_component<ControlComponent>("star::control::ControlComponent");
     registry.register_component<ControlComponent>("star::control::Control");
 }
 

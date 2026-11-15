@@ -466,7 +466,6 @@ private:
 };
 
 inline auto register_native_parameter_components(star::runtime::ComponentRegistry& registry) -> void {
-    registry.register_component<ParameterComponent>("star::setting::ParameterComponent");
     registry.register_component<ParameterComponent>("star::parameter::Parameter");
 }
 

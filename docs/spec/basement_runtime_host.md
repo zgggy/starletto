@@ -162,5 +162,5 @@ NativeComponentHost::prepare_components():
   - `./star build` 零错误编译
   - `./star run --frames=5 motion/component.conf control/pid/component.conf` 单进程闭环正常
   - `./star run --frames=5 --multi-process ...` 双进程 SHM 路由正常（e2e_latency_us: 300~430μs）
-  - MotionComponent: init() 只做日志；trigger 输入走 trigger_input，setting 快照走 read_latest
+  - MotionComponent: 只消费三路 trigger；日志不是装配必需项
   - ControlComponent: init() 仅保留日志，轨迹走 trigger_input

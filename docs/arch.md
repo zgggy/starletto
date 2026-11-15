@@ -58,13 +58,14 @@ flowchart TB
 分层约束：`libraries` 只依赖 `core`；`runtime` 不定义业务消息；`transport` 不理解业务含义；
 `apps` 不包含任何组件实现（配置驱动加载）。
 
-## 数据流（`star run` 真实拓扑，4 组件 4 通道）
+## 数据流（假上游联调拓扑）
 
 ```mermaid
 flowchart LR
-    subgraph G_SETTING["process_group：setting"]
-        CONFIG["ConfigComponent<br/>libconfig.so"]
-        PARAM["ParameterComponent<br/>libparameter.so"]
+    subgraph G_UPSTREAM["上游 stub"]
+        PRED["PredictionComponent<br/>libprediction.so"]
+        LOC["PoseComponent<br/>libpose.so"]
+        CH["ChassisComponent<br/>libchassis.so"]
     end
     subgraph G_PLANNING["process_group：planning"]
         MOTION["MotionComponent<br/>libmotion.so"]
@@ -74,12 +75,16 @@ flowchart LR
     end
     REC["STARREC 录制<br/>record / replay"]
 
-    CONFIG -->|"① /setting/config/snapshot"| MOTION
-    PARAM -->|"② /setting/parameter/snapshot"| MOTION
-    MOTION -->|"③ /planning/trajectory"| PID
-    PID -->|"④ /control/command"| REC
+    PRED -->|"① /perception/prediction"| MOTION
+    LOC -->|"② /localization/pose"| MOTION
+    CH -->|"③ /control/chassis"| MOTION
+    MOTION -->|"④ /planning/trajectory"| PID
+    PID -->|"⑤ /control/command"| REC
     MOTION -.->|"record=true"| REC
 ```
+
+setting.config / setting.parameter 仍独立运行（发配置/参数快照与参数服务），
+当前 motion 示例不再消费它们；真实算法接入时可按需增加非 trigger reader。
 
 投递路径由 `ShmRoutedMessageBus` 自动选路：
 

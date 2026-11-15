@@ -42,7 +42,7 @@ class PredictionComponent final : public star::runtime::Component {
 };
 
 inline auto register_prediction_components(star::runtime::ComponentRegistry& registry) -> void {
-    registry.register_component<PredictionComponent>("star::perception::PredictionComponent");
+    registry.register_component<PredictionComponent>("star::perception::Prediction");
 }
 
 }  // namespace star::perception

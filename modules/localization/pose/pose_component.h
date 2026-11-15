@@ -43,7 +43,7 @@ class PoseComponent final : public star::runtime::Component {
 };
 
 inline auto register_pose_components(star::runtime::ComponentRegistry& registry) -> void {
-    registry.register_component<PoseComponent>("star::localization::PoseComponent");
+    registry.register_component<PoseComponent>("star::localization::Pose");
 }
 
 }  // namespace star::localization

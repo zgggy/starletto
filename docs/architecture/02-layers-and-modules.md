@@ -97,27 +97,33 @@ flowchart LR
 | `transport` | 把字节/指针从一个组件送到另一个组件 | 字节里是什么 |
 | `runtime` | 什么时候、在哪个线程、装配哪些组件去跑 | 组件内部算法 |
 
-### 2.2 业务模块（当前 4 个组件）
+### 2.2 业务模块（当前组件）
 
 ```mermaid
 flowchart LR
-    CFG["<b>setting.config</b><br/>in: files/*.conf<br/>out: /setting/config/snapshot<br/>周期 1000ms"]
-    PAR["<b>setting.parameter</b><br/>in: parameter/config<br/>out: /setting/parameter/snapshot<br/>+ 3 个参数服务"]
-    MOT["<b>planning.motion</b><br/>in: config.snapshot + parameter.snapshot<br/>out: /planning/trajectory<br/>SyncTrigger：两路到齐才跑"]
-    PID["<b>control.pid</b><br/>in: /planning/trajectory<br/>out: /control/command<br/>数据驱动：来一帧跑一次"]
+    PRED["<b>perception.prediction</b><br/>out: /perception/prediction<br/>周期 50ms"]
+    LOC["<b>localization.pose</b><br/>out: /localization/pose<br/>周期 50ms"]
+    CH["<b>control.chassis</b><br/>out: /control/chassis<br/>周期 50ms"]
+    MOT["<b>planning.motion</b><br/>in: 三路 trigger<br/>out: /planning/trajectory"]
+    PID["<b>control.pid</b><br/>in: /planning/trajectory<br/>out: /control/command"]
+    CFG["<b>setting.config</b><br/>out: /setting/config/snapshot<br/>周期 1000ms"]
+    PAR["<b>setting.parameter</b><br/>out: /setting/parameter/snapshot<br/>+ 参数服务"]
 
-    CFG -->|"/setting/config/snapshot"| MOT
-    PAR -->|"/setting/parameter/snapshot"| MOT
-    MOT -->|"/planning/trajectory"| PID
-    PID -->|"/control/command"| REC["STARREC 录制"]
+    PRED --> MOT
+    LOC --> MOT
+    CH --> MOT
+    MOT --> PID
 ```
 
 | 组件 | 输入 | 处理 | 输出 | 触发方式 |
 |---|---|---|---|---|
+| `perception.prediction`（stub） | 无 | 合成前方目标 | `/perception/prediction` | 50ms 定时 |
+| `localization.pose`（stub） | 无 | 合成圆周位姿 | `/localization/pose` | 50ms 定时 |
+| `control.chassis`（stub） | 无 | 合成底盘状态 | `/control/chassis` | 50ms 定时 |
+| `planning.motion` | 三路 trigger | 生成轨迹（**当前是玩具实现**） | `/planning/trajectory` | 三路到齐 |
+| `control.pid` | `/planning/trajectory` | PID 算油门/刹车/转向 | `/control/command`（并录制） | 来一帧跑一次 |
 | `setting.config` | 5 个 `.conf` 文件 | 解析成 `ConfigSnapshot` | `/setting/config/snapshot` | 1000ms 定时 |
 | `setting.parameter` | 参数配置文件 | 维护 typed 参数表，响应 get/set/list 服务 | `/setting/parameter/snapshot` | 1000ms 定时 |
-| `planning.motion` | 上面两个快照 | 读参数 → 生成轨迹（**当前是玩具实现**） | `/planning/trajectory` | 两路快照都到齐 |
-| `control.pid` | `/planning/trajectory` | PID 算油门/刹车/转向 | `/control/command`（并录制） | 每来一帧 |
 
 ### 2.2.1 假上游联调（planning 闭环）
 

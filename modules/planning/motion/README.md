@@ -18,12 +18,9 @@ flowchart LR
 | 读 | `prediction` | `/perception/prediction` | 假预测目标 |
 | 读 | `localization` | `/localization/pose` | 车辆位姿/速度 |
 | 读 | `chassis` | `/control/chassis` | 底盘速度（优先于定位速度） |
-| 读 | `parameter_snapshot` | `/setting/parameter/snapshot` | 规划参数 |
-| 读 | `config_snapshot` | `/setting/config/snapshot` | 系统配置 |
 | 写 | `trajectory` | `/planning/trajectory` | 轨迹（record=true） |
 
-Trigger：`type = channel`，`readers [prediction, localization, chassis]`；
-设置快照只读，不参与 trigger。
+Trigger：`type = channel`，`readers [prediction, localization, chassis]`。
 
 ## 假上游
 

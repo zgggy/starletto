@@ -1,8 +1,7 @@
 # modules/planning —— 规划
 
 当前只有 `motion` 示例组件（`planning.motion`）。它的主 trigger 由三路假上游
-节点驱动：`/perception/prediction`、`/localization/pose`、`/control/chassis`；
-两路 setting snapshot 只作为参数/配置输入，不参与 trigger。
+节点驱动：`/perception/prediction`、`/localization/pose`、`/control/chassis`。
 
 - 进程组：`planning`（multi_thread，4 线程）
 - 输出：`/planning/trajectory`
