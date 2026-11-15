@@ -227,7 +227,7 @@ class NativeComponentHost final {
                 continue;
             }
             try {
-                ok = c->process_once() && ok;
+                ok = c->process_once(FrameInputs{}) && ok;
             } catch (const std::exception& e) {
                 logE << "NativeComponentHost process_once failed: " << e.what();
                 ok = false;
@@ -303,14 +303,14 @@ class NativeComponentHost final {
             desc.module_name = p.module_name;
             desc.period_ms = is_timer_trigger ? p.trigger->cycle_ms.value_or(0) : 0;
             desc.priority = p.priority.value_or(0);
-            desc.callback = [this, idx = i](int64_t frame_id) {
+            desc.callback = [this, idx = i](const FrameInputs& inputs) {
                 bool ok = true;
                 auto& c = components_[idx];
                 if (not c) {
                     ok = false;
                 } else {
                     try {
-                        ok = c->process_once();
+                        ok = c->process_once(inputs);
                     } catch (const std::exception& e) {
                         logE << "NativeComponentHost task process_once failed: " << e.what();
                         ok = false;
@@ -322,7 +322,7 @@ class NativeComponentHost final {
                 executed_frames_.fetch_add(1, std::memory_order_relaxed);
                 {
                     std::lock_guard<std::mutex> lock(wait_mutex_);
-                    last_frame_id_ = frame_id;
+                    last_frame_id_ = inputs.frame_id;
                 }
                 wait_cv_.notify_all();
                 return ok;
@@ -344,10 +344,10 @@ class NativeComponentHost final {
             return;
         }
         if (sync_mode) {
-            auto sync_trigger = std::make_shared<star::runtime::SyncTrigger>([this, task_name](int64_t frame_id) {
+            auto sync_trigger = std::make_shared<star::runtime::SyncTrigger>([this, task_name](std::shared_ptr<const FrameInputs> inputs) {
                 auto scheduler = find_task_scheduler(task_name);
                 if (scheduler) {
-                    scheduler->notify(task_name, frame_id);
+                    scheduler->notify(task_name, std::move(inputs));
                 }
             });
             for (const auto& reader_name : *plan.trigger->readers) {
@@ -355,12 +355,14 @@ class NativeComponentHost final {
                 if (not port.has_value()) {
                     continue;
                 }
-                sync_trigger->add_required_channel(port->channel.value_or(""));
+                const auto channel = port->channel.value_or("");
+                sync_trigger->add_required_channel(channel, reader_name);
                 star::transport::ChannelDescriptor d;
-                d.name = port->channel.value_or("");
+                d.name = channel;
                 d.type_name = port->type_name.value_or("");
-                const auto channel = d.name;
-                auto reader = context_->message_bus().create_reader(d, [sync_trigger, channel](const star::transport::MessageView&) { sync_trigger->on_message(channel); });
+                auto reader = context_->message_bus().create_reader(d, [sync_trigger, channel](const star::transport::MessageView& message) {
+                    sync_trigger->on_message(channel, message);
+                });
                 if (reader) {
                     trigger_readers_.push_back(std::move(reader));
                 }
@@ -377,11 +379,18 @@ class NativeComponentHost final {
             star::transport::ChannelDescriptor d;
             d.name = port->channel.value_or("");
             d.type_name = port->type_name.value_or("");
-            auto reader = context_->message_bus().create_reader(d, [this, task_name](const star::transport::MessageView&) {
-                const auto frame_id = next_trigger_frame_id(task_name);
+            auto reader = context_->message_bus().create_reader(d, [this, task_name, reader_name](const star::transport::MessageView& message) {
+                const auto snapshot = star::runtime::snapshot_trigger_message(message);
+                if (not snapshot.has_value()) {
+                    return;
+                }
+                auto inputs = std::make_shared<FrameInputs>();
+                inputs->frame_id = next_trigger_frame_id(task_name);
+                inputs->timestamp_ns = FrameContext::now_monotonic_ns();
+                inputs->messages.emplace(reader_name, *snapshot);
                 auto scheduler = find_task_scheduler(task_name);
                 if (scheduler) {
-                    scheduler->notify(task_name, frame_id);
+                    scheduler->notify(task_name, std::move(inputs));
                 }
             });
             if (reader) {

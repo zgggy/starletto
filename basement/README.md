@@ -33,7 +33,7 @@ flowchart LR
 
 ```bash
 ./star build
-./star test          # 34 套 213 用例
+./star test          # 34 套 214 用例
 ./star check          # 18/18
 ```
 

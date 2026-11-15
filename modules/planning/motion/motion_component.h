@@ -20,7 +20,7 @@ namespace star::planning {
 
 class MotionComponent : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs& inputs) -> bool override {
         const auto& frame = context()->current_frame();
         if (frame.frame_id > 0) {
             logI << "MotionComponent processing frame=" << frame.frame_id;
@@ -29,17 +29,17 @@ class MotionComponent : public star::runtime::Component {
         maybe_log_first_config_snapshot();
 
         auto input = MotionInput{};
-        if (auto pose = read_latest<star::localization::pose::Pose>("localization")) {
+        if (auto pose = trigger_input<star::localization::pose::Pose>(inputs, "localization")) {
             input.vehicle_x = pose->x;
             input.vehicle_y = pose->y;
             input.vehicle_heading = pose->heading;
             input.vehicle_velocity = pose->linear_velocity;
         }
-        if (auto chassis = read_latest<star::control::chassis::Chassis>("chassis")) {
+        if (auto chassis = trigger_input<star::control::chassis::Chassis>(inputs, "chassis")) {
             // 底盘反馈优先于定位里的速度
             input.vehicle_velocity = chassis->speed;
         }
-        if (auto prediction = read_latest<star::perception::prediction::Prediction>("prediction")) {
+        if (auto prediction = trigger_input<star::perception::prediction::Prediction>(inputs, "prediction")) {
             logD << "MotionComponent inputs: predicted_objects=" << prediction->objects.size() << ", v=" << input.vehicle_velocity;
         }
         auto output = processor_.process(input);

@@ -83,7 +83,7 @@ namespace oot {
 
 class OotNode final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         auto msg = oot::generated::OotMsg{};
         msg.value = 1;
         (void)msg.encode_binary();

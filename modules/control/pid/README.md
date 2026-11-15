@@ -8,4 +8,4 @@
 | 写 | `command` | `/control/command` | `ControlCommand` |
 
 `component.conf` 的 `trigger.readers` 让它在轨迹到达时运行；`process_once()`
-用 `read_latest` 取最新轨迹，计算后 `write("command", cmd)`。e2e 延迟会写日志。
+`planning_trajectory` 是 trigger 端口，用 `trigger_input<TrajectoryOutput>(inputs, ...)` 取本次轨迹，计算后 `write("command", cmd)`。e2e 延迟会写日志。

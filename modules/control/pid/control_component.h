@@ -18,13 +18,13 @@ class ControlComponent : public star::runtime::Component {
   public:
     void init() override { logI << "ControlComponent initialized, reading from planning.trajectory, writing control.command"; }
 
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs& inputs) -> bool override {
         const auto& frame = context()->current_frame();
         if (frame.frame_id > 0) {
             logI << "ControlComponent processing frame=" << frame.frame_id;
         }
-        // auto_configure() 已按 plan 建好 reader；这里取最新轨迹即可
-        if (auto traj = read_latest<star::setting::planning::TrajectoryOutput>("planning_trajectory")) {
+        // 轨迹是 trigger 输入：随本次 FrameInputs 到达，不再走 latest 缓存
+        if (auto traj = trigger_input<star::setting::planning::TrajectoryOutput>(inputs, "planning_trajectory")) {
             latest_trajectory_ = std::move(traj);
         }
         if (not latest_trajectory_) {

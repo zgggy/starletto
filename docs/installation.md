@@ -50,7 +50,7 @@ python3 "$PREFIX/share/starletto/schema/schema_codegen.py" gen \
 
 class MyNode final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override { return true; }
+    auto process_once(const star::runtime::FrameInputs&) -> bool override { return true; }
 };
 
 extern "C" void star_register_components(star::runtime::ComponentRegistry* registry) {

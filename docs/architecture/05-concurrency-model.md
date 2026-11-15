@@ -58,61 +58,66 @@ flowchart TB
 flowchart LR
     subgraph TRIG["触发器"]
         T1["TimerTrigger<br/>timer 线程唤醒"]
-        T2["SyncTrigger<br/>由 reader 回调驱动"]
+        T2["SyncTrigger<br/>收齐 trigger 消息 → FrameInputs"]
     end
     subgraph Q["就绪队列"]
         Q1["优先级队列"]
     end
     subgraph W["worker 线程"]
-        W1["process_once()"]
+        W1["process_once(FrameInputs)"]
     end
     T1 -->|"notify"| Q1
     T2 -->|"notify"| Q1
     Q1 --> W1
 
     subgraph RC["reader 回调"]
-        R1["auto_configure 创建的 reader 回调<br/><b>在轮询线程上同步执行</b>"]
+        R1["trigger reader：快照本次消息<br/>普通 reader：缓存 latest<br/><b>都在轮询线程上执行</b>"]
     end
 ```
 
 | 你写的代码 | 运行线程 | 可以做什么 | 不要做什么 |
 |---|---|---|---|
 | `init()` | 主线程（装配期） | 读一次性配置 | 开长循环、阻塞 |
-| `process_once()` | scheduler worker | 算算法、publish | 睡长觉、等锁 |
-| reader 回调（host 内部） | **该通道专属轮询线程** | 只缓存最新 view | 做重计算、调阻塞 RPC |
+| `process_once(const FrameInputs&)` | scheduler worker | 用本次 trigger 消息算算法、publish | 睡长觉、等锁 |
+| trigger reader 回调 | **该通道专属轮询线程** | 快照 trigger 消息、做 FrameInputs | 做重计算、调阻塞 RPC |
+| 普通 reader 回调 | **该通道专属轮询线程** | 只缓存最新 view | 做重计算、调阻塞 RPC |
 | service handler | **该服务专属轮询线程** | 快速返回响应 | 长时间阻塞 |
 
 **这条最重要**：reader 缓存回调是在轮询线程上**同步**执行的。回调里做 10ms 的计算，这个端口的读取就停顿 10ms，SHM 环可能在此期间被写满（4 帧）而丢数据。重活必须搬到 `process_once` 里，或者自己投递到队列。
 
 ## 3. 帧一致性与同步触发
 
-`planning.motion` 同时消费配置和参数两路快照。如果分别在两个回调里各存一份，可能出现"新的配置 + 旧的参数"这种撕裂组合。
+`planning.motion` 由三路 trigger 输入驱动：`/perception/prediction`、
+`/localization/pose`、`/control/chassis`。SyncTrigger 收齐三路后，把这**三条消息**
+放进 `FrameInputs`，随 `process_once(inputs)` 一起交给组件：
 
 ```mermaid
 sequenceDiagram
-    participant CFG as config 快照
-    participant PAR as parameter 快照
+    participant PRED as /perception/prediction
+    participant LOC as /localization/pose
+    participant CH as /control/chassis
     participant TRG as SyncTrigger
     participant SCH as Scheduler
     participant MOT as motion.process_once
 
-    CFG->>TRG: on_message("config_snapshot")
-    Note over TRG: arrived={config}，未齐
-    PAR->>TRG: on_message("parameter_snapshot")
-    Note over TRG: arrived 齐全 → frame_id++
-    TRG->>SCH: notify(frame_id)
-    SCH->>MOT: process_once()
-    Note over MOT: 此时两路数据是同帧的
+    PRED->>TRG: on_message(prediction)
+    LOC->>TRG: on_message(localization)
+    CH->>TRG: on_message(chassis)
+    Note over TRG: 三路齐全 → frame_id++，消息快照进 FrameInputs
+    TRG->>SCH: notify(FrameInputs)
+    SCH->>MOT: process_once(inputs)
+    Note over MOT: trigger_input<T>(inputs, port) 拿到同帧消息
 ```
 
-`SyncTrigger` 的语义：**所有必需通道都到齐后，才触发一次**，且同一帧内 frame_id 相同。这就是"帧一致性"的来源。
+非 trigger 输入（`parameter_snapshot`、`config_snapshot`）仍由普通 reader 缓存，
+组件在 `process_once` 里用 `read_latest<T>()` 读取；它们不参与触发条件。
 
 ## 4. 锁与并发注意事项
 
 | 位置 | 机制 | 你的代码要不要操心 |
 |---|---|---|
 | `NativeMessageBus` 的 channel 表 | `std::mutex` | 不用，`write()/read_latest()` 内部加锁 |
-| `Component::latest_messages_` | `std::mutex` | 不用，`read_latest()` 内部加锁 |
+| `Component::latest_messages_`（仅非 trigger） | `std::mutex` | 不用，`read_latest()` 内部加锁 |
 | `ChannelStats` 累计器 | 由总线锁保护 | 不用 |
 | `SyncTrigger` | 内部锁，**回调在锁外执行** | 不用 |
 | **你的 Processor 成员变量** | **没有任何保护** | **要操心**：同一个组件不会被两个线程同时调 `process_once`（scheduler 串行），但如果你的回调里也访问同一成员，就需要自己加锁 |

@@ -71,7 +71,7 @@ star::my_module::MyNode`、`register_native_components` 注册同一字符串；
 之后只需要：
 
 1. 在 `my_node_processor.h` 写算法；
-2. 在 `my_node_component.h` 用 `read_latest<T>("port")` / `write("port", msg)` 接线；
+2. 在 `my_node_component.h` 用 `trigger_input<T>(inputs, "trigger_port")`（trigger 端口）/ `read_latest<T>("other_port")`（非 trigger）/ `write("port", msg)` 接线；
 3. 在 `component.conf` 补 `readers`/`writers`（键名与代码字符串一致）。
 
 脚手架不覆盖已有文件，也不允许非法名字；重复执行或模块不存在会直接报错。
@@ -313,12 +313,16 @@ namespace star::planning {
 
 class MotionComponent : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
-        // 1. 从端口取上游数据（端口名必须与 conf 的 readers 键名一致）
+    auto process_once(const star::runtime::FrameInputs& inputs) -> bool override {
+        // 1a. trigger 输入：本次触发的消息随 process_once 传入
+        const auto pose = trigger_input<Pose>(inputs, "localization");
+
+        // 1b. 非 trigger 输入：仍读取 latest 缓存
         const auto snap = read_latest<ParamSnapshot>("parameter_snapshot");
 
         // 2. 组装成纯算法输入
         auto input = MotionInput{};
+        if (pose) { input.xxx = pose->xxx; }
         if (snap) { input.xxx = snap->xxx; }
 
         // 3. 调算法
@@ -341,7 +345,8 @@ class MotionComponent : public star::runtime::Component {
 |---|---|
 | `init()` | 一次性初始化（读配置、建索引） |
 | `shutdown()` | 释放外部资源 |
-| `read_latest<T>("port")` | 在 `process_once()` 里取最新消息；端口由 `component.conf` 经 `auto_configure()` 建好 |
+| `read_latest<T>("port")` | 读取**非 trigger** 端口的最新值（参数/配置快照等） |
+| `trigger_input<T>(inputs, "port")` | 读取本次触发 `process_once` 的消息（trigger 端口） |
 | `write("port", msg)` | 发布到 `component.conf` 声明的 writer 端口 |
 
 #### 零拷贝读取（`peek_view`，当前不推荐）
@@ -434,7 +439,7 @@ static_component_static_libs += [motion_static_lib]
 | 代码块 | 行数 | 必需？ | 说明 |
 |---|---|---|---|
 | 9 个 include | 9 | ✅ | 4 个 basement + 1 processor + 4 个 schema |
-| `process_once()` | 20 | ✅ | 核心：取数据 → 算 → 发 |
+| `process_once(const FrameInputs&)` | 20 | ✅ | 核心：取 trigger 消息 → 算 → 发 |
 | `maybe_log_first_parameter_snapshot()` | 30 | ❌ **演示用** | 只是打印一次参数，可删 |
 | `maybe_log_first_config_snapshot()` | 25 | ❌ **演示用** | 同上 |
 | `register_native_components()` | 4 | ✅ | 注册类名 |

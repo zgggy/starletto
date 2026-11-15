@@ -165,13 +165,13 @@ class NativeScheduler final : public Scheduler {
         cv_timer_.notify_all();
     }
 
-    void notify(const std::string& task_name, int64_t frame_id) override {
+    void notify(const std::string& task_name, std::shared_ptr<const FrameInputs> inputs) override {
         std::lock_guard<std::mutex> lock(mutex_);
         if (not running_) {
-            pending_notifications_.emplace(task_name, frame_id);
+            pending_notifications_.emplace(task_name, std::move(inputs));
             return;
         }
-        push_ready_unlocked(task_name, frame_id);
+        push_ready_unlocked(task_name, std::move(inputs));
         cv_ready_.notify_one();
     }
 
@@ -196,9 +196,9 @@ class NativeScheduler final : public Scheduler {
         }
         timer_thread_ = std::thread([this]() { timer_loop(); });
         while (not pending_notifications_.empty()) {
-            auto [name, frame_id] = pending_notifications_.front();
+            auto [name, inputs] = pending_notifications_.front();
             pending_notifications_.pop();
-            push_ready_unlocked(name, frame_id);
+            push_ready_unlocked(name, std::move(inputs));
         }
         cv_ready_.notify_all();
         cv_timer_.notify_all();
@@ -252,6 +252,7 @@ class NativeScheduler final : public Scheduler {
   private:
     struct ReadyItem {
         std::string task_name;
+        std::shared_ptr<const FrameInputs> inputs;
         FrameContext frame;
         int64_t priority{0};
         uint64_t seq{0};
@@ -282,7 +283,7 @@ class NativeScheduler final : public Scheduler {
         TaskStats stats{};
     };
 
-    void push_ready_unlocked(const std::string& task_name, int64_t frame_id) {
+    void push_ready_unlocked(const std::string& task_name, std::shared_ptr<const FrameInputs> inputs) {
         const auto it = tasks_.find(task_name);
         int64_t priority = 0;
         if (it != tasks_.end()) {
@@ -291,10 +292,13 @@ class NativeScheduler final : public Scheduler {
         if (auto pit = task_priorities_.find(task_name); pit != task_priorities_.end()) {
             priority = pit->second;
         }
+        if (not inputs) {
+            return;
+        }
         FrameContext ctx;
-        ctx.frame_id = frame_id;
-        ctx.monotonic_time_ns = FrameContext::now_monotonic_ns();
-        ready_.push(ReadyItem{task_name, ctx, priority, ready_seq_++});
+        ctx.frame_id = inputs->frame_id;
+        ctx.monotonic_time_ns = inputs->timestamp_ns > 0 ? inputs->timestamp_ns : FrameContext::now_monotonic_ns();
+        ready_.push(ReadyItem{task_name, std::move(inputs), ctx, priority, ready_seq_++});
     }
 
     void worker_loop() {
@@ -324,7 +328,7 @@ class NativeScheduler final : public Scheduler {
             auto module_scope = star::base::ModuleLogScope{desc.module_name.empty() ? nullptr : desc.module_name.c_str()};
             auto failed = false;
             try {
-                desc.callback(item.frame.frame_id);
+                desc.callback(*item.inputs);
             } catch (const std::exception& e) {
                 failed = true;
                 logE << "NativeScheduler task failed: " << desc.name << ", err: " << e.what();
@@ -362,8 +366,10 @@ class NativeScheduler final : public Scheduler {
                     continue;
                 }
                 if (task.next_due <= now) {
-                    const auto frame_id = task.next_frame_id++;
-                    push_ready_unlocked(name, frame_id);
+                    auto inputs = std::make_shared<FrameInputs>();
+                    inputs->frame_id = task.next_frame_id++;
+                    inputs->timestamp_ns = FrameContext::now_monotonic_ns();
+                    push_ready_unlocked(name, std::move(inputs));
                     task.next_due = now + std::chrono::milliseconds(task.desc.period_ms);
                     cv_ready_.notify_one();
                 }
@@ -412,7 +418,7 @@ class NativeScheduler final : public Scheduler {
     std::unordered_map<std::string, int64_t> task_priorities_;
     std::optional<std::string> cpu_affinity_str_;
     std::vector<int> cpu_affinity_ids_;
-    std::queue<std::pair<std::string, int64_t>> pending_notifications_;
+    std::queue<std::pair<std::string, std::shared_ptr<const FrameInputs>>> pending_notifications_;
     std::condition_variable cv_ready_;
     std::condition_variable cv_timer_;
     std::thread timer_thread_;

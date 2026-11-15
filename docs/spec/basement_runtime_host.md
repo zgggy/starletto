@@ -101,7 +101,9 @@ Host 不做：
 
 `auto_configure()` 已在 `init()` 之前按 `ComponentLoadPlan` 建好全部端口：
 
-- inputs → `read_latest<T>(port)` 的缓存 reader（含 QoS depth/drop_policy、decode_policy）
+- 非 trigger inputs → `read_latest<T>(port)` 的缓存 reader（含 QoS depth/drop_policy、decode_policy）
+- trigger inputs → 不建缓存 reader；消息由 Trigger 管线作为 `FrameInputs` 随
+  `process_once()` 传入
 - outputs → `write(port, msg)` 的 writer（含 `record=true` 的录制开关、bidirectional）
 - services → `RpcClient`/`RpcServer`
 
@@ -114,8 +116,9 @@ init 里再覆盖一套”的双轨装配。
 ```cpp
 class ControlComponent final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
-        if (auto traj = read_latest<TrajectoryOutput>("planning_trajectory")) {
+    auto process_once(const FrameInputs& inputs) -> bool override {
+        // planning_trajectory 是 trigger 端口：本次触发的消息在 inputs 里
+        if (auto traj = trigger_input<TrajectoryOutput>(inputs, "planning_trajectory")) {
             latest_trajectory_ = std::move(traj);
         }
         if (not latest_trajectory_) {
@@ -142,10 +145,11 @@ NativeComponentHost::prepare_components():
 ### 7.4 约束
 
 - `component.conf` 的 `readers`/`writers` 的 `type`/`msg_type` 必须有效；缺失时
-  `read_latest<T>()` 无法在 shm 路径解码。
-- 同一端口不能既在 conf 声明又在代码里重复创建（API 已删除，编译期即阻止）。
-- 需要回调风格的逻辑，在 `process_once()` 里轮询 `read_latest`；reader 回调仍由
-  host 内部持有（只负责缓存最新 view）。
+  解码路径不可用。
+- trigger 端口只能通过 `process_once(inputs)` 的 `trigger_input<T>()` 读取；
+  非 trigger 端口用 `read_latest<T>()`。两套入口不要混用。
+- trigger 消息在触发线程上做不可变快照（shm 拷贝），保证 process_once 看到的就是
+  触发它的那条消息。
 
 ## 8. 验收标准
 
@@ -158,5 +162,5 @@ NativeComponentHost::prepare_components():
   - `./star build` 零错误编译
   - `./star run --frames=5 motion/component.conf control/pid/component.conf` 单进程闭环正常
   - `./star run --frames=5 --multi-process ...` 双进程 SHM 路由正常（e2e_latency_us: 300~430μs）
-  - MotionComponent: **init() 完全删除**，仅保留 process_once() + read_latest<>() + publish()
-  - ControlComponent: init() 仅保留日志，读取统一走 read_latest
+  - MotionComponent: init() 只做日志；trigger 输入走 trigger_input，setting 快照走 read_latest
+  - ControlComponent: init() 仅保留日志，轨迹走 trigger_input

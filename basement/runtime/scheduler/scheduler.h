@@ -1,10 +1,12 @@
 #ifndef __STAR_RUNTIME_SCHEDULER_SCHEDULER_H__
 #define __STAR_RUNTIME_SCHEDULER_SCHEDULER_H__
 
+#include "basement/runtime/component/frame_inputs.h"
 #include "basement/schema/builtin/runtime/process_plan.s.h"
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace star::runtime {
@@ -20,7 +22,7 @@ struct TaskDescriptor {
     std::string module_name;
     int64_t period_ms{0};
     int64_t priority{0};
-    std::function<bool(int64_t frame_id)> callback;
+    std::function<bool(const FrameInputs& inputs)> callback;
 };
 
 struct SchedulerConfig {
@@ -34,7 +36,7 @@ public:
     virtual void apply_plan(const ProcessGroupPlan& plan) = 0;
 
     virtual void register_task(const TaskDescriptor& descriptor) = 0;
-    virtual void notify(const std::string& task_name, int64_t frame_id) = 0;
+    virtual void notify(const std::string& task_name, std::shared_ptr<const FrameInputs> inputs) = 0;
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual void set_context(RuntimeContext* ctx) = 0;

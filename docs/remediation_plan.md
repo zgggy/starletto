@@ -369,7 +369,7 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 34 套 213 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
+- 34 套 214 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
 - UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
 - Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用
@@ -395,12 +395,20 @@ flowchart LR
 - 验证：`native_runner_static` 用 `static_link=true` + 不存在的
   `component_library` 仍能装配 motion；动态 runner 对同样配置明确报错。
 
+### trigger 输入语义收敛
+
+- `process_once(const FrameInputs&)`：本次触发它的消息按端口名随调用传入；
+- trigger 端口不再由 `auto_configure()` 建 latest 缓存，避免“触发帧”和“最新值”混用；
+- 非 trigger 输入（参数/配置快照）继续 `read_latest<T>()`；
+- SyncTrigger 在触发线程上把 shm 载荷拷成不可变快照，保证 process_once 看到的就是
+  触发它的那条消息；三路消息同帧进入 `FrameInputs`。
+
 ### `declare_*` 删除
 
 - `auto_configure()` 已覆盖 plan 驱动的 reader/writer/QoS/decode_policy/录制/
   bidirectional/service，因此删除 `declare_reader`/`declare_writer`/
   `declare_delivery_writer`/`write_with_delivery` 及 `delivery_writers_`。
-- ControlComponent 改为 `process_once()` 里 `read_latest<T>()`；不再有
+- ControlComponent 改为 `process_once(inputs)` 里 `trigger_input<T>()`；不再有
   “conf 一套、init 覆盖一套”的双轨装配。
 
 ### schema 解析器单一化

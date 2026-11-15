@@ -148,7 +148,7 @@ namespace star::{module} {{
 // 本模板没有端口，需要数据时按 docs/component_guide.md 增加 readers/writers。
 class {cls}Component final : public star::runtime::Component {{
   public:
-    auto process_once() -> bool override {{
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {{
         const auto& frame = context()->current_frame();
         auto input = {cls}Input{{}};
         const auto output = processor_.process(input);

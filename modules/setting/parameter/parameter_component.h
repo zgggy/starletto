@@ -63,7 +63,7 @@ public:
         }
     }
 
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         publish_snapshot();
         return static_cast<bool>(store_service_);
     }

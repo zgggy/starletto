@@ -1,4 +1,5 @@
 #include <atomic>
+#include <memory>
 #include <chrono>
 #include <stdexcept>
 #include <mutex>
@@ -6,12 +7,14 @@
 #include <thread>
 #include <vector>
 
+#include "basement/runtime/component/frame_inputs.h"
 #include "basement/runtime/scheduler/native_scheduler.h"
 
 #include "tests/support/star_test.h"
 
 namespace {
 
+using star::runtime::FrameInputs;
 using star::runtime::NativeScheduler;
 using star::runtime::SchedulerConfig;
 using star::runtime::TaskDescriptor;
@@ -20,10 +23,10 @@ struct Recorder {
     mutable std::mutex mutex;
     std::vector<int64_t> frames;
 
-    auto callback() -> std::function<bool(int64_t)> {
-        return [this](int64_t frame_id) {
+    auto callback() -> std::function<bool(const FrameInputs&)> {
+        return [this](const FrameInputs& inputs) {
             std::lock_guard<std::mutex> lock(mutex);
-            frames.push_back(frame_id);
+            frames.push_back(inputs.frame_id);
             return true;
         };
     }
@@ -39,7 +42,14 @@ struct Recorder {
     }
 };
 
-auto make_task(const std::string& name, std::function<bool(int64_t)> callback) -> TaskDescriptor {
+auto make_inputs(int64_t frame_id) -> std::shared_ptr<FrameInputs> {
+    auto inputs = std::make_shared<FrameInputs>();
+    inputs->frame_id = frame_id;
+    inputs->timestamp_ns = star::runtime::FrameContext::now_monotonic_ns();
+    return inputs;
+}
+
+auto make_task(const std::string& name, std::function<bool(const FrameInputs&)> callback) -> TaskDescriptor {
     auto descriptor = TaskDescriptor{};
     descriptor.name = name;
     descriptor.callback = std::move(callback);
@@ -57,7 +67,7 @@ TEST_CASE("NativeScheduler rejects invalid task registration") {
 
     auto threw = false;
     try {
-        scheduler.register_task(make_task("", [](int64_t) { return true; }));
+        scheduler.register_task(make_task("", [](const FrameInputs&) { return true; }));
     } catch (const star::excep::RuntimeError&) {
         threw = true;
     }
@@ -80,9 +90,9 @@ TEST_CASE("NativeScheduler delivers notified frame ids to the task callback") {
     scheduler.register_task(make_task("probe", recorder.callback()));
     scheduler.start();
 
-    scheduler.notify("probe", 1);
-    scheduler.notify("probe", 2);
-    scheduler.notify("probe", 3);
+    scheduler.notify("probe", make_inputs(1));
+    scheduler.notify("probe", make_inputs(2));
+    scheduler.notify("probe", make_inputs(3));
 
     wait_for_count(recorder, 3);
     scheduler.stop();
@@ -105,7 +115,7 @@ TEST_CASE("NativeScheduler preserves frame id order across many notifications") 
 
     constexpr int64_t kFrames = 200;
     for (int64_t frame_id = 1; frame_id <= kFrames; ++frame_id) {
-        scheduler.notify("probe", frame_id);
+        scheduler.notify("probe", make_inputs(frame_id));
     }
 
     wait_for_count(recorder, static_cast<size_t>(kFrames));
@@ -126,8 +136,8 @@ TEST_CASE("NativeScheduler flushes notifications queued before start") {
     scheduler.register_task(make_task("probe", recorder.callback()));
 
     // 未启动时 notify 应先排队，启动后统一冲刷
-    scheduler.notify("probe", 7);
-    scheduler.notify("probe", 8);
+    scheduler.notify("probe", make_inputs(7));
+    scheduler.notify("probe", make_inputs(8));
     REQUIRE_EQ(recorder.size(), 0U);
 
     scheduler.start();
@@ -162,16 +172,16 @@ TEST_CASE("NativeScheduler counts failed invocations") {
 
     auto recorder = Recorder{};
     auto task = make_task("flaky", recorder.callback());
-    task.callback = [&recorder](int64_t frame_id) -> bool {
+    task.callback = [&recorder](const FrameInputs& inputs) -> bool {
         std::lock_guard<std::mutex> lock(recorder.mutex);
-        recorder.frames.push_back(frame_id);
+        recorder.frames.push_back(inputs.frame_id);
         throw std::runtime_error("boom");
     };
     scheduler.register_task(task);
     scheduler.start();
 
-    scheduler.notify("flaky", 1);
-    scheduler.notify("flaky", 2);
+    scheduler.notify("flaky", make_inputs(1));
+    scheduler.notify("flaky", make_inputs(2));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     scheduler.stop();
 
@@ -190,10 +200,10 @@ TEST_CASE("NativeScheduler runs distinct tasks independently") {
     scheduler.register_task(make_task("second", second.callback()));
     scheduler.start();
 
-    scheduler.notify("first", 1);
-    scheduler.notify("second", 1);
-    scheduler.notify("first", 2);
-    scheduler.notify("second", 2);
+    scheduler.notify("first", make_inputs(1));
+    scheduler.notify("second", make_inputs(1));
+    scheduler.notify("first", make_inputs(2));
+    scheduler.notify("second", make_inputs(2));
 
     wait_for_count(first, 2);
     wait_for_count(second, 2);

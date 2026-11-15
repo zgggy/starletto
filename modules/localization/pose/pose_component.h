@@ -12,7 +12,7 @@ namespace star::localization {
 
 class PoseComponent final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         auto msg = star::localization::pose::Pose{};
         msg.timestamp_ns = now_ns();
         const auto t = static_cast<double>(msg.timestamp_ns) * 1e-9;

@@ -10,7 +10,7 @@ namespace {
 
 class AbiProbe final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override { return true; }
+    auto process_once(const star::runtime::FrameInputs&) -> bool override { return true; }
 };
 
 }  // namespace

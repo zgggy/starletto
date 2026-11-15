@@ -37,7 +37,7 @@ class ConfigComponent : public star::runtime::Component {
         writer_ = context()->message_bus().create_writer(writer_descriptor);
     }
 
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         write_snapshot();
         return static_cast<bool>(snapshot_);
     }

@@ -53,7 +53,7 @@ TEST_CASE("plugin with matching toolchain fingerprint loads") {
     REQUIRE(registry->contains("star::test::AbiProbe"));
     auto component = registry->create("star::test::AbiProbe");
     REQUIRE(component != nullptr);
-    REQUIRE(component->process_once());
+    REQUIRE(component->process_once(star::runtime::FrameInputs{}));
 }
 
 TEST_CASE("plugin without toolchain fingerprint is rejected") {

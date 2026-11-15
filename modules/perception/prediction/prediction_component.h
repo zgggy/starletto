@@ -12,7 +12,7 @@ namespace star::perception {
 
 class PredictionComponent final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         auto msg = star::perception::prediction::Prediction{};
         msg.timestamp_ns = now_ns();
 

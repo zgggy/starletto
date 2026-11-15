@@ -12,7 +12,7 @@ namespace star::control {
 
 class ChassisComponent final : public star::runtime::Component {
   public:
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         auto msg = star::control::chassis::Chassis{};
         msg.timestamp_ns = now_ns();
         const auto t = static_cast<double>(msg.timestamp_ns) * 1e-9;

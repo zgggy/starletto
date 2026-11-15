@@ -91,16 +91,19 @@ Runtime 必须拆分为多个子模块，避免形成一个不可维护的巨型
 class MyComponent : public star::runtime::Component {
   public:
     // init() 可为空！auto_configure 从 conf 自动创建 reader/writer
-    bool process_once() override {
-        auto input = read_latest<InputMsg>("input_name");
+    bool process_once(const FrameInputs& inputs) override {
+        // trigger 输入随本次调用传入
+        auto input = trigger_input<InputMsg>(inputs, "input_name");
+        // 非 trigger 输入仍走 latest 缓存
+        auto param = read_latest<ParamMsg>("parameter_snapshot");
         auto output = processor_.compute(input ? *input : InputMsg{});
-        publish("output", output);
+        write("output", output);
         return true;
     }
 };
 ```
 
-组件统一在 `process_once()` 里 `read_latest<T>("port")`；conf 是端口唯一声明源。
+trigger 端口用 `process_once(inputs)` 的 `trigger_input<T>()`；非 trigger 端口用 `read_latest<T>()`。conf 是端口唯一声明源。
 
 对比旧版（~250 行样板代码）→ P0 增强（~30 行）→ **auto_configure（~15 行有效代码）**。
 

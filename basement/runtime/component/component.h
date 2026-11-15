@@ -18,6 +18,7 @@
 #include "basement/core/common_types.h"
 #include "basement/core/logger/logger.h"
 #include "basement/runtime/context/frame_context.h"
+#include "basement/runtime/component/frame_inputs.h"
 #include "basement/runtime/context/runtime_context.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/transport/api/message_bus.h"
@@ -31,7 +32,7 @@ class Component {
     virtual ~Component() = default;
 
     virtual void init() {}
-    virtual auto process_once() -> bool { return true; }
+    virtual auto process_once(const FrameInputs&) -> bool { return true; }
     virtual void shutdown() {}
 
     void set_context(std::shared_ptr<RuntimeContext> context) { context_ = std::move(context); }
@@ -111,6 +112,11 @@ class Component {
         auto& bus = context_->message_bus();
         if (plan_->inputs.has_value()) {
             for (const auto& e : *plan_->inputs) {
+                // trigger 端口由 host 的 Trigger 管线接管：消息作为 FrameInputs 传入，
+                // 不再在 latest_messages_ 里缓存一份「最新值」
+                if (is_trigger_port(e.name)) {
+                    continue;
+                }
                 auto d = star::transport::ChannelDescriptor{};
                 d.name = e.channel.value_or(e.name);
                 d.type_name = e.type_name.value_or("");
@@ -309,6 +315,27 @@ class Component {
     }
 
   protected:
+    template <typename _Msg>
+    auto trigger_input(const FrameInputs& inputs, const std::string& port_name) -> std::shared_ptr<const _Msg> {
+        const auto* view = inputs.find(port_name);
+        if (view == nullptr) {
+            return nullptr;
+        }
+        return decode_message_shared<_Msg>(*view);
+    }
+
+    auto is_trigger_port(const std::string& port_name) const -> bool {
+        if (not plan_.has_value() or not plan_->trigger.has_value() or not plan_->trigger->readers.has_value()) {
+            return false;
+        }
+        for (const auto& name : *plan_->trigger->readers) {
+            if (name == port_name) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     virtual auto handle_service_request(const std::string&, const star::transport::ServiceRequest&) -> star::transport::SerializedServiceResponse {
         auto response = star::transport::ServiceResponse{};
         response.ok = false;

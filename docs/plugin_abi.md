@@ -32,7 +32,7 @@ STAR_EXPORT_TOOLCHAIN_FINGERPRINT()
 
 ## 2. 为什么终态是 C++，而不是 C ABI
 
-`Component` 的端口是模板（`read_latest<T>`/`write<T>`），消息解码依赖生成类型的
+`Component` 的端口是模板（`trigger_input<T>`/`read_latest<T>`/`write`），消息解码依赖生成类型的
 编译期信息；配置、服务、schema 注册也都建立在 C++ 类型之上。纯 C ABI 只能传
 原始字节，无法表达这套组件模型。
 

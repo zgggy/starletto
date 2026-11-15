@@ -69,7 +69,7 @@ class LifecycleProbe final : public Component {
   public:
     void init() override { events.push_back("init"); }
 
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         events.push_back("process");
         return true;
     }
@@ -101,7 +101,7 @@ auto make_plan(const std::string& channel) -> ComponentLoadPlan {
 TEST_CASE("Component lifecycle hooks run in order") {
     auto probe = LifecycleProbe{};
     probe.init();
-    REQUIRE(probe.process_once());
+    REQUIRE(probe.process_once(star::runtime::FrameInputs{}));
     probe.shutdown();
 
     REQUIRE_EQ(probe.events.size(), 3U);
@@ -113,7 +113,7 @@ TEST_CASE("Component lifecycle hooks run in order") {
 TEST_CASE("Component base class defaults are inert") {
     auto component = Component{};
     component.init();
-    REQUIRE(component.process_once());
+    REQUIRE(component.process_once(star::runtime::FrameInputs{}));
     component.shutdown();
     REQUIRE(component.load_plan() == nullptr);
     REQUIRE(component.context() == nullptr);
@@ -379,7 +379,7 @@ namespace {
 class CountingComponent final : public star::runtime::Component {
   public:
     void init() override { ++inits; }
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         calls.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
@@ -399,7 +399,7 @@ std::atomic<int> CountingComponent::inits{0};
 class FailingInitComponent final : public star::runtime::Component {
   public:
     void init() override { throw star::excep::RuntimeError("intentional init failure"); }
-    auto process_once() -> bool override {
+    auto process_once(const star::runtime::FrameInputs&) -> bool override {
         calls.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
