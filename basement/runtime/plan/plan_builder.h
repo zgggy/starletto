@@ -270,7 +270,7 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
         }
     }
 
-        if (plan.inputs.has_value()) {
+    if (plan.inputs.has_value()) {
         for (const auto& port : *plan.inputs) {
             validate_channel_address(port.channel.value_or(port.name), "inputs." + port.name);
         }
