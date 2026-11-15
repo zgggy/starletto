@@ -576,7 +576,7 @@ pending 并返回 `ok=false`。因为两条都是普通通道，路由计划、�
 bus->enable_recorder("/tmp/record.bin");
 
 // 仅录制特定通道
-bus->enable_record_channel("/sensor/lidar");
+bus->enable_record_channel("sensor.lidar");
 ```
 
 格式 v2 头部带墙钟/单调时钟双锚点，条目携带 schema 身份：
@@ -627,7 +627,7 @@ CLI：
 star record info /tmp/rec.starrec
 star replay /tmp/rec.starrec 1.0                      # 只打印
 star replay /tmp/rec.starrec 1.0 --publish            # 写回通道（默认 shm_routed）
-star replay /tmp/rec.starrec --publish --channel=planning.trajectory --repeat=2
+star replay /tmp/rec.starrec --publish --channel=/planning/trajectory --repeat=2
 star replay /tmp/rec.starrec --publish --strict       # 录制 schema 未注册/hash 不一致则失败
 ```
 
@@ -689,16 +689,30 @@ graph LR
 
 ## 12. 命名规范
 
-### 12.1 通道命名
+### 12.1 命名空间：通道是地址，schema 是类型
 
-| 类型     | 命名格式                    | 示例                                        |
-| ------ | ----------------------- | ----------------------------------------- |
-| 传感器数据  | `/sensor/{sensor_name}`    | `/sensor/lidar`, `/sensor/camera`         |
-| 控制指令   | `/cmd/{module_name}`       | `/cmd/velocity`, `/cmd/trajectory`        |
-| 状态反馈   | `/status/{module_name}`    | `/status/planning`, `/status/control`     |
-| 服务请求   | `{service}/request`        | `/parameter/get/request`                   |
-| 服务响应   | `{service}/response`       | `/parameter/get/response`                  |
-| ACK 通道 | `{channel}/ack`            | `/sensor/lidar/ack`                       |
+| 对象 | 语义 | 写法 | 示例 |
+|---|---|---|---|
+| 文件系统 / CLI 目标 | 文件在哪里 | `/`（相对） | `modules/planning/motion`、`star run planning/motion` |
+| 组件逻辑 ID | 哪个组件 | `.` | `planning.motion` |
+| **通道地址** | **数据存放在哪里** | `/`（绝对地址） | `/perception/prediction`、`/localization/pose`、`/control/chassis`、`/planning/trajectory` |
+| schema 类型名 | 数据是什么类型 | `.` | `planning.trajectory`、`setting.parameter.snapshot` |
+| C++ 类型 | 语言限定名 | `::` | `star::planning::Motion` |
+
+通道命名规则：
+
+```
+/<producer_module>/<output>[/<sub>]
+```
+
+- 通道是**存放位置/地址**，不是类型名；用绝对路径、生产者在前；
+- 示例：`/perception/prediction`、`/localization/pose`、`/control/chassis`、
+  `/setting/parameter/snapshot`；
+- 服务通道：`/setting/parameter/get/request`、`/setting/parameter/get/response`
+  （`<service>` 本身是地址，`/request`/`/response` 是子位置）；
+- schema 类型仍用点：`perception.prediction`、`planning.trajectory`；
+- 组件逻辑 ID 用点：`planning.motion`；文件路径用 `/`；
+- 不要把 schema 名直接当通道名，也不要在通道地址里用点。
 
 ### 12.2 变量命名
 

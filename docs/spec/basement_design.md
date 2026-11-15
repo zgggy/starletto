@@ -259,7 +259,7 @@ manifest 的结构（module/component/endpoint/qos/trigger）应由 `.schema` �
 
 接下来优先级（P1 后半段）：
 
-1) schema typed snapshot：让 `setting.parameter.snapshot`/`setting.config.snapshot` 彻底去掉 dump/parse
+1) schema typed snapshot：让 `/setting/parameter/snapshot`、`/setting/config/snapshot` 彻底去掉 dump/parse
 2) 进程编排完善：监督、健康检查、资源限制、默认日志规则
 3) transport 观测与统计：topic 频率/延迟/丢帧
 

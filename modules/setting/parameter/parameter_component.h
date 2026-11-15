@@ -70,7 +70,7 @@ public:
 
 private:
     static auto default_snapshot_channel_name() -> std::string {
-        return "setting.parameter.snapshot";
+        return "/setting/parameter/snapshot";
     }
 
     static auto default_snapshot_type_name() -> std::string {
@@ -85,15 +85,15 @@ private:
     }
 
     static auto default_get_service_name() -> std::string {
-        return "setting.parameter.get";
+        return "/setting/parameter/get";
     }
 
     static auto default_set_service_name() -> std::string {
-        return "setting.parameter.set";
+        return "/setting/parameter/set";
     }
 
     static auto default_list_service_name() -> std::string {
-        return "setting.parameter.list";
+        return "/setting/parameter/list";
     }
 
     auto resolve_snapshot_channel_name() const -> std::string {

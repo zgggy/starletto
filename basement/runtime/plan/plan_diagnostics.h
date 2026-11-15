@@ -22,7 +22,7 @@ inline auto find_channel_type_conflicts(const std::vector<ComponentLoadPlan>& pl
     };
 
     for (const auto& plan : plans) {
-        const auto owner = plan.module_name + "/" + plan.component_name;
+        const auto owner = plan.module_name + "." + plan.component_name;
         if (plan.outputs.has_value()) {
             for (const auto& port : *plan.outputs) {
                 const auto channel = port.channel.value_or("");

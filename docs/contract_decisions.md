@@ -250,7 +250,7 @@ RpcServer（声明式，component.conf commands 块不变）
 | 路线 | 做法 | 取舍 |
 |---|---|---|
 | 共享统计段 | 各 worker 的关键统计（每通道 hz/dropped/last_seq）定期写进一小块共享内存，monitor 读 | 无新通道；但要设计统计段布局与并发写 |
-| 统计通道 | worker 周期性发布 `starletto.stats.<group>` 通道，monitor 订阅全部 | 复用现有 transport；monitor 自己也占带宽（很小） |
+| 统计通道 | worker 周期性发布 `/starletto/stats` 通道，monitor 订阅全部 | 复用现有 transport；monitor 自己也占带宽（很小） |
 
 **建议**：统计通道路线——它复用已验证的 transport 与 P1-2 的录制能力，且 monitor 变成一个普通订阅组件，符合"业务不碰系统细节"的分层原则。
 
@@ -260,13 +260,13 @@ RpcServer（声明式，component.conf commands 块不变）
 
 - `StatsPublisher`（`basement/runtime/observability/stats_publisher.h`）由 `NativeComponentHost`
   在 start/stop 时管理，每 1s 把 `all_channel_stats()` 编码成 `WorkerStats` 发布到
-  `starletto.stats`（单一通道，进程组在消息里；monitor 只需订阅一次，避免通配符订阅）。
+  `/starletto/stats`（单一通道，进程组在消息里；monitor 只需订阅一次，避免通配符订阅）。
 - 该通道是普通通道：走路由/录制/类型校验。为跨进程可见，`ChannelRegistry` 增加
   「系统发布者」概念：登记后即使不在业务路由计划里也走 `SHM_WRITE`，且**不进入**
   业务路由表（否则会被 `register_writer` 记成无消费者的 inproc 通道）。
-- `star monitor` 变成普通订阅者：默认 `shm_routed` + 订阅 `starletto.stats`，
+- `star monitor` 变成普通订阅者：默认 `shm_routed` + 订阅 `/starletto/stats`，
   `--monitor-ms=<ms>`（默认 3000）控制观察时长，`--once` 只取一张快照。
-- 验证：单进程 worker 显示 `setting.parameter.snapshot`；多进程 supervisor 下
+- 验证：单进程 worker 显示 `/setting/parameter/snapshot`；多进程 supervisor 下
   monitor 同时显示 parameter/planning 两个 worker 的真实 pid、hz、p99、drop。
 
 ---

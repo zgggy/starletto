@@ -22,7 +22,7 @@ namespace star::runtime::observability {
 
 // 统计通道名：worker 发布、monitor 订阅的约定。它是普通通道——
 // 走路由/录制/类型校验，只是被登记为「系统发布者」以便跨进程可见。
-inline constexpr const char* kStatsChannelName = "starletto.stats";
+inline constexpr const char* kStatsChannelName = "/starletto/stats";
 
 // 周期把本进程的通道统计发布到 starletto.stats。
 // 这样 monitor 不再自指：它是普通订阅者，读到的是其它进程真实 worker 的统计。

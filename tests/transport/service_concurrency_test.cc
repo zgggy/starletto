@@ -86,7 +86,7 @@ struct EchoServer {
 // design_remedy G1：并发 N 路请求，确保无死锁/丢响应/超时
 TEST_CASE("rpc over message bus handles concurrent synchronous callers") {
     auto handler_calls = std::atomic<int>{0};
-    auto server = EchoServer{"test.rpc.sync", &handler_calls};
+    auto server = EchoServer{"/test/rpc/sync", &handler_calls};
 
     constexpr int kThreads = 8;
     constexpr int kCallsPerThread = 100;
@@ -99,7 +99,7 @@ TEST_CASE("rpc over message bus handles concurrent synchronous callers") {
 
     for (int t = 0; t < kThreads; ++t) {
         threads.emplace_back([&, t]() {
-            auto client = RpcClient{*server.bus, "test.rpc.sync"};
+            auto client = RpcClient{*server.bus, "/test/rpc/sync"};
             for (int i = 0; i < kCallsPerThread; ++i) {
                 const auto expected = t * kCallsPerThread + i;
                 const auto response = client.call_serialized(make_serialized_request(expected));
@@ -128,7 +128,7 @@ TEST_CASE("rpc over message bus handles concurrent synchronous callers") {
 
 TEST_CASE("rpc over message bus handles concurrent async callers") {
     auto handler_calls = std::atomic<int>{0};
-    auto server = EchoServer{"test.rpc.async", &handler_calls};
+    auto server = EchoServer{"/test/rpc/async", &handler_calls};
 
     constexpr int kThreads = 6;
     constexpr int kInFlight = 32;
@@ -140,7 +140,7 @@ TEST_CASE("rpc over message bus handles concurrent async callers") {
 
     for (int t = 0; t < kThreads; ++t) {
         threads.emplace_back([&, t]() {
-            auto client = RpcClient{*server.bus, "test.rpc.async"};
+            auto client = RpcClient{*server.bus, "/test/rpc/async"};
             for (int batch = 0; batch < 5; ++batch) {
                 auto futures = std::vector<std::future<star::transport::ServiceResponse>>{};
                 futures.reserve(kInFlight);
@@ -167,10 +167,10 @@ TEST_CASE("rpc over message bus handles concurrent async callers") {
 }
 
 TEST_CASE("rpc client reports channel availability") {
-    auto server = EchoServer{"test.rpc.availability", nullptr};
+    auto server = EchoServer{"/test/rpc/availability", nullptr};
 
-    auto known = RpcClient{*server.bus, "test.rpc.availability"};
-    auto unknown = RpcClient{*server.bus, "test.rpc.missing"};
+    auto known = RpcClient{*server.bus, "/test/rpc/availability"};
+    auto unknown = RpcClient{*server.bus, "/test/rpc/missing"};
 
     REQUIRE(known.available());
     REQUIRE(not unknown.available());
@@ -189,7 +189,7 @@ TEST_CASE("rpc server rejects invalid setup") {
 
     threw = false;
     try {
-        (void)RpcServer{bus, "test.rpc.nohandler", nullptr};
+        (void)RpcServer{bus, "/test/rpc/nohandler", nullptr};
     } catch (const star::excep::RuntimeError&) {
         threw = true;
     }
@@ -199,18 +199,18 @@ TEST_CASE("rpc server rejects invalid setup") {
 // 决策四的核心收益：服务流量就是普通通道流量——统计里必须看得到，
 // 这意味着录制、monitor、QoS、类型校验都自动覆盖服务，不需要第二套实现
 TEST_CASE("rpc traffic appears in ordinary channel statistics") {
-    auto server = EchoServer{"test.rpc.stats", nullptr};
-    auto client = RpcClient{*server.bus, "test.rpc.stats"};
+    auto server = EchoServer{"/test/rpc/stats", nullptr};
+    auto client = RpcClient{*server.bus, "/test/rpc/stats"};
 
     const auto response = client.call_serialized(make_serialized_request(1));
     REQUIRE(response.ok);
 
-    const auto request_stats = server.bus->channel_stats("test.rpc.stats/request");
+    const auto request_stats = server.bus->channel_stats("/test/rpc/stats/request");
     REQUIRE(request_stats.has_value());
     REQUIRE(request_stats->write_count >= 1);
     REQUIRE(request_stats->deliver_count >= 1);
 
-    const auto response_stats = server.bus->channel_stats("test.rpc.stats/response");
+    const auto response_stats = server.bus->channel_stats("/test/rpc/stats/response");
     REQUIRE(response_stats.has_value());
     REQUIRE(response_stats->write_count >= 1);
 }
@@ -218,10 +218,10 @@ TEST_CASE("rpc traffic appears in ordinary channel statistics") {
 // 服务端 handler 抛异常必须回传为 ok=false，而不是让客户端 5 秒超时
 TEST_CASE("rpc server reports handler exceptions to the caller") {
     auto bus = std::make_shared<NativeMessageBus>();
-    auto server = RpcServer{*bus, "test.rpc.throws", [](const ServiceRequest&) -> SerializedServiceResponse {
+    auto server = RpcServer{*bus, "/test/rpc/throws", [](const ServiceRequest&) -> SerializedServiceResponse {
                             throw star::excep::RuntimeError("handler exploded");
                         }};
-    auto client = RpcClient{*bus, "test.rpc.throws"};
+    auto client = RpcClient{*bus, "/test/rpc/throws"};
 
     const auto response = client.call_serialized(make_serialized_request(1));
     REQUIRE(not response.ok);

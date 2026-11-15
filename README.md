@@ -2,7 +2,7 @@
 
 ## 介绍
 
-Starletto 是一个自动驾驶开放平台，核心是一套 **Native-first** 的自研运行时底座：统一类型体系（Schema）、进程内零拷贝 / 跨进程共享内存通信（Transport）、可预测的组件运行时（Runtime），以及配套的构建/诊断/录制回放工具链。
+Starletto 是一个自动驾驶开放平台，核心是一套 **Native-first** 的自研运行时底座：统一类型体系（Schema）、进程内指针直传 / 跨进程共享内存通信（Transport）、可预测的组件运行时（Runtime），以及配套的构建/诊断/录制回放工具链。
 
 平台对标 Apollo CyberRT（强类型 + 零拷贝 + 工具闭环）、Autoware（模块边界与组件实践）与 ROS2（生态可扩展性）的能力子集，但**主线不依赖 ROS2**：主路径完全自研，与 ROS2 的 bridge 需作为独立工程接入。
 
@@ -13,7 +13,7 @@ docs/        项目文档（架构图集 / 组件开发指南 / spec / 评审 / 
 basement/    运行时底座（自底向上）
              ├── core      日志 / 异常 / 时钟 / 类型擦除指针
              ├── schema    .schema IDL + codegen + 二进制 codec + 兼容检查
-             ├── transport inproc 指针直传 / shm 零拷贝 / routed 路由 / record-replay
+             ├── transport inproc 指针直传 / shm 共享内存 / routed 路由 / record-replay
              └── runtime   组件模型 / 调度 / 插件 / 进程编排 / 健康与观测
 libraries/   算法与通用库（禁止依赖 transport/runtime）
              element（领域类型）/ method（规划算法）/ machine（行为树）/ common / tool
@@ -23,6 +23,12 @@ data/        标定与地图数据
 ```
 
 分层约束：`libraries` 只依赖 `basement/core` 与必要的数学/几何库；`runtime` 不定义业务消息结构；`transport` 不关心业务含义。
+
+各层/组件的 README：
+
+- [basement/README.md](basement/README.md)（[core](basement/core/README.md) / [schema](basement/schema/README.md) / [transport](basement/transport/README.md) / [runtime](basement/runtime/README.md)）
+- [modules/README.md](modules/README.md)（[planning](modules/planning/README.md) / [control](modules/control/README.md) / [setting](modules/setting/README.md)）
+- [apps/README.md](apps/README.md) / [tests/README.md](tests/README.md) / [tools/README.md](tools/README.md)
 
 ## 文档入口
 
@@ -77,6 +83,9 @@ data/        标定与地图数据
 
 # 运行 native runner（单进程装配 module.conf / component.conf）
 ./star run planning
+
+# 车上静态装配（内置模块已编入，不 dlopen）
+./star run --static planning
 
 # 多进程编排（按 process_group 划分，跨进程走 shm）
 ./star run --multi-process <module.conf>

@@ -74,10 +74,10 @@ flowchart LR
     end
     REC["STARREC 录制<br/>record / replay"]
 
-    CONFIG -->|"① setting.config.snapshot"| MOTION
-    PARAM -->|"② setting.parameter.snapshot"| MOTION
-    MOTION -->|"③ planning.trajectory"| PID
-    PID -->|"④ control.command"| REC
+    CONFIG -->|"① /setting/config/snapshot"| MOTION
+    PARAM -->|"② /setting/parameter/snapshot"| MOTION
+    MOTION -->|"③ /planning/trajectory"| PID
+    PID -->|"④ /control/command"| REC
     MOTION -.->|"record=true"| REC
 ```
 

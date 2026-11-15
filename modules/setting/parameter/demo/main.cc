@@ -178,9 +178,9 @@ auto build_harness(std::filesystem::path config_dir) -> ServiceHarness {
     harness.component.set_context(context);
     harness.component.set_load_plan(std::move(plan));
     harness.component.init();
-    harness.get_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "setting.parameter.get");
-    harness.set_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "setting.parameter.set");
-    harness.list_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "setting.parameter.list");
+    harness.get_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "/setting/parameter/get");
+    harness.set_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "/setting/parameter/set");
+    harness.list_client = std::make_shared<star::transport::RpcClient>(context->message_bus(), "/setting/parameter/list");
     return harness;
 }
 

@@ -75,7 +75,7 @@ namespace star::native_runner {
             }
             component_plans.push_back(*plan);
             host.load(*plan);
-            logI << "loaded component: " << plan->component_name << ", class=" << plan->component_class;
+            logI << "loaded component: " << plan->module_name << "." << plan->component_name << ", class=" << plan->component_class;
             if (plan->trigger.has_value() && plan->trigger->cycle_ms.value_or(0) > 0) {
                 const auto cycle_ms = plan->trigger->cycle_ms.value_or(0);
                 if (min_cycle_ms <= 0 || cycle_ms < min_cycle_ms) {

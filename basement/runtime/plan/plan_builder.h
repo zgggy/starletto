@@ -11,6 +11,7 @@
 
 #include "basement/core/exception.h"
 #include "basement/schema/builtin/manifest/component.s.h"
+#include "basement/transport/api/channel_address.h"
 #include "basement/schema/builtin/manifest/module.s.h"
 #include "basement/schema/builtin/runtime/component_load_plan.s.h"
 #include "basement/schema/builtin/runtime/process_plan.s.h"
@@ -55,6 +56,16 @@ inline auto resolve_port_type_name(
         return msg_type;
     }
     return type;
+}
+
+inline void validate_channel_address(const std::string& channel, const std::string& where) {
+    if (channel.empty()) {
+        return;
+    }
+    if (not star::transport::is_valid_channel_address(channel)) {
+        throw star::excep::RuntimeError("invalid channel address at ", where, ": '", channel,
+                                        "' (expect absolute path like /planning/trajectory; schema types use dots)");
+    }
 }
 
 inline auto build_component_load_plan(const ComponentConf& conf, const LoadContext& ctx) -> ComponentLoadPlan {
@@ -259,6 +270,24 @@ inline auto build_component_load_plan(const ComponentConf& conf, const LoadConte
         }
     }
 
+        if (plan.inputs.has_value()) {
+        for (const auto& port : *plan.inputs) {
+            validate_channel_address(port.channel.value_or(port.name), "inputs." + port.name);
+        }
+    }
+    if (plan.outputs.has_value()) {
+        for (const auto& port : *plan.outputs) {
+            validate_channel_address(port.channel.value_or(port.name), "outputs." + port.name);
+        }
+    }
+    if (plan.services.has_value()) {
+        for (const auto& service : *plan.services) {
+            validate_channel_address(service.channel.value_or(service.name), "commands." + service.name);
+        }
+    }
+    if (plan.health.has_value() and plan.health->channel.has_value()) {
+        validate_channel_address(*plan.health->channel, "health.channel");
+    }
     return plan;
 }
 

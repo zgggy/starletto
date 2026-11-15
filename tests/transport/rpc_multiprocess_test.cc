@@ -109,7 +109,7 @@ auto run_server_child(const std::string& service,
 TEST_CASE("rpc works across two processes over shm") {
     const auto unique = std::to_string(static_cast<long>(::getpid())) + "_" +
                         std::to_string(static_cast<long>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xffff));
-    const auto service = "test.rpc.multiproc." + unique;
+    const auto service = "/test/rpc/multiproc_" + unique;
     const auto request_channel = service + "/request";
     const auto response_channel = service + "/response";
     // 客户端生产请求、服务端消费；服务端生产响应、客户端消费
@@ -164,7 +164,7 @@ TEST_CASE("rpc works across two processes over shm") {
 TEST_CASE("rpc works across processes through system service channels") {
     const auto unique = std::to_string(static_cast<long>(::getpid())) + "_" +
                         std::to_string(static_cast<long>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xffff));
-    const auto service = "test.rpc.system." + unique;
+    const auto service = "/test/rpc/system_" + unique;
 
     int ready_pipe[2]{};
     int done_pipe[2]{};

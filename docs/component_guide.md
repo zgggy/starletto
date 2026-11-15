@@ -6,6 +6,18 @@
 
 ---
 
+## 0. 命名：路径与逻辑名
+
+- 文件系统/CLI 目标用 `/`（相对路径）：`modules/planning/motion`、`star run planning/motion`；
+- 组件逻辑 ID 用 `.`：`planning.motion`；
+- **通道是数据存放地址**，用绝对路径：`/planning/trajectory`、`/perception/prediction`、
+  `/localization/pose`、`/control/chassis`；
+- schema 是类型名，用 `.`：`planning.trajectory`、`perception.prediction`；
+- C++ 类型用 `::`：`star::planning::Motion`；
+- 服务通道：`<service>/request` / `<service>/response`（如 `/setting/parameter/get/request`）。
+
+不要把 schema 名当通道名；通道地址用 `/`，类型名用 `.`。
+
 ## 1. 总览：一个组件涉及 6 个文件
 
 ```mermaid
@@ -116,18 +128,18 @@ trigger {                          # 什么时候调 process_once
 
 readers {                          # 订阅的通道；键名 = 代码里的端口名
     parameter_snapshot {
-        channel = setting.parameter.snapshot
+        channel = /setting/parameter/snapshot
         type = star::generated::setting::parameter::snapshot::ParameterSnapshot
     }
     config_snapshot {
-        channel = setting.config.snapshot
+        channel = /setting/config/snapshot
         type = star::generated::setting::config::snapshot::ConfigSnapshot
     }
 }
 
 writers {                          # 发布的通道
     trajectory {
-        channel = planning.trajectory
+        channel = /planning/trajectory
         msg_type = star::setting::planning::TrajectoryOutput
         record = true              # 是否写入 STARREC 录制
     }
@@ -148,7 +160,7 @@ writers {                          # 发布的通道
 ```conf
 readers {
     parameter_snapshot {
-        channel = setting.parameter.snapshot
+        channel = /setting/parameter/snapshot
         type = star::generated::setting::parameter::snapshot::ParameterSnapshot
         decode_policy {
             unknown = keep         # error | keep（默认）| drop
@@ -176,7 +188,7 @@ readers {
 
 ```conf
 health {
-    channel = planning.trajectory   # 要监控的通道（省略则只查资源）
+    channel = /planning/trajectory   # 要监控的通道（省略则只查资源）
     min_hz = 10                     # 低于该频率告警
     window_ms = 2000                # 评估周期
     max_cpu_percent = 90
@@ -187,7 +199,7 @@ health {
 
 配置后，worker 进程会启动一个评估线程（未配置则不启动）：按周期检查通道频率与
 进程资源（CPU/RSS/fd），严重度变化时写日志，并把报告发布到普通通道
-`starletto.health`；`star monitor` 会直接列出未健康的组件与原因。
+`/starletto/health`；`star monitor` 会直接列出未健康的组件与原因。
 
 资源项默认 90% / 512MB / 256，只配 `channel` 也会按默认阈值检查资源；三项都不配
 则只做通道频率检查。
@@ -199,7 +211,7 @@ health {
 ```conf
 commands {                          # 本组件提供的服务（server 侧）
     get {
-        channel = setting.parameter.get
+        channel = /setting/parameter/get
         type = star::setting::service::parameter::get_request::ParameterGetRequest
         ack_type = star::setting::service::parameter::get_response::ParameterGetResponse
     }
@@ -210,7 +222,7 @@ commands {                          # 本组件提供的服务（server 侧）
 客户端直接基于同一个 `MessageBus` 调：
 
 ```cpp
-auto client = star::transport::RpcClient{context()->message_bus(), "setting.parameter.get"};
+auto client = star::transport::RpcClient{context()->message_bus(), "/setting/parameter/get"};
 auto response = client.call_serialized(make_typed_request(request));
 ```
 

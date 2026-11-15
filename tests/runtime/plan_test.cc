@@ -38,7 +38,7 @@ auto make_service_plan(const std::string& group, const std::string& service_chan
 // P1-1：服务端口必须折算成 <name>/request 与 <name>/response 两条通道，
 // 否则服务通道永远不进路由计划，跨进程 RPC 会静默超时
 TEST_CASE("build_process_plan folds service ports into channel lists") {
-    const auto plan = make_service_plan("setting", "setting.parameter.get");
+    const auto plan = make_service_plan("setting", "/setting/parameter/get");
     const auto process_plan = star::runtime::plan::build_process_plan({plan});
 
     REQUIRE(process_plan.groups.has_value());
@@ -56,9 +56,9 @@ TEST_CASE("build_process_plan folds service ports into channel lists") {
 
     // server：消费 request、生产 response
     REQUIRE(group.consumed_channels.has_value());
-    REQUIRE(contains(*group.consumed_channels, "setting.parameter.get/request"));
+    REQUIRE(contains(*group.consumed_channels, "/setting/parameter/get/request"));
     REQUIRE(group.produced_channels.has_value());
-    REQUIRE(contains(*group.produced_channels, "setting.parameter.get/response"));
+    REQUIRE(contains(*group.produced_channels, "/setting/parameter/get/response"));
 }
 
 // 决策四：服务并入通道——commands 块创建的是普通通道上的 RpcServer，
@@ -88,10 +88,10 @@ TEST_CASE("a service declared in the plan is callable over ordinary channels") {
 
     auto probe = ServiceEchoProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_service_plan("setting", "test.rpc.plan.service"));
+    probe.set_load_plan(make_service_plan("setting", "/test/rpc/plan/service"));
     probe.auto_configure();
 
-    auto client = star::transport::RpcClient{context->message_bus(), "test.rpc.plan.service"};
+    auto client = star::transport::RpcClient{context->message_bus(), "/test/rpc/plan/service"};
     REQUIRE(client.available());
 
     const auto payload = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{0x11, 0x22, 0x33});
@@ -137,7 +137,7 @@ TEST_CASE("component health block flows into the load plan") {
     using star::generated::manifest::component::HealthConf;
 
     auto health = HealthConf{};
-    health.channel = std::string("planning.trajectory");
+    health.channel = std::string("/planning/trajectory");
     health.min_hz = 10.0;
     health.window_ms = int64_t{1500};
     health.max_cpu_percent = 75.0;
@@ -154,12 +154,33 @@ TEST_CASE("component health block flows into the load plan") {
     ctx.module_name = "planning";
     const auto plan = star::runtime::plan::build_component_load_plan(component_conf, ctx);
     REQUIRE(plan.health.has_value());
-    REQUIRE_EQ(plan.health->channel.value_or(""), std::string("planning.trajectory"));
+    REQUIRE_EQ(plan.health->channel.value_or(""), std::string("/planning/trajectory"));
     REQUIRE_EQ(plan.health->min_hz.value_or(0.0), 10.0);
     REQUIRE_EQ(plan.health->window_ms.value_or(0), int64_t{1500});
     REQUIRE_EQ(plan.health->max_cpu_percent.value_or(0.0), 75.0);
     REQUIRE_EQ(plan.health->max_rss_mb.value_or(0), int64_t{256});
     REQUIRE_EQ(plan.health->max_fd_count.value_or(0), int64_t{128});
+}
+
+// 通道是数据存放地址：plan 只接受绝对路径；schema 名（点）不能直接当通道
+TEST_CASE("plan rejects a relative or dotted channel address") {
+    using star::generated::manifest::component::ComponentConf;
+
+    const auto value = star::schema::SchemaParser{
+        "component { name = motion; type = planning; component_class = star::planning::Motion } "
+        "readers { in { channel = planning.trajectory } }"}
+                           .parse();
+    const auto conf = ComponentConf::from_value(value);
+
+    auto ctx = star::runtime::plan::LoadContext{};
+    ctx.module_name = "planning";
+    auto threw = false;
+    try {
+        (void)star::runtime::plan::build_component_load_plan(conf, ctx);
+    } catch (const star::excep::RuntimeError&) {
+        threw = true;
+    }
+    REQUIRE(threw);
 }
 
 // P2.1：conf 未知键必须报错；此前拼错 readers 会静默不订阅

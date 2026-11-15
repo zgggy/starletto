@@ -101,23 +101,23 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    CFG["<b>setting/config</b><br/>in: files/*.conf<br/>out: setting.config.snapshot<br/>周期 1000ms"]
-    PAR["<b>setting/parameter</b><br/>in: parameter/config<br/>out: setting.parameter.snapshot<br/>+ 3 个参数服务"]
-    MOT["<b>planning/motion</b><br/>in: config.snapshot + parameter.snapshot<br/>out: planning.trajectory<br/>SyncTrigger：两路到齐才跑"]
-    PID["<b>control/pid</b><br/>in: planning.trajectory<br/>out: control.command<br/>数据驱动：来一帧跑一次"]
+    CFG["<b>setting.config</b><br/>in: files/*.conf<br/>out: /setting/config/snapshot<br/>周期 1000ms"]
+    PAR["<b>setting.parameter</b><br/>in: parameter/config<br/>out: /setting/parameter/snapshot<br/>+ 3 个参数服务"]
+    MOT["<b>planning.motion</b><br/>in: config.snapshot + parameter.snapshot<br/>out: /planning/trajectory<br/>SyncTrigger：两路到齐才跑"]
+    PID["<b>control.pid</b><br/>in: /planning/trajectory<br/>out: /control/command<br/>数据驱动：来一帧跑一次"]
 
-    CFG -->|"setting.config.snapshot"| MOT
-    PAR -->|"setting.parameter.snapshot"| MOT
-    MOT -->|"planning.trajectory"| PID
-    PID -->|"control.command"| REC["STARREC 录制"]
+    CFG -->|"/setting/config/snapshot"| MOT
+    PAR -->|"/setting/parameter/snapshot"| MOT
+    MOT -->|"/planning/trajectory"| PID
+    PID -->|"/control/command"| REC["STARREC 录制"]
 ```
 
 | 组件 | 输入 | 处理 | 输出 | 触发方式 |
 |---|---|---|---|---|
-| `setting/config` | 5 个 `.conf` 文件 | 解析成 `ConfigSnapshot` | `setting.config.snapshot` | 1000ms 定时 |
-| `setting/parameter` | 参数配置文件 | 维护 typed 参数表，响应 get/set/list 服务 | `setting.parameter.snapshot` | 1000ms 定时 |
-| `planning/motion` | 上面两个快照 | 读参数 → 生成轨迹（**当前是玩具实现**） | `planning.trajectory` | 两路快照都到齐 |
-| `control/pid` | `planning.trajectory` | PID 算油门/刹车/转向 | `control.command`（并录制） | 每来一帧 |
+| `setting.config` | 5 个 `.conf` 文件 | 解析成 `ConfigSnapshot` | `/setting/config/snapshot` | 1000ms 定时 |
+| `setting.parameter` | 参数配置文件 | 维护 typed 参数表，响应 get/set/list 服务 | `/setting/parameter/snapshot` | 1000ms 定时 |
+| `planning.motion` | 上面两个快照 | 读参数 → 生成轨迹（**当前是玩具实现**） | `/planning/trajectory` | 两路快照都到齐 |
+| `control.pid` | `/planning/trajectory` | PID 算油门/刹车/转向 | `/control/command`（并录制） | 每来一帧 |
 
 ## 3. 一个业务模块的内部结构
 

@@ -77,7 +77,7 @@ record/replay 是自动驾驶系统工程化的必备能力：
 ./build/apps/native_runner/native_runner \
   --worker --transport=shm_routed \
   --process-group=planning \
-  --route-plan="planning.trajectory|planning|control" \
+  --route-plan="/planning/trajectory|planning|control" \
   --frames=100 \
   modules/planning/motion/component.conf
 ```

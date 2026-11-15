@@ -219,7 +219,7 @@ namespace star::native_runner {
         }
 
         if (routed->shm_available()) {
-            const auto service_name = "selftest.service." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+            const auto service_name = "/starletto/selftest/service_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
             const auto req_topic = service_name + "/request";
             const auto resp_topic = service_name + "/response";
 

@@ -116,7 +116,7 @@
 
 **修复（三处联动）**：
 1. `RuntimeFactory`：`shm_routed` 下创建 `ShmServiceBus`（依赖 routed 总线的通道与路由），其余情况保持 `NativeServiceBus`
-2. `build_process_plan`：把 `plan.services` 折算成 `<name>/request` 与 `<name>/response` 两条通道（server 消费 request / 生产 response，client 反之），使它们进入路由计划；`plan_builder` 把 `commands` 块标记为 `role=server`
+2. `build_process_plan`：把 `plan.services` 折算成 `<name>.request` 与 `<name>.response` 两条通道（server 消费 request / 生产 response，client 反之），使它们进入路由计划；`plan_builder` 把 `commands` 块标记为 `role=server`
 3. `parameter_component` 改为**声明式**：服务由 `component.conf` 的 `commands` 块声明、`auto_configure` 创建、`handle_service_request` 按端口名分发；conf 未声明时（工具侧直接实例化组件）退回内置注册，保持 `star param` 可用
 
 **验证**：新增 3 个用例——`build_process_plan` 折算出两条通道、`shm_routed` 下工厂返回 `ShmServiceBus`、默认传输仍是 `NativeServiceBus`。多进程 `star run --multi-process setting` 两 worker 正常退出；`star param list/get` 正常。
@@ -369,7 +369,7 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 34 套 212 用例全绿；`star check` 16/16；install-smoke 用安装树 runner 实跑；
+- 34 套 213 用例全绿；`star check` 16/16；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
 - UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
 - Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用

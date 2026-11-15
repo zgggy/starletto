@@ -124,7 +124,7 @@ flowchart LR
 |---|---|---|
 | **进程 process** | 一个独立运行的程序，有自己独立的内存，进程之间不能直接读对方变量 | `star run --multi-process` 会起多个进程 |
 | **线程 thread** | 同一进程内的多条执行流，共享同一份内存 | 调度器 worker、每个订阅者的轮询线程 |
-| **通道 channel** | 一条命名的话题，发布者往里写，订阅者从里读 | `planning.trajectory`、`control.command` |
+| **通道 channel** | 一条命名的话题，发布者往里写，订阅者从里读 | `/planning/trajectory`、`/control/command` |
 | **零拷贝** | 数据只写一次内存，读的一方直接看那块内存，不复制 | 跨进程走 shm；同进程直接传指针 |
 | **共享内存 shm** | 一块能被多个进程同时映射的内存 | `/dev/shm` 里的段，4 槽环形缓冲 |
 | **插件 plugin** | 编译成独立 `.so` 的代码，运行时才加载进来 | `libmotion.so` 等 4 个 |

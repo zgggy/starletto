@@ -346,17 +346,17 @@ Schema 运行时至少提供：
 ### 9.3 当前已落到主链路的部分
 
 - manifest 解析入口已优先转为生成态 typed manifest
-- `setting.parameter.snapshot` 发布生成态 `ParameterSnapshot`
-- `setting.config.snapshot` 发布生成态 `ConfigSnapshot`
+- `/setting/parameter/snapshot` 发布生成态 `ParameterSnapshot`
+- `/setting/config/snapshot` 发布生成态 `ConfigSnapshot`
 - `planning.motion` 已优先订阅生成态 snapshot，并直接读取 `payload_binary`
 - `setting/config/files` 已达到 `binary_only=5, debug_text_only=0`
-- `setting.parameter.get/set/list` 已具备 typed request/response 主路径
+- `/setting/parameter/get`、`/setting/parameter/set`、`/setting/parameter/list` 已具备 typed request/response 主路径
 
 ## 10. Schema v1 验收标准
 
 最小验收：
 
-- `setting.parameter.snapshot` 与 `setting.config.snapshot` 使用 schema binary + shm loan/view
+- `/setting/parameter/snapshot` 与 `/setting/config/snapshot` 使用 schema binary + shm loan/view
 - 单进程仍走指针传递，不发生序列化
 - `star record/replay` 能记录并回放这两条 channel
 
@@ -371,7 +371,7 @@ Schema 运行时至少提供：
   - producer 必须写 `payload_binary`
   - consumer 不再回退 `debug_text`
 - `modules/setting/config/files` 下 5 条 entry 必须全部进入 schema-known 集合
-- `setting.parameter.get/set/list` 必须定义显式 request/response schema
+- `/setting/parameter/get`、`/setting/parameter/set`、`/setting/parameter/list` 必须定义显式 request/response schema
 
 ## 11. 本轮验收命令
 

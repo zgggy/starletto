@@ -43,7 +43,7 @@ class ConfigComponent : public star::runtime::Component {
     }
 
   private:
-    static auto default_snapshot_channel_name() -> std::string { return "setting.config.snapshot"; }
+    static auto default_snapshot_channel_name() -> std::string { return "/setting/config/snapshot"; }
 
     static auto default_snapshot_type_name() -> std::string { return "star::generated::setting::config::snapshot::ConfigSnapshot"; }
 

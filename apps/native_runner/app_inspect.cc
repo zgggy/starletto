@@ -55,7 +55,7 @@ namespace star::native_runner {
                     std::cout << "component <invalid> conf=" << component_conf << "\n";
                     continue;
                 }
-                std::cout << "component " << component_plan->module_name << "/" << component_plan->component_name << " class=" << component_plan->component_class
+                std::cout << "component " << component_plan->module_name << "." << component_plan->component_name << " class=" << component_plan->component_class
                           << " lib=" << component_plan->component_library.value_or("") << " conf=" << component_conf << "\n";
             }
         }
@@ -123,7 +123,7 @@ namespace star::native_runner {
         };
 
         for (const auto& c : components) {
-            const auto id = c.module_name + "/" + c.component_name;
+            const auto id = c.module_name + "." + c.component_name;
             std::cout << "  \"" << escape(id) << "\" [shape=box];\n";
         }
 
@@ -145,7 +145,7 @@ namespace star::native_runner {
         }
 
         for (const auto& c : components) {
-            const auto id = c.module_name + "/" + c.component_name;
+            const auto id = c.module_name + "." + c.component_name;
             for (const auto& e : c.outputs.value_or(std::vector<star::runtime::plan::PortPlan>{})) {
                 if (e.channel.has_value()) {
                     std::cout << "  \"" << escape(id) << "\" -> \"" << escape(*e.channel) << "\";\n";
