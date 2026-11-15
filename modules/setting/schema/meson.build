@@ -17,6 +17,8 @@ schema_gen_modules_setting_schema = custom_target(
 )
 
 subdir('config')
+subdir('perception')
+subdir('localization')
 subdir('control')
 subdir('planning')
 subdir('service')

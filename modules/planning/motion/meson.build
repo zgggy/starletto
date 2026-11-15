@@ -5,7 +5,7 @@ motion_sources = files(
 
 motion_dep = declare_dependency(
     sources: motion_sources,
-    dependencies: [planning_dep],
+    dependencies: [planning_dep, setting_dep],
 )
 
 install_data(

@@ -369,7 +369,7 @@ flowchart LR
 **验证**：
 
 - 新增 `runtime_plugin_abi` 3 用例：正常插件加载、缺指纹拒绝、指纹不一致拒绝；
-- 34 套 213 用例全绿；`star check` 16/16；install-smoke 用安装树 runner 实跑；
+- 34 套 213 用例全绿；`star check` 18/18；install-smoke 用安装树 runner 实跑；
 - shm 新增 1 用例：无帧载荷被丢弃、`dropped_count` 可见；
 - UBSan 构建 34/34 全绿（连续 3 次全量复跑）；
 - Linux ASan 首轮抓到两处真实问题并已修：参数测试对临时 `SchemaValue` 取引用
@@ -391,7 +391,7 @@ flowchart LR
 - `static_link=true` 的语义收紧：类未注册时启动失败并提示使用静态 runner，
   不再静默跳过 dlopen。
 - `star run --static`、安装 `native_runner_static`、`install-smoke` 安装树静态
-  runner 实跑；`star check` 新增 `runtime-smoke-static` 门禁（16/16）。
+  runner 实跑；`star check` 新增 `runtime-smoke-static` 门禁（18/18）。
 - 验证：`native_runner_static` 用 `static_link=true` + 不存在的
   `component_library` 仍能装配 motion；动态 runner 对同样配置明确报错。
 

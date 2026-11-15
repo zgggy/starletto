@@ -10,6 +10,9 @@
 #include "modules/setting/schema/config/system.s.h"
 #include "modules/setting/schema/config_snapshot.s.h"
 #include "modules/setting/schema/parameter_snapshot.s.h"
+#include "modules/setting/schema/control/chassis.s.h"
+#include "modules/setting/schema/localization/pose.s.h"
+#include "modules/setting/schema/perception/prediction.s.h"
 #include "modules/setting/schema/planning/motion.s.h"
 #include "modules/setting/schema/planning/trajectory.s.h"
 
@@ -24,7 +27,21 @@ class MotionComponent : public star::runtime::Component {
         }
         maybe_log_first_parameter_snapshot();
         maybe_log_first_config_snapshot();
+
         auto input = MotionInput{};
+        if (auto pose = read_latest<star::localization::pose::Pose>("localization")) {
+            input.vehicle_x = pose->x;
+            input.vehicle_y = pose->y;
+            input.vehicle_heading = pose->heading;
+            input.vehicle_velocity = pose->linear_velocity;
+        }
+        if (auto chassis = read_latest<star::control::chassis::Chassis>("chassis")) {
+            // 底盘反馈优先于定位里的速度
+            input.vehicle_velocity = chassis->speed;
+        }
+        if (auto prediction = read_latest<star::perception::prediction::Prediction>("prediction")) {
+            logD << "MotionComponent inputs: predicted_objects=" << prediction->objects.size() << ", v=" << input.vehicle_velocity;
+        }
         auto output = processor_.process(input);
         if (not output.points.empty()) {
             logI << "TrajectoryOutput: frame=" << output.frame_id << ", points=" << output.points.size() << ", first=(" << output.points.front().x << "," << output.points.front().y

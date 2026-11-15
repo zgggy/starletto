@@ -81,7 +81,7 @@ tools/tests/oot_plugin_smoke.sh build
 ```
 
 它会在临时 DESTDIR 下安装、生成 schema、编译插件、`doctor --deep` 并运行；
-`star check` 已把它作为 `install-smoke` 门禁（16/16）。
+`star check` 已把它作为 `install-smoke` 门禁（18/18）。
 
 ## 3. 静态部署（车上）
 

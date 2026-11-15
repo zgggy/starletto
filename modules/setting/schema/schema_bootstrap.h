@@ -11,6 +11,9 @@
 #include "modules/setting/schema/config/vehicle.s.h"
 #include "modules/setting/schema/config_snapshot.s.h"
 #include "modules/setting/schema/control/command.s.h"
+#include "modules/setting/schema/control/chassis.s.h"
+#include "modules/setting/schema/localization/pose.s.h"
+#include "modules/setting/schema/perception/prediction.s.h"
 #include "modules/setting/schema/parameter_snapshot.s.h"
 #include "modules/setting/schema/planning/motion.s.h"
 #include "modules/setting/schema/planning/trajectory.s.h"
@@ -44,6 +47,9 @@ inline auto register_setting_schemas(star::schema::SchemaRegistry& registry) -> 
     star::setting::config::vehicle::VehicleConfig::register_schema(registry);
     star::setting::planning::TrajectoryOutput::register_schema(registry);
     star::setting::control::ControlCommand::register_schema(registry);
+    star::control::chassis::Chassis::register_schema(registry);
+    star::localization::pose::Pose::register_schema(registry);
+    star::perception::prediction::Prediction::register_schema(registry);
 }
 
 }  // namespace star::setting::schema

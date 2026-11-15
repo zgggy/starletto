@@ -1,0 +1,14 @@
+schema localization.pose
+root Pose
+namespace star.localization.pose
+version 1
+
+def Pose {
+    1 timestamp_ns : int64
+    2 x : double
+    3 y : double
+    4 z : double
+    5 heading : double
+    6 linear_velocity : double
+    7 angular_velocity : double
+}

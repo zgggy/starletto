@@ -87,6 +87,16 @@ data/        标定与地图数据
 # 车上静态装配（内置模块已编入，不 dlopen）
 ./star run --static planning
 
+# 假上游联调：三个 stub 节点驱动 planning + control 闭环
+./star run --frames=20 --sleep-ms=50 \
+  modules/setting/config/component.conf \
+  modules/setting/parameter/component.conf \
+  modules/perception/prediction/component.conf \
+  modules/localization/pose/component.conf \
+  modules/control/chassis/component.conf \
+  modules/planning/motion/component.conf \
+  modules/control/pid/component.conf
+
 # 多进程编排（按 process_group 划分，跨进程走 shm）
 ./star run --multi-process <module.conf>
 

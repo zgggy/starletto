@@ -11,6 +11,11 @@ pid_dep = declare_dependency(
     ],
 )
 
+install_data(
+    'component.conf',
+    install_dir: 'modules/control/pid',
+)
+
 shared_library(
     'pid',
     files('register.cc'),

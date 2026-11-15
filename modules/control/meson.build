@@ -21,3 +21,4 @@ install_data(
 )
 
 subdir('pid')
+subdir('chassis')

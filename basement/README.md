@@ -34,7 +34,7 @@ flowchart LR
 ```bash
 ./star build
 ./star test          # 34 套 213 用例
-./star check          # 16/16
+./star check          # 18/18
 ```
 
 更完整的契约见 [../docs/spec/](../docs/spec/) 与 [../docs/architecture/](../docs/architecture/)。

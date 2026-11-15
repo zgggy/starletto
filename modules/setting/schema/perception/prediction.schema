@@ -1,0 +1,19 @@
+schema perception.prediction
+root Prediction
+namespace star.perception.prediction
+version 1
+
+def PredictedObject {
+    1 id : int64
+    2 x : double
+    3 y : double
+    4 heading : double
+    5 velocity : double
+    6 length : double
+    7 width : double
+}
+
+def Prediction {
+    1 timestamp_ns : int64
+    2 objects : PredictedObject[]
+}

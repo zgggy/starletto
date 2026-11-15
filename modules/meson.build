@@ -3,6 +3,8 @@
 static_component_symbols = []
 static_component_static_libs = []
 
-subdir('planning')
 subdir('setting')
+subdir('perception')
+subdir('localization')
+subdir('planning')
 subdir('control')

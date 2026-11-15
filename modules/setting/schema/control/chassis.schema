@@ -1,0 +1,13 @@
+schema control.chassis
+root Chassis
+namespace star.control.chassis
+version 1
+
+def Chassis {
+    1 timestamp_ns : int64
+    2 speed : double
+    3 steering_angle : double
+    4 throttle : double
+    5 brake : double
+    6 gear : int64
+}

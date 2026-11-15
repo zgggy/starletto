@@ -1,36 +1,54 @@
 # planning.motion
 
-规划示例组件，用来验证 runtime/transport 的装配、调度与录制闭环。
+规划示例组件，用来验证 runtime/transport 的装配、调度、录制闭环。
+主 trigger 现在由三路**假上游节点**驱动，三路都到齐才跑一次：
 
-## 当前已接线
+```mermaid
+flowchart LR
+    PRED["perception.prediction<br/>/perception/prediction"] --> MOTION
+    LOC["localization.pose<br/>/localization/pose"] --> MOTION
+    CH["control.chassis<br/>/control/chassis"] --> MOTION
+    MOTION["planning.motion"] --> TRAJ["/planning/trajectory"]
+```
 
-| 方向 | 端口 | 通道 | 类型 |
+## 端口
+
+| 方向 | 端口 | 通道 | 用途 |
 |---|---|---|---|
-| 读 | `parameter_snapshot` | `/setting/parameter/snapshot` | `ParameterSnapshot` |
-| 读 | `config_snapshot` | `/setting/config/snapshot` | `ConfigSnapshot` |
-| 写 | `trajectory` | `/planning/trajectory` | `TrajectoryOutput` |
+| 读 | `prediction` | `/perception/prediction` | 假预测目标 |
+| 读 | `localization` | `/localization/pose` | 车辆位姿/速度 |
+| 读 | `chassis` | `/control/chassis` | 底盘速度（优先于定位速度） |
+| 读 | `parameter_snapshot` | `/setting/parameter/snapshot` | 规划参数 |
+| 读 | `config_snapshot` | `/setting/config/snapshot` | 系统配置 |
+| 写 | `trajectory` | `/planning/trajectory` | 轨迹（record=true） |
 
-Trigger：`readers [parameter_snapshot, config_snapshot]` + `cycle_ms=100`，
-两路快照到齐后按 sync 语义运行。
+Trigger：`type = channel`，`readers [prediction, localization, chassis]`；
+设置快照只读，不参与 trigger。
 
-## 目标主链路（待上游模块接入）
+## 假上游
 
-按最终数据流，`planning.motion` 的主 trigger 应该来自：
+- [perception.prediction](../../perception/prediction/README.md)
+- [localization.pose](../../localization/pose/README.md)
+- [control.chassis](../../control/chassis/README.md)
 
-| 来源模块 | 逻辑组件 ID | 输入通道 |
-|---|---|---|
-| perception/prediction | `perception.prediction` | `/perception/prediction` |
-| localization/pose | `localization.pose` | `/localization/pose` |
-| control/chassis | `control.chassis` | `/control/chassis` |
-
-这些模块/通道尚未实现，所以现在不能写进 `trigger.readers`——否则
-SyncTrigger 会永远等不到帧，planning 无法启动。等上游落地后：
-
-1. 在 `component.conf` 的 `readers` 增加三个端口（名字与通道一致）；
-2. 在 `motion_component.h` 的 `process_once()` 用
-   `read_latest<T>("perception_prediction")` 等读取；
-3. 把 `trigger.readers` 扩为四路（含两路 setting snapshot），确认 sync 语义。
+它们只生成固定/正弦的合成数据，用于让 planning 与 control 闭环先跑起来；
+不包含感知、定位或底盘算法。替换为真实模块时保持同名通道与 schema 即可。
 
 ## 资产
 
 `frame/`、`machine/` 是规划数据模型与状态机骨架，当前未接线但按设计保留。
+
+## 联调命令
+
+```bash
+./star run --frames=20 --sleep-ms=50 \
+  modules/setting/config/component.conf \
+  modules/setting/parameter/component.conf \
+  modules/perception/prediction/component.conf \
+  modules/localization/pose/component.conf \
+  modules/control/chassis/component.conf \
+  modules/planning/motion/component.conf \
+  modules/control/pid/component.conf
+```
+
+静态部署同样命令加 `--static`。

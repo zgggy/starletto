@@ -123,7 +123,14 @@ if [ ! -x "${STATIC_RUNNER}" ]; then
     echo "[E] install surface missing: native_runner_static" >&2
     exit 1
 fi
-"${STATIC_RUNNER}" --frames=2 --sleep-ms=10 "${STAGE}/modules/planning/motion/component.conf" >/dev/null
+"${STATIC_RUNNER}" --frames=20 --sleep-ms=50 \
+    "${STAGE}/modules/setting/config/component.conf" \
+    "${STAGE}/modules/setting/parameter/component.conf" \
+    "${STAGE}/modules/perception/prediction/component.conf" \
+    "${STAGE}/modules/localization/pose/component.conf" \
+    "${STAGE}/modules/control/chassis/component.conf" \
+    "${STAGE}/modules/planning/motion/component.conf" \
+    "${STAGE}/modules/control/pid/component.conf" >/dev/null
 echo "[i] installed static runner ok"
 
 echo "[OK] out-of-tree plugin smoke passed"

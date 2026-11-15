@@ -119,6 +119,33 @@ flowchart LR
 | `planning.motion` | 上面两个快照 | 读参数 → 生成轨迹（**当前是玩具实现**） | `/planning/trajectory` | 两路快照都到齐 |
 | `control.pid` | `/planning/trajectory` | PID 算油门/刹车/转向 | `/control/command`（并录制） | 每来一帧 |
 
+### 2.2.1 假上游联调（planning 闭环）
+
+上游真实模块未实现时，用三个 stub 节点驱动 planning：
+
+| stub 组件 | 发布通道 | 作用 |
+|---|---|---|
+| `perception.prediction` | `/perception/prediction` | 合成预测目标 |
+| `localization.pose` | `/localization/pose` | 合成车辆位姿/速度 |
+| `control.chassis` | `/control/chassis` | 合成底盘速度/转角/档位 |
+
+完整闭环（setting + 假上游 + planning + control）：
+
+```bash
+./star run --frames=20 --sleep-ms=50 \
+  modules/setting/config/component.conf \
+  modules/setting/parameter/component.conf \
+  modules/perception/prediction/component.conf \
+  modules/localization/pose/component.conf \
+  modules/control/chassis/component.conf \
+  modules/planning/motion/component.conf \
+  modules/control/pid/component.conf
+```
+
+`planning.motion` 的 SyncTrigger 等三路假上游到齐后运行，输出 `/planning/trajectory`；
+`control.pid` 消费轨迹并写 `/control/command`。部署时把 stub 替换成真实实现，
+通道地址与 schema 不变。
+
 ## 3. 一个业务模块的内部结构
 
 ```mermaid

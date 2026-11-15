@@ -12,6 +12,8 @@ setting_dep = declare_dependency(
     sources: [
         schema_gen_modules_setting_schema,
         schema_gen_modules_setting_schema_config,
+        schema_gen_modules_setting_schema_perception,
+        schema_gen_modules_setting_schema_localization,
         schema_gen_modules_setting_schema_control,
         schema_gen_modules_setting_schema_planning,
         schema_gen_modules_setting_schema_service,

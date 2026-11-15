@@ -2,8 +2,8 @@
 # 输出到 build dir；改 .schema 会触发重新生成，杜绝源/生成物漂移）
 schema_gen_modules_setting_schema_control = custom_target(
     'gen_modules_setting_schema_control',
-    input: files('command.schema'),
-    output: ['command.s.h'],
+    input: files('command.schema', 'chassis.schema'),
+    output: ['command.s.h', 'chassis.s.h'],
     command: [
         codegen_py,
         codegen_script,

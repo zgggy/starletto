@@ -719,7 +719,16 @@ check_static_smoke() {
     local tmp
     tmp=$(mktemp)
     sed 's|component_library = .*|component_library = libmust_not_dlopen.so\n    static_link = true|' "$conf" > "$tmp"
-    if ! "$runner" --frames=2 --sleep-ms=10 "$tmp" >/dev/null 2>&1; then
+    local confs=(
+        "${PROJECT_ROOT}/modules/setting/config/component.conf"
+        "${PROJECT_ROOT}/modules/setting/parameter/component.conf"
+        "${PROJECT_ROOT}/modules/perception/prediction/component.conf"
+        "${PROJECT_ROOT}/modules/localization/pose/component.conf"
+        "${PROJECT_ROOT}/modules/control/chassis/component.conf"
+        "$tmp"
+        "${PROJECT_ROOT}/modules/control/pid/component.conf"
+    )
+    if ! "$runner" --frames=20 --sleep-ms=50 "${confs[@]}" >/dev/null 2>&1; then
         rm -f "$tmp"
         log_error "静态装配冒烟失败: ${conf}"
         return 1
@@ -742,7 +751,16 @@ check_runtime_smoke() {
         log_error "找不到冒烟用组件配置: ${conf}"
         return 1
     fi
-    if ! "$runner" --transport=shm_routed --frames=0 --sleep-ms=0 --record-file="$record_file" "$conf" >/dev/null 2>&1; then
+    local confs=(
+        "${PROJECT_ROOT}/modules/setting/config/component.conf"
+        "${PROJECT_ROOT}/modules/setting/parameter/component.conf"
+        "${PROJECT_ROOT}/modules/perception/prediction/component.conf"
+        "${PROJECT_ROOT}/modules/localization/pose/component.conf"
+        "${PROJECT_ROOT}/modules/control/chassis/component.conf"
+        "${PROJECT_ROOT}/modules/planning/motion/component.conf"
+        "${PROJECT_ROOT}/modules/control/pid/component.conf"
+    )
+    if ! "$runner" --transport=shm_routed --frames=20 --sleep-ms=50 --record-file="$record_file" "${confs[@]}" >/dev/null 2>&1; then
         log_error "运行时冒烟失败: runner 未能完成装配/启动/停止"
         rm -f "$record_file"
         return 1

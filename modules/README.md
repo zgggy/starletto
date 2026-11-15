@@ -15,6 +15,14 @@
 
 通道地址是数据存放位置（生产者在前）；schema 类型名才用点。
 
+当前模块：
+
+- [setting](setting/README.md)：配置/参数 + 公共消息 schema
+- [perception](perception/README.md)：`perception.prediction` stub
+- [localization](localization/README.md)：`localization.pose` stub
+- [planning](planning/README.md)：`planning.motion`
+- [control](control/README.md)：`control.pid`、`control.chassis` stub
+
 ## 目录约定
 
 ```
