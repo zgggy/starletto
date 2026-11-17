@@ -138,7 +138,7 @@ YYYY-MM-DDTHH:MM:SS.uuuuuu LEVEL [TID] file:line function message
 
 ### 8.2 接口（历史）
 
-文件：[`iclock.h`](../../basement/core/iclock.h)（已删除，仅留档）
+文件：`iclock.h`（已删除，仅留档）
 
 ```cpp
 class IClock {

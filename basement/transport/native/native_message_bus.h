@@ -19,6 +19,7 @@
 #include "basement/core/exception.h"
 #include "basement/core/logger/logger.h"
 #include "basement/transport/api/channel_registry.h"
+#include "basement/transport/api/channel_address.h"
 #include "basement/transport/api/message_bus.h"
 #include "basement/transport/common/channel_stats.h"
 #include "basement/transport/common/qos_manager.h"
@@ -37,8 +38,8 @@ class NativeMessageBus final : public MessageBus, public RecordableBus, public s
     ~NativeMessageBus() override = default;
 
     void declare_channel(const ChannelDescriptor& descriptor) override {
-        if (descriptor.name.empty()) {
-            throw star::excep::RuntimeError("NativeMessageBus declare_channel failed, empty channel name");
+        if (not star::transport::is_valid_channel_address(descriptor.name)) {
+            throw star::excep::RuntimeError("invalid channel address: '", descriptor.name, "' (expect absolute path like /planning/trajectory)");
         }
         validate_qos_options(descriptor.options, descriptor.name);
         std::lock_guard<std::mutex> lock(mutex_);

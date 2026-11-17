@@ -39,7 +39,7 @@ auto make_entry(const std::string& channel, const std::string& type_name, star::
 TEST_CASE("MessagePublisher writes recorded bytes back to a channel") {
     auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.replay.publish.native";
+    descriptor.name = "/test/replay/publish/native";
     descriptor.type_name = "test.Msg";
     descriptor.schema_type_id = star::schema::SchemaTypeId{"test.replay.msg", 2, 0xABCD};
 
@@ -72,7 +72,7 @@ TEST_CASE("MessagePublisher writes recorded bytes back to a channel") {
 
 // CLI 的发布路径：routed 总线按通道集合写 shm，另一个总线按订阅集合读
 TEST_CASE("MessagePublisher feeds a consumer through the routed shm path") {
-    const auto channel = std::string("test.replay.publish.routed");
+    const auto channel = std::string("/test/replay/publish/routed");
 
     auto publisher_bus = std::make_shared<ShmRoutedMessageBus>();
     REQUIRE(publisher_bus->shm_available());

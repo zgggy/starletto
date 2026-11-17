@@ -78,7 +78,7 @@ TEST_CASE("shm high frequency writes never tear a delayed read") {
 
     const auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.shm.stress";
+    descriptor.name = "/test/shm/stress";
     descriptor.type_name = "test.Stress";
 
     auto stats = std::array<ReaderStats, kReaderCount>{};
@@ -162,7 +162,7 @@ TEST_CASE("shm lagging reader is rejected rather than served torn data") {
 
     const auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.shm.lagging";
+    descriptor.name = "/test/shm/lagging";
     descriptor.type_name = "test.Stress";
 
     auto stats = ReaderStats{};

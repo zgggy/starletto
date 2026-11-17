@@ -6,7 +6,6 @@
 ## 入口
 
 - Basement 总方案（总览）：[basement_design.md](basement_design.md)
-- Basement 子模块拆分索引（按模块推进）：[basement_index.md](basement_index.md)
 - 自动驾驶系统完整形态推演（对齐 CyberRT/Autoware/ROS2）：[system_vision.md](system_vision.md)
 
 ## Basement 子模块（逐个构建）

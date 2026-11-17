@@ -22,6 +22,8 @@
 - 服务通道：`<service>/request` / `<service>/response`；
 - 文件系统路径是相对的（`modules/planning/motion`）；通道地址是绝对的（前导 `/`），
   一个指向源码文件，一个指向运行期数据；
+- `NativeMessageBus`/`ShmMessageBus` 在 `declare_channel` 就校验通道地址：必须 `/` 开头、
+  段内 `[A-Za-z0-9_-]`、不允许点；产品与测试都必须用地址；
 - shm 槽内必须是 v7 帧（magic/encoding/schema name+version+hash/payload）；
   未加帧或损坏帧会被丢弃、`dropped_count` 递增并记 ERROR；
 - 跨进程是编码后拷贝；`ShmSlotView` 的零拷贝读取不用于跨进程交付承诺；

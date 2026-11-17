@@ -45,9 +45,9 @@ namespace star::native_runner {
         }
         auto context = star::runtime::RuntimeFactory::create_native_context(options.transport_name);
 
-        const auto channel = "selftest.transport.routed." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-        const auto mode_channel = "selftest.transport.mode." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-        const auto degrade_channel = "selftest.transport.degrade." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto channel = "/starletto/selftest/transport/routed_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto mode_channel = "/starletto/selftest/transport/mode_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto degrade_channel = "/starletto/selftest/transport/degrade_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         options.shm_pub_topics = channel + "," + mode_channel + "," + degrade_channel;
         options.shm_sub_topics = channel + "," + mode_channel + "," + degrade_channel;
         options.route_plan.clear();
@@ -177,7 +177,7 @@ namespace star::native_runner {
         logI << "selftest_transport ok: routed inproc delivery count=" << got;
 
         if (routed->shm_available()) {
-            const auto route_channel = "selftest.transport.route_plan." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+            const auto route_channel = "/starletto/selftest/transport/route_plan_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
             routed->configure_route_registry("planner", route_channel + "|planner|control");
 
             auto route_desc = star::transport::ChannelDescriptor{};

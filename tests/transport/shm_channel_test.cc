@@ -223,7 +223,7 @@ TEST_CASE("ShmSlotView without generation info stays readable") {
 TEST_CASE("shm delivered view becomes unstable after the slot is overwritten") {
     const auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.shm.stale";
+    descriptor.name = "/test/shm/stale";
     descriptor.type_name = "test.Msg";
 
     auto mutex = std::mutex{};
@@ -275,7 +275,7 @@ TEST_CASE("shm delivered view becomes unstable after the slot is overwritten") {
 TEST_CASE("a throwing reader callback on the poll thread does not kill the process") {
     const auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.shm.throwing";
+    descriptor.name = "/test/shm/throwing";
     descriptor.type_name = "test.Msg";
 
     const auto bad = bus->create_reader(descriptor, [](const MessageView&) { throw std::runtime_error("boom"); });
@@ -302,7 +302,7 @@ TEST_CASE("shm reader receives messages published immediately after subscribe") 
     for (int round = 0; round < kRounds; ++round) {
         const auto bus = std::make_shared<ShmMessageBus>();
         auto descriptor = ChannelDescriptor{};
-        descriptor.name = "test.shm.immediate." + std::to_string(round);
+        descriptor.name = "/test/shm/immediate/" + std::to_string(round);
         descriptor.type_name = "test.Msg";
 
         auto received = std::atomic<int>{0};
@@ -343,7 +343,7 @@ auto make_binary_serialized(const std::string& value) -> SerializedMessage {
 TEST_CASE("readers on the same channel share a single polling thread") {
     const auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.poller.same_channel";
+    descriptor.name = "/test/poller/same_channel";
 
     auto received = std::atomic<int>{0};
     auto reader1 = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
@@ -372,9 +372,9 @@ TEST_CASE("readers on the same channel share a single polling thread") {
 TEST_CASE("each channel with readers owns exactly one polling thread") {
     const auto bus = std::make_shared<ShmMessageBus>();
     auto first = ChannelDescriptor{};
-    first.name = "test.poller.channel_a";
+    first.name = "/test/poller/channel_a";
     auto second = ChannelDescriptor{};
-    second.name = "test.poller.channel_b";
+    second.name = "/test/poller/channel_b";
 
     auto reader_a1 = bus->create_reader(first, [](const MessageView&) {});
     auto reader_a2 = bus->create_reader(first, [](const MessageView&) {});

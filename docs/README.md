@@ -11,7 +11,7 @@
 flowchart LR
     Q{"你是谁？"}
     Q -->|"算法工程师<br/>要写模块"| A["architecture/ 图集<br/>↓<br/>component_guide<br/>↓<br/>开始写 processor"]
-    Q -->|"系统工程师<br/>要改底座"| B["arch.md<br/>↓<br/>spec/ 设计契约<br/>↓<br/>remediation_plan"]
+    Q -->|"系统工程师<br/>要改底座"| B["arch.md<br/>↓<br/>spec/ 设计契约<br/>↓<br/>design_change"]
     Q -->|"新人<br/>想快速理解"| C["architecture/README<br/>↓<br/>architecture/01 全景<br/>↓<br/>star run 跑一遍"]
     Q -->|"运维/发布"| D["release/ 版本与部署"]
 ```
@@ -23,16 +23,13 @@ flowchart LR
 | [`architecture/`](architecture/README.md) | **系统架构图集**（6 篇，面向算法工程师，白话解释进程/内存/通信） | 所有人先看这个 |
 | [`component_guide.md`](component_guide.md) | **组件开发指南**：写一个组件要动哪些文件、三重一致性陷阱、易用性改进路线 | 要加模块的人 |
 | [`arch.md`](arch.md) | 系统架构（简版，Mermaid 三图 + 关键决策表） | 快速总览 |
-| [`spec/`](spec/) | 设计契约：system_vision、basement_design/schema/transport/runtime_*、workplan | 改底座前必读 |
+| [`spec/`](spec/) | 设计契约：system_vision、basement_design/schema/transport/runtime_* | 改底座前必读 |
 | [`installation.md`](installation.md) | 安装树、源码树外插件开发、pkg-config | 插件作者 |
 | [`plugin_abi.md`](plugin_abi.md) | 插件 ABI 终态：唯一 C++ 入口、强制工具链指纹、生命周期契约 | 插件作者/发布者 |
 | [`testing.md`](testing.md) | 测试、确定性随机输入、UBSan/ASan 配方与 CI 模板 | 开发者 |
-| [`remediation_plan.md`](remediation_plan.md) | 底层缺陷修复方案（2026-11-11 复审，P0/P1/P2 分级 + 验收） | 系统工程师 |
 | [`contract_decisions.md`](contract_decisions.md) | **契约决策（已确认）**：多版本 Schema 演进 + 服务并入通道；实施计划五阶段 | 系统工程师 |
-| [`arch_review_20260926.md`](arch_review_20260926.md) | 2026-09 架构评审与整改记录（已完成部分） | 了解历史决策 |
 | [`design_change.md`](design_change.md) | 设计变更日志 | 查"为什么这么改" |
 | [`release/`](release/) | 版本记录、部署、回滚 | 运维 |
-| [`architecture.html`](architecture.html) | 架构网站（单文件，可离线打开） | 演示/分享 |
 
 ## 硬约束（改代码前必须知道）
 
@@ -52,5 +49,5 @@ flowchart LR
 | 测试 | 35 套 218 用例 |
 | CI 门禁 | `star check` 18/18；GitHub Actions（Ubuntu/macOS/UBSan/ASan/Coverage）全绿 |
 | 业务模块 | `setting.config`、`setting.parameter`、`perception.prediction`（stub）、`localization.pose`（stub）、`planning.motion`（示例）、`control.pid`、`control.chassis`（stub）；支持插件动态装配与 `native_runner_static` 静态装配 |
-| 已知缺陷 | 见 [remediation_plan.md](remediation_plan.md)：**P0 六项 + P1 五项已全部修复**；P2 收口；P1.1 B1 安装面、B2 插件 ABI 终态、P2.5 macOS 资源采样已完成 |
+| 状态 | 底层整改已收口；变更原因见 [design_change.md](design_change.md) |
 | 算法资产 | `libraries/` 约 3500 行未接线，等 localization/perception 等模块落地 |

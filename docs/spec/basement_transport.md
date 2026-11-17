@@ -712,7 +712,8 @@ graph LR
   （`<service>` 本身是地址，`/request`/`/response` 是子位置）；
 - schema 类型仍用点：`perception.prediction`、`planning.trajectory`；
 - 组件逻辑 ID 用点：`planning.motion`；文件路径用 `/`；
-- 不要把 schema 名直接当通道名，也不要在通道地址里用点。
+- 不要把 schema 名直接当通道名，也不要在通道地址里用点；
+- `NativeMessageBus`/`ShmMessageBus::declare_channel` 会校验地址，非法名直接抛错。
 
 ### 12.2 变量命名
 

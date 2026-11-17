@@ -72,7 +72,7 @@ struct Collector {
 TEST_CASE("ShmRoutedMessageBus delivers each message exactly once without a route plan") {
     const auto registry = std::make_shared<ChannelRegistry>();
     const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
-    const auto descriptor = make_descriptor("test.routed.noplan");
+    const auto descriptor = make_descriptor("/test/routed/noplan");
 
     auto collector = Collector{};
     const auto reader = bus->create_reader(descriptor, collector.callback());
@@ -99,10 +99,10 @@ TEST_CASE("ShmRoutedMessageBus delivers each message exactly once without a rout
 TEST_CASE("ShmRoutedMessageBus delivers each message exactly once with shm routing enabled") {
     const auto registry = std::make_shared<ChannelRegistry>();
     const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
-    const auto descriptor = make_descriptor("test.routed.shm");
+    const auto descriptor = make_descriptor("/test/routed/shm");
 
     // 把该通道的读写都路由到 shm，此时 inproc 与 shm 两条路径同时存在
-    bus->configure_route_plan("test.routed.shm", "test.routed.shm");
+    bus->configure_route_plan("/test/routed/shm", "/test/routed/shm");
 
     auto collector = Collector{};
     const auto reader = bus->create_reader(descriptor, collector.callback());
@@ -136,8 +136,8 @@ TEST_CASE("ShmRoutedMessageBus delivers each message exactly once with shm routi
 TEST_CASE("an oversized message does not permanently degrade the channel") {
     const auto registry = std::make_shared<ChannelRegistry>();
     const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
-    const auto descriptor = make_descriptor("test.routed.oversize");
-    bus->configure_route_plan("test.routed.oversize", "test.routed.oversize");
+    const auto descriptor = make_descriptor("/test/routed/oversize");
+    bus->configure_route_plan("/test/routed/oversize", "/test/routed/oversize");
 
     auto received = std::atomic<int>{0};
     const auto reader = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
@@ -170,8 +170,8 @@ TEST_CASE("an oversized message does not permanently degrade the channel") {
 TEST_CASE("ShmRoutedMessageBus records through the routed write path") {
     const auto registry = std::make_shared<ChannelRegistry>();
     const auto bus = std::make_shared<ShmRoutedMessageBus>(registry);
-    const auto descriptor = make_descriptor("test.routed.record");
-    bus->configure_route_plan("test.routed.record", "test.routed.record");
+    const auto descriptor = make_descriptor("/test/routed/record");
+    bus->configure_route_plan("/test/routed/record", "/test/routed/record");
 
     char path[96]{};
     std::snprintf(path, sizeof(path), "/tmp/starletto_routed_rec_%d.starrec", static_cast<int>(::getpid()));
@@ -203,7 +203,7 @@ TEST_CASE("a channel missing from the route plan stays inproc and is reported") 
     // 计划里只有别的通道
     bus->configure_route_registry("group_a", "other.channel|group_a|group_b");
 
-    const auto descriptor = make_descriptor("test.routed.notinplan");
+    const auto descriptor = make_descriptor("/test/routed/notinplan");
     auto received = std::atomic<int>{0};
     const auto reader = bus->create_reader(descriptor, [&](const MessageView&) { received.fetch_add(1); });
     const auto writer = bus->create_writer(descriptor);
@@ -221,7 +221,7 @@ TEST_CASE("ShmRoutedMessageBus rejects an empty reader callback") {
 
     auto threw = false;
     try {
-        (void)bus->create_reader(make_descriptor("test.routed.nocb"), nullptr);
+        (void)bus->create_reader(make_descriptor("/test/routed/nocb"), nullptr);
     } catch (const star::excep::RuntimeError&) {
         threw = true;
     }

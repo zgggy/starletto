@@ -34,7 +34,7 @@ data/        标定与地图数据
 
 - [架构图集](docs/architecture/README.md) — 6 篇，面向算法工程师，白话解释进程/内存/通信
 - [组件开发指南](docs/component_guide.md) — 写一个组件要动哪些文件、常见陷阱
-- [修复方案](docs/remediation_plan.md) — 底层缺陷分级与修复计划
+- [设计变更](docs/design_change.md) — 关键决策与原因
 - [设计 spec](docs/spec/) — 四条硬约束与各层契约
 
 ## 技术栈

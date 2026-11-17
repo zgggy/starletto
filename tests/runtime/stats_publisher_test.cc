@@ -46,7 +46,7 @@ TEST_CASE("StatsPublisher publishes worker stats on the ordinary stats channel")
 
     // 先制造一条有写/读的通道，统计快照里才会出现它
     auto probe = ChannelDescriptor{};
-    probe.name = "test.stats.probe";
+    probe.name = "/test/stats/probe";
     probe.type_name = "test.probe";
     const auto probe_reader = context->message_bus().create_reader(probe, [](const MessageView&) {});
     const auto probe_writer = context->message_bus().create_writer(probe);
@@ -95,7 +95,7 @@ TEST_CASE("StatsPublisher publishes worker stats on the ordinary stats channel")
 
     auto found_probe = false;
     for (const auto& entry : received->channels) {
-        if (entry.channel == "test.stats.probe") {
+        if (entry.channel == "/test/stats/probe") {
             found_probe = true;
             REQUIRE(entry.write_count >= 1);
             REQUIRE(entry.deliver_count >= 1);

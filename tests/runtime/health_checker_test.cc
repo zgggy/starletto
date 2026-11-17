@@ -44,10 +44,10 @@ void seed_single_write(const std::shared_ptr<NativeMessageBus>& bus, const std::
 TEST_CASE("HealthChecker reports warning for a channel with no traffic") {
     const auto bus = make_bus();
     // 只声明不写入：统计不可见，应给出「channel not found」
-    bus->declare_channel(make_channel("test.silent"));
+    bus->declare_channel(make_channel("/test/silent"));
 
     auto checker = HealthChecker{bus};
-    checker.add_channel_rule(ChannelHealthRule{.channel = "test.silent", .min_hz = 1.0});
+    checker.add_channel_rule(ChannelHealthRule{.channel = "/test/silent", .min_hz = 1.0});
 
     const auto statuses = checker.check_all_channels();
     REQUIRE_EQ(statuses.size(), 1U);
@@ -58,10 +58,10 @@ TEST_CASE("HealthChecker reports warning for a channel with no traffic") {
 
 TEST_CASE("HealthChecker passes a channel meeting the frequency threshold") {
     const auto bus = make_bus();
-    seed_single_write(bus, "test.ok");  // 1hz
+    seed_single_write(bus, "/test/ok");  // 1hz
 
     auto checker = HealthChecker{bus};
-    checker.add_channel_rule(ChannelHealthRule{.channel = "test.ok", .min_hz = 1.0});
+    checker.add_channel_rule(ChannelHealthRule{.channel = "/test/ok", .min_hz = 1.0});
 
     const auto statuses = checker.check_all_channels();
     REQUIRE_EQ(statuses.size(), 1U);
@@ -72,10 +72,10 @@ TEST_CASE("HealthChecker passes a channel meeting the frequency threshold") {
 
 TEST_CASE("HealthChecker warns when frequency falls below the threshold") {
     const auto bus = make_bus();
-    seed_single_write(bus, "test.slow");  // 1hz < 5hz
+    seed_single_write(bus, "/test/slow");  // 1hz < 5hz
 
     auto checker = HealthChecker{bus};
-    checker.add_channel_rule(ChannelHealthRule{.channel = "test.slow", .min_hz = 5.0});
+    checker.add_channel_rule(ChannelHealthRule{.channel = "/test/slow", .min_hz = 5.0});
 
     const auto statuses = checker.check_all_channels();
     REQUIRE_EQ(statuses.size(), 1U);
@@ -86,11 +86,11 @@ TEST_CASE("HealthChecker warns when frequency falls below the threshold") {
 
 TEST_CASE("HealthChecker only evaluates its registered rules") {
     const auto bus = make_bus();
-    seed_single_write(bus, "test.monitored");
-    seed_single_write(bus, "test.other");
+    seed_single_write(bus, "/test/monitored");
+    seed_single_write(bus, "/test/other");
 
     auto checker = HealthChecker{bus};
-    checker.add_channel_rule(ChannelHealthRule{.channel = "test.monitored", .min_hz = 1.0});
+    checker.add_channel_rule(ChannelHealthRule{.channel = "/test/monitored", .min_hz = 1.0});
 
     REQUIRE_EQ(checker.check_all_channels().size(), 1U);
 }
@@ -106,12 +106,12 @@ TEST_CASE("HealthChecker without a resource monitor falls back to healthy") {
 
 TEST_CASE("HealthChecker aggregates the component's own channel rule") {
     const auto bus = make_bus();
-    seed_single_write(bus, "test.comp.ok");
+    seed_single_write(bus, "/test/comp/ok");
 
     auto checker = HealthChecker{bus};
     auto rule = ComponentHealthRule{};
     rule.name = "my_component";
-    rule.channel_rule = ChannelHealthRule{.channel = "test.comp.ok", .min_hz = 1.0};
+    rule.channel_rule = ChannelHealthRule{.channel = "/test/comp/ok", .min_hz = 1.0};
     checker.add_component_rule(rule);
 
     // 回归：check_component 曾遍历全局 channel_rules_，忽略组件自己的规则
@@ -119,18 +119,18 @@ TEST_CASE("HealthChecker aggregates the component's own channel rule") {
     REQUIRE(report.overall_healthy);
     REQUIRE_EQ(report.component_name, std::string("my_component"));
     REQUIRE_EQ(report.channel_statuses.size(), 1U);
-    REQUIRE_EQ(report.channel_statuses.front().channel, std::string("test.comp.ok"));
+    REQUIRE_EQ(report.channel_statuses.front().channel, std::string("/test/comp/ok"));
     CHECK(report.summary_message == "ok");
 }
 
 TEST_CASE("HealthChecker component report is unhealthy when its channel is unhealthy") {
     const auto bus = make_bus();
-    bus->declare_channel(make_channel("test.comp.silent"));
+    bus->declare_channel(make_channel("/test/comp/silent"));
 
     auto checker = HealthChecker{bus};
     auto rule = ComponentHealthRule{};
     rule.name = "my_component";
-    rule.channel_rule = ChannelHealthRule{.channel = "test.comp.silent", .min_hz = 1.0};
+    rule.channel_rule = ChannelHealthRule{.channel = "/test/comp/silent", .min_hz = 1.0};
     checker.add_component_rule(rule);
 
     const auto report = checker.check_component("my_component", ::getpid());
@@ -141,12 +141,12 @@ TEST_CASE("HealthChecker component report is unhealthy when its channel is unhea
 
 TEST_CASE("HealthChecker invokes the unhealthy action on a failing report") {
     const auto bus = make_bus();
-    bus->declare_channel(make_channel("test.action.silent"));
+    bus->declare_channel(make_channel("/test/action/silent"));
 
     auto checker = HealthChecker{bus};
     auto rule = ComponentHealthRule{};
     rule.name = "my_component";
-    rule.channel_rule = ChannelHealthRule{.channel = "test.action.silent", .min_hz = 1.0};
+    rule.channel_rule = ChannelHealthRule{.channel = "/test/action/silent", .min_hz = 1.0};
     checker.add_component_rule(rule);
 
     auto triggered = 0;

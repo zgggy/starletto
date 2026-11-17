@@ -100,7 +100,7 @@ auto make_v2(int64_t id, std::string note, std::optional<std::string> extra) -> 
 // P0.1：shm 帧携带发送方 schema 身份；读侧能看到 v2，而本地编译的是 v1
 TEST_CASE("shm frames carry the sender schema identity") {
     const auto bus = std::make_shared<ShmMessageBus>();
-    const auto channel = "test.wire.identity";
+    const auto channel = "/test/wire/identity";
     auto captured = Captured{};
     const auto reader = bus->create_reader(make_descriptor(channel, V1Msg::schema_type_id()), [&](const MessageView& message) {
         const auto slot = message.payload.as<ShmSlotView>();
@@ -138,7 +138,7 @@ TEST_CASE("shm frames carry the sender schema identity") {
 
 TEST_CASE("wire identity supports the reverse direction v1 sender to v2 receiver") {
     const auto bus = std::make_shared<ShmMessageBus>();
-    const auto channel = "test.wire.identity.reverse";
+    const auto channel = "/test/wire/identity/reverse";
     auto captured = Captured{};
     const auto reader = bus->create_reader(make_descriptor(channel, V2Msg::schema_type_id()), [&](const MessageView& message) {
         const auto slot = message.payload.as<ShmSlotView>();
@@ -202,7 +202,7 @@ TEST_CASE("wire identity rejects a name mismatch and a same-version hash mismatc
 // 固定布局经外层帧传输：payload 仍是 fixed-layout 帧，身份来自外层帧
 TEST_CASE("fixed layout frames keep their identity through the shm frame header") {
     const auto bus = std::make_shared<ShmMessageBus>();
-    const auto channel = "test.wire.identity.fixed";
+    const auto channel = "/test/wire/identity/fixed";
     auto captured = Captured{};
     const auto reader = bus->create_reader(make_descriptor(channel, V1Msg::schema_type_id()), [&](const MessageView& message) {
         const auto slot = message.payload.as<ShmSlotView>();

@@ -61,7 +61,7 @@ auto make_serialized(const std::shared_ptr<const LoadPlan>& plan) -> SerializedM
 // 跨版本读不了；此前固定布局优先，读侧又固定用 from_binary，跨进程必然解错
 TEST_CASE("shm write prefers the versionable binary encoding") {
     const auto bus = std::make_shared<ShmMessageBus>();
-    const auto descriptor = make_descriptor("test.payload.encoding");
+    const auto descriptor = make_descriptor("/test/payload/encoding");
 
     auto mutex = std::mutex{};
     auto received = std::vector<MessageView>{};
@@ -97,7 +97,7 @@ TEST_CASE("shm write prefers the versionable binary encoding") {
 // v7 起槽内必须是带身份的帧：未加帧的旧载荷直接丢弃，不能静默当 legacy 放行
 TEST_CASE("shm drops an unframed payload instead of treating it as legacy") {
     const auto bus = std::make_shared<ShmMessageBus>();
-    const auto channel = "test.payload.unframed";
+    const auto channel = "/test/payload/unframed";
     auto delivered = 0;
     const auto reader = bus->create_reader(make_descriptor(channel), [&](const MessageView&) { ++delivered; });
 
@@ -125,7 +125,7 @@ TEST_CASE("shm drops an unframed payload instead of treating it as legacy") {
 // 跨版本通信：同名不同 version/hash 允许通过总线，解码策略由接收端决定
 TEST_CASE("shm accepts a same-name message from a different schema version") {
     const auto bus = std::make_shared<ShmMessageBus>();
-    auto descriptor = make_descriptor("test.payload.version");
+    auto descriptor = make_descriptor("/test/payload/version");
 
     auto message = make_serialized(std::make_shared<const LoadPlan>(make_plan()));
     message.view.schema_type_id = star::schema::SchemaTypeId{"runtime.component_load_plan", 2, 0x1234};
@@ -151,7 +151,7 @@ TEST_CASE("shm accepts a same-name message from a different schema version") {
 TEST_CASE("shm accepts an empty payload as a valid message") {
     const auto bus = std::make_shared<ShmMessageBus>();
     auto descriptor = ChannelDescriptor{};
-    descriptor.name = "test.payload.empty";
+    descriptor.name = "/test/payload/empty";
     descriptor.type_name = "test.empty";
 
     auto received = std::atomic<int>{0};

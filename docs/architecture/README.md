@@ -16,7 +16,7 @@
 
 配套文档：
 
-- [修复方案](../remediation_plan.md) — 当前已知缺陷与修复计划
+- [设计变更](../design_change.md) — 关键决策与原因
 - [组件开发指南](../component_guide.md) — 以 planning 为例，写一个组件到底要写哪些文件
 
 ---

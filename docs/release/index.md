@@ -9,5 +9,4 @@
 
 ## 版本详情
 
-- [v0.1_record.md](v0.1_record.md) — M0-M3 完整记录
-- [v0.2_record.md](v0.2_record.md) — B1-B2 + F1-F6 记录
+历史版本记录已归档删除；当前变更见 [changelog.md](changelog.md)。

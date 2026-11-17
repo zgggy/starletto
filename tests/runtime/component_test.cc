@@ -133,7 +133,7 @@ TEST_CASE("Component load plan roundtrip") {
     auto probe = LifecycleProbe{};
     REQUIRE(probe.load_plan() == nullptr);
 
-    const auto plan = make_plan("test.component.roundtrip");
+    const auto plan = make_plan("/test/component/roundtrip");
     probe.set_load_plan(plan);
 
     const auto* loaded = probe.load_plan();
@@ -147,7 +147,7 @@ TEST_CASE("Component auto_configure delivers written messages to its own reader"
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_plan("test.component.loopback"));
+    probe.set_load_plan(make_plan("/test/component/loopback"));
     probe.auto_configure();
 
     // 输入与输出挂在同一通道上，形成组件内回环
@@ -183,7 +183,7 @@ TEST_CASE("Component write returns a status code on encode failure instead of th
     const auto context = RuntimeFactory::create_native_context("shm");
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_plan("test.component.encodefail"));
+    probe.set_load_plan(make_plan("/test/component/encodefail"));
     probe.auto_configure();
 
     auto result = star::transport::WriteResult{};
@@ -202,7 +202,7 @@ TEST_CASE("Component write returns ok status on success") {
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_plan("test.component.writestatus"));
+    probe.set_load_plan(make_plan("/test/component/writestatus"));
     probe.auto_configure();
 
     const auto result = probe.write("out", TestMsg{5});
@@ -215,14 +215,14 @@ TEST_CASE("Component write stamps the schema type id from the message type") {
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_plan("test.component.typeid"));
+    probe.set_load_plan(make_plan("/test/component/typeid"));
     probe.auto_configure();
 
     auto seen = std::optional<star::schema::SchemaTypeId>{};
     const auto reader = context->message_bus().create_reader(
         [&] {
             auto d = star::transport::ChannelDescriptor{};
-            d.name = "test.component.typeid";
+            d.name = "/test/component/typeid";
             return d;
         }(),
         [&](const star::transport::MessageView& msg) { seen = msg.schema_type_id; });
@@ -240,7 +240,7 @@ TEST_CASE("Component write to an undeclared port throws") {
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_plan("test.component.undeclared"));
+    probe.set_load_plan(make_plan("/test/component/undeclared"));
     probe.auto_configure();
 
     auto threw = false;
@@ -256,7 +256,7 @@ TEST_CASE("Component read_latest returns nothing for unknown port") {
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_plan("test.component.unknown"));
+    probe.set_load_plan(make_plan("/test/component/unknown"));
     probe.auto_configure();
 
     REQUIRE(probe.read_latest<TestMsg>("missing") == nullptr);
@@ -265,7 +265,7 @@ TEST_CASE("Component read_latest returns nothing for unknown port") {
 
 // 读路径必须按帧头选解码器：此前固定调用 from_binary，shm 里的固定布局帧必然解错
 TEST_CASE("Component decode_payload selects the decoder from the frame header") {
-    const auto msg = make_plan("test.component.frames");
+    const auto msg = make_plan("/test/component/frames");
 
     const auto fixed = msg.encode_fixed_layout();
     REQUIRE(star::schema::is_fixed_layout_frame(fixed));
@@ -341,11 +341,11 @@ TEST_CASE("auto_configure applies the port decode policy to delivered messages")
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_policy_plan("test.component.policy.strict", true));
+    probe.set_load_plan(make_policy_plan("/test/component/policy/strict", true));
     probe.auto_configure();
 
-    const auto msg = make_plan("test.component.policy.strict");
-    write_binary(context, "test.component.policy.strict", append_unknown_field(msg.encode_binary()));
+    const auto msg = make_plan("/test/component/policy/strict");
+    write_binary(context, "/test/component/policy/strict", append_unknown_field(msg.encode_binary()));
 
     REQUIRE(probe.read_latest<ComponentLoadPlan>("in") == nullptr);
 }
@@ -354,11 +354,11 @@ TEST_CASE("default decode policy keeps unknown fields instead of failing") {
     const auto context = RuntimeFactory::create_native_context();
     auto probe = LifecycleProbe{};
     probe.set_context(context);
-    probe.set_load_plan(make_policy_plan("test.component.policy.default", false));
+    probe.set_load_plan(make_policy_plan("/test/component/policy/default", false));
     probe.auto_configure();
 
-    const auto msg = make_plan("test.component.policy.default");
-    write_binary(context, "test.component.policy.default", append_unknown_field(msg.encode_binary()));
+    const auto msg = make_plan("/test/component/policy/default");
+    write_binary(context, "/test/component/policy/default", append_unknown_field(msg.encode_binary()));
 
     const auto decoded = probe.read_latest<ComponentLoadPlan>("in");
     REQUIRE(decoded != nullptr);

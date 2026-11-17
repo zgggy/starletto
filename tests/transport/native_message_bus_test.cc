@@ -61,9 +61,9 @@ TEST_CASE("declare_channel rejects empty channel name") {
 
 TEST_CASE("declare_channel rejects a type mismatch on the same channel") {
     const auto bus = make_bus();
-    bus->declare_channel(make_descriptor("chan"));
+    bus->declare_channel(make_descriptor("/chan"));
 
-    auto other = make_descriptor("chan");
+    auto other = make_descriptor("/chan");
     other.type_name = "other.Type";
     auto threw = false;
     try {
@@ -76,14 +76,14 @@ TEST_CASE("declare_channel rejects a type mismatch on the same channel") {
 
 TEST_CASE("declare_channel is idempotent for a matching descriptor") {
     const auto bus = make_bus();
-    bus->declare_channel(make_descriptor("chan"));
-    bus->declare_channel(make_descriptor("chan"));
+    bus->declare_channel(make_descriptor("/chan"));
+    bus->declare_channel(make_descriptor("/chan"));
     REQUIRE_EQ(bus->declared_channels().size(), 1U);
 }
 
 TEST_CASE("write delivers the typed payload to a reader callback") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan");
+    const auto descriptor = make_descriptor("/chan");
 
     auto received = std::vector<int>{};
     const auto reader = bus->create_reader(descriptor, [&](const MessageView& message) {
@@ -102,7 +102,7 @@ TEST_CASE("write delivers the typed payload to a reader callback") {
 
 TEST_CASE("write delivers to every registered reader") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan");
+    const auto descriptor = make_descriptor("/chan");
 
     auto first = 0;
     auto second = 0;
@@ -119,27 +119,27 @@ TEST_CASE("write delivers to every registered reader") {
 TEST_CASE("peek_latest returns the most recent message") {
     const auto bus = make_bus();
     // 历史仅在 depth > 0 时保留，peek_latest 依赖 reader_history
-    const auto descriptor = make_descriptor("chan", 2);
+    const auto descriptor = make_descriptor("/chan", 2);
     const auto reader = bus->create_reader(descriptor, [](const MessageView&) {});
 
     const auto writer = bus->create_writer(descriptor);
     writer->write(make_message(1));
     writer->write(make_message(2));
 
-    const auto latest = bus->peek_latest("chan");
+    const auto latest = bus->peek_latest("/chan");
     REQUIRE(latest.has_value());
     REQUIRE_EQ(latest->payload.as<TestMsg>()->value, 2);
 }
 
 TEST_CASE("peek_latest is empty when the channel keeps no history") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan", 0);
+    const auto descriptor = make_descriptor("/chan", 0);
     const auto reader = bus->create_reader(descriptor, [](const MessageView&) {});
 
     const auto writer = bus->create_writer(descriptor);
     writer->write(make_message(1));
 
-    REQUIRE(not bus->peek_latest("chan").has_value());
+    REQUIRE(not bus->peek_latest("/chan").has_value());
 }
 
 TEST_CASE("peek_latest is empty for an unknown channel") {
@@ -149,7 +149,7 @@ TEST_CASE("peek_latest is empty for an unknown channel") {
 
 TEST_CASE("reader history respects the configured channel depth") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan", 2);
+    const auto descriptor = make_descriptor("/chan", 2);
     const auto reader = bus->create_reader(descriptor, [](const MessageView&) {});
 
     const auto writer = bus->create_writer(descriptor);
@@ -157,24 +157,24 @@ TEST_CASE("reader history respects the configured channel depth") {
         writer->write(make_message(i));
     }
 
-    REQUIRE_EQ(bus->reader_history_size("chan"), 2U);
-    REQUIRE_EQ(bus->peek_latest("chan")->payload.as<TestMsg>()->value, 4);
+    REQUIRE_EQ(bus->reader_history_size("/chan"), 2U);
+    REQUIRE_EQ(bus->peek_latest("/chan")->payload.as<TestMsg>()->value, 4);
 }
 
 TEST_CASE("write records channel statistics") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan");
+    const auto descriptor = make_descriptor("/chan");
 
-    REQUIRE(not bus->channel_stats("chan").has_value());
+    REQUIRE(not bus->channel_stats("/chan").has_value());
 
     const auto reader = bus->create_reader(descriptor, [](const MessageView&) {});
     const auto writer = bus->create_writer(descriptor);
     writer->write(make_message(1));
     writer->write(make_message(2));
 
-    const auto snapshot = bus->channel_stats("chan");
+    const auto snapshot = bus->channel_stats("/chan");
     REQUIRE(snapshot.has_value());
-    REQUIRE_EQ(snapshot->channel_name, std::string("chan"));
+    REQUIRE_EQ(snapshot->channel_name, std::string("/chan"));
     REQUIRE_EQ(snapshot->write_count, 2ULL);
     REQUIRE_EQ(snapshot->deliver_count, 2ULL);
     REQUIRE_EQ(snapshot->dropped_count, 0ULL);
@@ -185,7 +185,7 @@ TEST_CASE("write records channel statistics") {
 
 TEST_CASE("write_serialized accounts for the payload size hint") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan");
+    const auto descriptor = make_descriptor("/chan");
     const auto reader = bus->create_reader(descriptor, [](const MessageView&) {});
 
     auto message = SerializedMessage{};
@@ -198,7 +198,7 @@ TEST_CASE("write_serialized accounts for the payload size hint") {
     const auto result = writer->write_serialized(message);
 
     REQUIRE(result.ok());
-    const auto snapshot = bus->channel_stats("chan");
+    const auto snapshot = bus->channel_stats("/chan");
     REQUIRE(snapshot.has_value());
     REQUIRE_EQ(snapshot->payload_bytes_total, 128ULL);
     REQUIRE_EQ(snapshot->payload_bytes_last, 128ULL);
@@ -208,7 +208,7 @@ TEST_CASE("write_serialized accounts for the payload size hint") {
 // 失败必须计数可见（callback_failures）
 TEST_CASE("a throwing reader callback does not abort delivery or the process") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan");
+    const auto descriptor = make_descriptor("/chan");
 
     auto received = 0;
     const auto bad = bus->create_reader(descriptor, [](const MessageView&) { throw std::runtime_error("boom"); });
@@ -219,7 +219,7 @@ TEST_CASE("a throwing reader callback does not abort delivery or the process") {
     REQUIRE(writer->write(make_message(2)).ok());
 
     REQUIRE_EQ(received, 2);
-    const auto stats = bus->channel_stats("chan");
+    const auto stats = bus->channel_stats("/chan");
     REQUIRE(stats.has_value());
     REQUIRE_EQ(stats->callback_failures, 2ULL);
 }
@@ -228,7 +228,7 @@ TEST_CASE("a throwing reader callback does not abort delivery or the process") {
 // 而不是接受配置后在队列填满时永久丢弃所有新消息
 TEST_CASE("declare_channel rejects DROP_NEWEST as unimplemented") {
     const auto bus = make_bus();
-    auto descriptor = make_descriptor("chan");
+    auto descriptor = make_descriptor("/chan");
     descriptor.options = ChannelOptions{1, DropPolicy::DROP_NEWEST, false};
 
     auto threw = false;
@@ -242,7 +242,7 @@ TEST_CASE("declare_channel rejects DROP_NEWEST as unimplemented") {
 
 TEST_CASE("write on a mismatched schema type reports EXCEPTION") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("chan");
+    const auto descriptor = make_descriptor("/chan");
     const auto reader = bus->create_reader(descriptor, [](const MessageView&) {});
 
     auto bad = make_message(1);
@@ -263,7 +263,7 @@ TEST_CASE("write on a mismatched schema type reports EXCEPTION") {
 // 结束，否则回调会踩到已销毁的捕获状态。
 TEST_CASE("destroying a reader waits for its in-flight callback") {
     const auto bus = make_bus();
-    const auto descriptor = make_descriptor("test.reader.lifetime");
+    const auto descriptor = make_descriptor("/test/reader/lifetime");
 
     auto started = std::atomic<bool>{false};
     auto release = std::atomic<bool>{false};

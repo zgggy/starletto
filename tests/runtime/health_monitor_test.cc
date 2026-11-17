@@ -54,7 +54,7 @@ TEST_CASE("HealthMonitor publishes an unhealthy channel rule") {
     auto rule = HealthMonitor::Rule{};
     rule.component = "probe";
     rule.has_channel = true;
-    rule.channel.channel = "test.health.no_traffic";
+    rule.channel.channel = "/test/health/no_traffic";
     rule.channel.min_hz = 100.0;
     auto monitor = HealthMonitor{*bus, "test_group", std::vector<HealthMonitor::Rule>{rule}};
 
@@ -68,7 +68,7 @@ TEST_CASE("HealthMonitor publishes an unhealthy channel rule") {
     REQUIRE(not received[0].healthy);
     REQUIRE_EQ(received[0].severity, std::string("warn"));
     REQUIRE_EQ(received[0].process_group.value_or(""), std::string("test_group"));
-    REQUIRE_EQ(received[0].channel.value_or(""), std::string("test.health.no_traffic"));
+    REQUIRE_EQ(received[0].channel.value_or(""), std::string("/test/health/no_traffic"));
 }
 
 TEST_CASE("HealthMonitor reports a component without channel rule as healthy") {
